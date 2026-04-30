@@ -47,3 +47,83 @@ logs component="kustomize-controller":
 grafana:
     @echo "Grafana at http://localhost:3000 — admin / prom-operator (default; change it)"
     kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
+
+# Install unattended-upgrades on all Debian-based guests
+# (run once per guest; idempotent if re-run)
+setup-unattended-upgrades:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SCRIPT="utility/setup-unattended-upgrades.sh"
+
+    echo "=== gondor ==="
+    scp "$SCRIPT" gondor:/tmp/setup-uu.sh
+    ssh gondor 'sudo bash /tmp/setup-uu.sh && rm /tmp/setup-uu.sh'
+
+    echo
+    echo "Pushing to LXCs via earendil..."
+    scp "$SCRIPT" root@earendil:/tmp/setup-uu.sh
+    for vmid in {{debian_lxcs}}; do
+        echo
+        echo "=== LXC $vmid ==="
+        ssh root@earendil "pct push $vmid /tmp/setup-uu.sh /root/setup-uu.sh && pct exec $vmid -- bash /root/setup-uu.sh && pct exec $vmid -- rm /root/setup-uu.sh"
+    done
+    ssh root@earendil 'rm /tmp/setup-uu.sh'
+    echo
+    echo "✓ unattended-upgrades configured on all guests."
+
+# --- Patching ---
+
+# All Debian-based LXCs on earendil
+debian_lxcs := "120 121 130 131"
+
+# Patch a single LXC (usage: just patch-lxc 120)
+patch-lxc vmid:
+    @echo "Patching LXC {{vmid}}..."
+    ssh root@earendil "pct exec {{vmid}} -- bash -c 'export DEBIAN_FRONTEND=noninteractive && apt update && apt -y upgrade && apt -y autoremove && apt clean'"
+
+# Patch all Debian LXCs sequentially
+patch-lxcs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for vmid in {{debian_lxcs}}; do
+        just patch-lxc $vmid
+    done
+
+# Patch the Debian VM (gondor) directly via SSH
+patch-gondor:
+    @echo "Patching gondor..."
+    ssh gondor 'sudo bash -c "export DEBIAN_FRONTEND=noninteractive && apt update && apt -y upgrade && apt -y autoremove && apt clean"'
+
+# Patch the Proxmox host itself
+patch-earendil:
+    @echo "Patching earendil (Proxmox host)..."
+    ssh root@earendil 'apt update && apt -y dist-upgrade && apt -y autoremove'
+
+# Patch everything that takes apt: Proxmox host, all LXCs, gondor VM
+# Bazzite (anduril) is handled separately via rpm-ostree
+patch-all: patch-earendil patch-lxcs patch-gondor
+    @echo
+    @echo "All apt-based hosts patched."
+    @echo "Reminder: anduril (Bazzite) updates via rpm-ostree — use 'just patch-bazzite' when it's running."
+
+# Patch Bazzite (anduril) — only works while the VM is running
+# Bazzite uses rpm-ostree for atomic, transactional updates
+patch-bazzite:
+    @echo "Patching anduril (Bazzite)..."
+    @echo "Note: this stages an update; reboot anduril to apply."
+    ssh anduril 'rpm-ostree upgrade'
+
+# Check pending reboots across all apt-based hosts
+# (Returns nothing if no reboot is pending)
+check-reboots:
+    #!/usr/bin/env bash
+    echo "=== earendil ==="
+    ssh root@earendil 'test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs || echo "no reboot needed"'
+    echo
+    for vmid in {{debian_lxcs}}; do
+        echo "=== LXC $vmid ==="
+        ssh root@earendil "pct exec $vmid -- bash -c 'test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs || echo \"no reboot needed\"'"
+    done
+    echo
+    echo "=== gondor ==="
+    ssh gondor 'test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs || echo "no reboot needed"'
