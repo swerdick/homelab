@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Setup script for the aglarond LXC (131)
+# Setup script for the tirion LXC (141)
 # Run from inside the container as root: bash setup.sh
 
 set -euo pipefail
 
-if [[ "$(hostname)" != "aglarond" ]]; then
-    echo "ERROR: this script is for the 'aglarond' LXC; got hostname '$(hostname)'"
+if [[ "$(hostname)" != "tirion" ]]; then
+    echo "ERROR: this script is for the 'tirion' LXC; got hostname '$(hostname)'"
     exit 1
 fi
 

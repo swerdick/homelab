@@ -5,7 +5,7 @@
 set -euo pipefail
 
 if [[ "$(hostname)" != "smb" ]]; then
-    echo "ERROR: this script is for the 'nfs' LXC; got hostname '$(hostname)'"
+    echo "ERROR: this script is for the 'smb' LXC; got hostname '$(hostname)'"
     exit 1
 fi
 

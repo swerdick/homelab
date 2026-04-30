@@ -74,7 +74,7 @@ setup-unattended-upgrades:
 # --- Patching ---
 
 # All Debian-based LXCs on earendil
-debian_lxcs := "120 121 130 131"
+debian_lxcs := "120 121 130 131 141"
 
 # Patch a single LXC (usage: just patch-lxc 120)
 patch-lxc vmid:
