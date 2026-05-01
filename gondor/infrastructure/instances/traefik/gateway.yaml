@@ -1,0 +1,20 @@
+---
+# The cluster-wide Gateway that all our HTTPRoutes will attach to.
+# Lives in the traefik namespace alongside the controller.
+#
+# Currently HTTP only. We'll add an HTTPS listener (with a cert-manager-issued
+# certificate referenced via certificateRefs) once cert-manager is set up.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: vingilot
+  namespace: traefik
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: web
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All

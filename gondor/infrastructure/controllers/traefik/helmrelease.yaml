@@ -1,0 +1,63 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  interval: 1h
+  releaseName: traefik
+  chart:
+    spec:
+      chart: traefik
+      version: ">=37.0.0 <38.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: traefik
+        namespace: flux-system
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Tell MetalLB to assign Traefik's LoadBalancer service the dedicated
+    # ingress-pool IP (192.168.1.220). Using the named pool annotation rather
+    # than hardcoding the IP keeps the IP source-of-truth in pools.yaml.
+    service:
+      annotations:
+        metallb.universe.tf/address-pool: ingress-pool
+
+    # Enable the Gateway API provider. Traefik will auto-create a GatewayClass
+    # named "traefik" that we reference from our Gateway resource in instances/.
+    providers:
+      kubernetesGateway:
+        enabled: true
+      kubernetesIngress:
+        enabled: true
+      kubernetesCRD:
+        enabled: true
+
+    ports:
+      web:
+        port: 8000
+        exposedPort: 80
+      websecure:
+        port: 8443
+        exposedPort: 443
+        tls:
+          enabled: true
+
+    # Disable the bundled Gateway resource — we manage it ourselves in instances/.
+    # Keep gatewayClass enabled so Traefik creates the GatewayClass we reference.
+    gateway:
+      enabled: false
+    gatewayClass:
+      enabled: true
+
+    # Disabled until we set up auth in front of it.
+    ingressRoute:
+      dashboard:
+        enabled: false
