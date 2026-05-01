@@ -1,0 +1,21 @@
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: tirion
+spec:
+  acme:
+    server: https://tirion.vingilot.internal/acme/acme/directory
+    email: pseudo@vingilot.internal
+    privateKeySecretRef:
+      name: tirion-account-key
+    caBundleSecretRef:
+      name: tirion-root-ca
+      key: ca.crt
+    solvers:
+      - http01:
+          gatewayHTTPRoute:
+            parentRefs:
+              - name: vingilot
+                namespace: traefik
+                kind: Gateway
