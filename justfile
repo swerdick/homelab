@@ -113,6 +113,11 @@ patch-bazzite:
     @echo "Note: this stages an update; reboot anduril to apply."
     ssh anduril 'rpm-ostree upgrade'
 
+# Open Capacitor (Flux UI) on http://localhost:9000
+capacitor:
+    @echo "Capacitor will be available at http://localhost:9000"
+    kubectl -n flux-system port-forward svc/capacitor 9000:9000
+
 # Check pending reboots across all apt-based hosts
 # (Returns nothing if no reboot is pending)
 check-reboots:
