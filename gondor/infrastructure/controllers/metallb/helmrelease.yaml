@@ -1,0 +1,28 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: metallb
+  namespace: metallb-system
+spec:
+  interval: 1h
+  releaseName: metallb
+  chart:
+    spec:
+      chart: metallb
+      version: ">=0.15.0 <0.16.0"
+      sourceRef:
+        kind: HelmRepository
+        name: metallb
+        namespace: flux-system
+  install:
+    # CreateReplace lets the Helm install create CRDs if missing, replace if drifted.
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  # Default values are correct for L2 mode (single-node homelab, no BGP router).
+  # If we ever migrate to BGP or need custom resource limits, override here.
+  values: {}

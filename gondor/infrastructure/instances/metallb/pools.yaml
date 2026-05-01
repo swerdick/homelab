@@ -1,0 +1,35 @@
+---
+# Single-IP pool reserved for the ingress controller (Traefik, when it lands).
+# Pinned to .220 so DNS wildcard *.vingilot.internal can point here permanently.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: ingress-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.220/32
+---
+# General pool for any other LoadBalancer services that need a stable LAN IP
+# (databases for occasional debugging, syslog receivers, etc.).
+# Avoids .241-.253 buffer and .254 (Verizon-reserved on some firmware).
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: general-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.221-192.168.1.240
+---
+# Layer 2 mode: ARP-announce IPs from both pools on the LAN.
+# Required because we have a single node and consumer-router (no BGP).
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: l2-advert
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - ingress-pool
+    - general-pool

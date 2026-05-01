@@ -1,0 +1,40 @@
+---
+# Controllers: install Helm charts that ship CRDs (MetalLB, cert-manager, Traefik, etc.).
+# This Kustomization waits for resources to be Ready before it's considered reconciled,
+# so things that dependsOn it get a real signal that CRDs are present and operators are running.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure-controllers
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./gondor/infrastructure/controllers
+  prune: true
+  wait: true
+---
+# Instances: applies CRs (IPAddressPool, ClusterIssuer, etc.) that depend on the CRDs
+# installed by the controllers above. dependsOn ensures Flux waits for the controllers
+# Kustomization to be Ready before reconciling these.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure-instances
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./gondor/infrastructure/instances
+  prune: true
+  wait: true
+  dependsOn:
+    - name: infrastructure-controllers
