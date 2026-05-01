@@ -1,44 +1,23 @@
 # cert-manager ClusterIssuer
 
-This directory contains the `ClusterIssuer` resource that references tirion's
-ACME provisioner. cert-manager uses it to sign Certificate requests across the
-cluster.
+The `tirion` ClusterIssuer references tirion's ACME provisioner. cert-manager
+uses it to sign Certificate requests across the cluster.
 
-## Manual prerequisite: tirion-root-ca Secret
+## CA bundle
 
-The ClusterIssuer references a Kubernetes Secret containing tirion's root CA
-certificate so cert-manager can verify the HTTPS connection to the ACME endpoint.
+The `caBundle` field contains the base64-encoded PEM of tirion's root CA cert.
+This is what cert-manager uses to verify the HTTPS connection to tirion.
 
-This Secret is created manually rather than via GitOps because:
+To regenerate the `caBundle` value (e.g., if the CA is rotated):
 
-1. It existed before SOPS+age encryption was set up
-2. Once SOPS is set up, the Secret will be moved into Git and this README updated
+```bash
+base64 -i ~/.step/certs/root_ca.crt | tr -d '\n'
+```
 
-### To create the Secret
+Then paste the output into `clusterissuer.yaml` at `spec.acme.caBundle`.
 
-The tirion root CA cert was distributed to thorondor by
-`gondor/bootstrap/distribute-root-ca.sh`. On thorondor it lives somewhere under
-`~/.step/` (run `step path` to find the exact location).
-
-\`\`\`bash
-# From thorondor:
-kubectl create secret generic tirion-root-ca \
---namespace=cert-manager \
---from-file=ca.crt=$HOME/.step/certs/root_ca.crt
-
-# Verify
-kubectl -n cert-manager get secret tirion-root-ca
-\`\`\`
-
-### Eventual migration
-
-Once SOPS+age is set up:
-
-1. Encrypt the Secret manifest with `sops`
-2. Commit the encrypted YAML to this directory
-3. Add to `kustomization.yaml`
-4. Delete this README's manual instructions
-5. Verify cert-manager continues to validate against tirion
+The root CA *certificate* is public information — committing it to Git is fine.
+The root CA *private key* lives on tirion in `/etc/step-ca/` and never leaves.
 
 ## How a cert gets issued
 

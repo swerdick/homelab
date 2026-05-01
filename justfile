@@ -118,6 +118,10 @@ capacitor:
     @echo "Capacitor will be available at http://localhost:9000"
     kubectl -n flux-system port-forward svc/capacitor 9000:9000
 
+# In ~/repositories/homelab/justfile
+validate path:
+    kustomize build {{path}} | kubectl apply --dry-run=server -f -
+
 # Check pending reboots across all apt-based hosts
 # (Returns nothing if no reboot is pending)
 check-reboots:

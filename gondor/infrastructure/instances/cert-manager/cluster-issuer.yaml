@@ -5,13 +5,22 @@ metadata:
   name: tirion
 spec:
   acme:
+    # ACME directory URL for tirion's `acme` provisioner.
     server: https://tirion.vingilot.internal/acme/acme/directory
+
+    # Registration email for the ACME account. Cosmetic for an internal CA.
     email: pseudo@vingilot.internal
+
+    # cert-manager creates this secret to store the ACME account's private key.
     privateKeySecretRef:
       name: tirion-account-key
-    caBundleSecretRef:
-      name: tirion-root-ca
-      key: ca.crt
+
+    # Tirion's root CA certificate, base64-encoded PEM. cert-manager uses this
+    # to verify the HTTPS connection to tirion's ACME endpoint, since tirion's
+    # cert is signed by its own root (not in the Mozilla bundle that ships with
+    # cert-manager's container image).
+    caBundle:
+    # HTTP-01 challenge solved via Gateway API HTTPRoute on the vingilot Gateway.
     solvers:
       - http01:
           gatewayHTTPRoute:
