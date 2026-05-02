@@ -2,8 +2,9 @@
 # The cluster-wide Gateway that all our HTTPRoutes will attach to.
 # Lives in the traefik namespace alongside the controller.
 #
-# Currently HTTP only. We'll add an HTTPS listener (with a cert-manager-issued
-# certificate referenced via certificateRefs) once cert-manager is set up.
+# Pattern B (per-service certs via HTTP-01): each service gets its own HTTPS
+# listener with a hostname filter and a dedicated cert Secret. Listeners
+# accumulate as services are added. Revisit if/when DNS-01 + wildcard is set up.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -12,9 +13,38 @@ metadata:
 spec:
   gatewayClassName: traefik
   listeners:
+    # HTTP listener also serves ACME HTTP-01 challenges (cluster-issuer `tirion`
+    # auto-creates HTTPRoutes here for /.well-known/acme-challenge/...).
     - name: web
       protocol: HTTP
-      port: 8000 #  matches Traefik's internal `web` entrypoint port
+      port: 8000 # matches Traefik's internal `web` entrypoint port
       allowedRoutes:
         namespaces:
           from: All
+    - name: grafana-https
+      protocol: HTTPS
+      port: 8443 # matches Traefik's internal `websecure` entrypoint port
+      hostname: grafana.vingilot.internal
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: grafana-vingilot-tls
+      allowedRoutes:
+        namespaces:
+          from: All
+---
+# Certificate for grafana.vingilot.internal, issued by the `tirion` ClusterIssuer
+# via HTTP-01. Lives in the traefik namespace so the Gateway listener can read
+# the resulting Secret without a ReferenceGrant.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana-vingilot-tls
+  namespace: traefik
+spec:
+  secretName: grafana-vingilot-tls
+  dnsNames:
+    - grafana.vingilot.internal
+  issuerRef:
+    name: tirion
+    kind: ClusterIssuer
