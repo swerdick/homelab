@@ -122,6 +122,9 @@ capacitor:
 validate path:
     kustomize build {{path}} | kubectl apply --dry-run=server -f -
 
+flux-monitor:
+    flux get kustomizations -A --watch
+
 # Check pending reboots across all apt-based hosts
 # (Returns nothing if no reboot is pending)
 check-reboots:
