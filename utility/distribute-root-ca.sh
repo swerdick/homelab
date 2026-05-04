@@ -28,13 +28,13 @@ echo "Distributing to directly-reachable Debian hosts..."
 # earendil and tirion connect as root (per ~/.ssh/config); no sudo needed
 for host in earendil tirion; do
     echo "  → ${host}"
-    scp -O "${CERT_LOCAL}" "${host}:/tmp/vingilot-root-ca.crt"
+    scp "${CERT_LOCAL}" "${host}:/tmp/vingilot-root-ca.crt"
     ssh "${host}" 'install -m 644 /tmp/vingilot-root-ca.crt /usr/local/share/ca-certificates/vingilot-root-ca.crt && update-ca-certificates && rm /tmp/vingilot-root-ca.crt'
 done
 
 # gondor connects as pseudo; needs sudo
 echo "  → gondor"
-scp -O "${CERT_LOCAL}" "gondor:/tmp/vingilot-root-ca.crt"
+scp "${CERT_LOCAL}" "gondor:/tmp/vingilot-root-ca.crt"
 ssh gondor 'sudo install -m 644 /tmp/vingilot-root-ca.crt /usr/local/share/ca-certificates/vingilot-root-ca.crt && sudo update-ca-certificates && rm /tmp/vingilot-root-ca.crt'
 
 # --- Trust on LXCs (via earendil + pct exec) ---
@@ -42,7 +42,7 @@ ssh gondor 'sudo install -m 644 /tmp/vingilot-root-ca.crt /usr/local/share/ca-ce
 # things in vingilot.internal and need to trust the chain.
 echo
 echo "Distributing to LXCs via earendil..."
-scp -O "${CERT_LOCAL}" "root@earendil:/tmp/vingilot-root-ca.crt"
+scp "${CERT_LOCAL}" "root@earendil:/tmp/vingilot-root-ca.crt"
 for entry in "130:erebor" "131:aglarond"; do
     vmid="${entry%:*}"
     name="${entry#*:}"
@@ -65,6 +65,11 @@ echo
 echo "  - nfs (120) / smb (121): skipped — no TLS client use case."
 echo "    If you ever stand one up behind ingress or talking to an internal"
 echo "    HTTPS service, add it to the LXC loop above."
+echo
+echo "For Firefox on macOS: it ships its own NSS trust store and ignores"
+echo "the System Keychain by default. In about:config, set"
+echo "  security.enterprise_roots.enabled = true"
+echo "and restart Firefox. It will then import roots from the OS at startup."
 echo
 echo "For iOS: AirDrop ${CERT_LOCAL} to your phone, install the profile,"
 echo "then go to Settings → General → About → Certificate Trust Settings"

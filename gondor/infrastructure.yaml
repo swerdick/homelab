@@ -17,6 +17,10 @@ spec:
   path: ./gondor/infrastructure/controllers
   prune: true
   wait: true
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
 ---
 # Instances: applies CRs (IPAddressPool, ClusterIssuer, etc.) that depend on the CRDs
 # installed by the controllers above. dependsOn ensures Flux waits for the controllers
@@ -38,3 +42,7 @@ spec:
   wait: true
   dependsOn:
     - name: infrastructure-controllers
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

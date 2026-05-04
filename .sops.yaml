@@ -1,0 +1,6 @@
+creation_rules:
+  # All Kubernetes Secret YAML files under gondor/ get encrypted with this age key.
+  # Only the data: and stringData: fields are encrypted (not metadata, kind, etc.)
+  - path_regex: gondor/.*\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
