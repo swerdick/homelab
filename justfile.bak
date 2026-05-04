@@ -1,13 +1,8 @@
 k3s_version := "v1.34.6+k3s1"
 
-# All Debian-based LXCs on earendil
-debian_lxcs := "120 121 130 131 141"
-
 # List all available recipes
 default:
     @just --list
-
-# --- Bootstrap ---
 
 bootstrap-gondor:
     ssh gondor 'K3S_VERSION={{k3s_version}} bash -s' < gondor/bootstrap/install-k3s.sh
@@ -44,72 +39,42 @@ status:
     @echo "=== Helm Releases ==="
     @flux get helmreleases -A
 
-# Watch Kustomization reconciliations live (Ctrl+C to exit)
-flux-monitor:
-    flux get kustomizations -A --watch
-
-# Stream all Flux events in real time (Ctrl+C to exit)
-events:
-    flux events -A --watch
-
 # Tail Flux logs (kustomize-controller is usually what you want)
 logs component="kustomize-controller":
     kubectl logs -n flux-system -l app={{component}} --tail=100 -f
-
-# Validate Kubernetes manifests via server-side dry-run.
-# Auto-detects SOPS-encrypted files and decrypts them before validation.
-validate path:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    rendered=$(kustomize build {{path}})
-    # SOPS-encrypted resources have an inline 'sops:' block at the top level
-    # which kubectl's strict decoder rejects. Detect and route through sops.
-    if echo "${rendered}" | grep -q "^sops:" || echo "${rendered}" | grep -q "ENC\[AES256_GCM"; then
-        echo "(SOPS-encrypted resources detected — decrypting before validation)"
-        find {{path}} -name "*.yaml" -not -name "kustomization.yaml" | while read -r f; do
-            if grep -q "^sops:" "$f" 2>/dev/null; then
-                sops --decrypt "$f" | kubectl apply --dry-run=server -f -
-            else
-                kubectl apply --dry-run=server -f "$f"
-            fi
-        done
-    else
-        echo "${rendered}" | kubectl apply --dry-run=server -f -
-    fi
-
-# Encrypt a Kubernetes Secret YAML in place using SOPS+age.
-# The .sops.yaml at the repo root configures which fields get encrypted
-# (currently: data: and stringData: under any gondor/*.yaml).
-#
-# Workflow for adding a new encrypted Secret:
-#   1. Write a plaintext Secret manifest with actual values
-#   2. just sops-encrypt path/to/secret.yaml
-#   3. Add the file to its parent kustomization.yaml's resources list
-#   4. git add, commit, push — Flux decrypts and applies in-cluster
-sops-encrypt path:
-    @sops --encrypt --in-place {{path}}
-    @echo ""
-    @echo "✓ Encrypted in place: {{path}}"
-    @echo ""
-    @echo "Don't forget to:"
-    @echo "  1. Add this file to its parent kustomization.yaml's 'resources:' list"
-    @echo "  2. just validate <kustomization-dir>  to confirm it dry-runs cleanly"
-    @echo "  3. git add, commit, push — Flux will decrypt and apply"
-    @echo ""
-    @echo "To re-edit the secret later:"
-    @echo "  sops {{path}}    # opens decrypted in your \$EDITOR"
 
 # Open Grafana (port-forward; run after kube-prometheus-stack is deployed)
 grafana:
     @echo "Grafana at http://localhost:3000 — admin / prom-operator (default; change it)"
     kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
 
-# Open Capacitor (Flux UI) on http://localhost:9000
-capacitor:
-    @echo "Capacitor will be available at http://localhost:9000"
-    kubectl -n flux-system port-forward svc/capacitor 9000:9000
+# Install unattended-upgrades on all Debian-based guests
+# (run once per guest; idempotent if re-run)
+setup-unattended-upgrades:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SCRIPT="utility/setup-unattended-upgrades.sh"
+
+    echo "=== gondor ==="
+    scp "$SCRIPT" gondor:/tmp/setup-uu.sh
+    ssh gondor 'sudo bash /tmp/setup-uu.sh && rm /tmp/setup-uu.sh'
+
+    echo
+    echo "Pushing to LXCs via earendil..."
+    scp "$SCRIPT" root@earendil:/tmp/setup-uu.sh
+    for vmid in {{debian_lxcs}}; do
+        echo
+        echo "=== LXC $vmid ==="
+        ssh root@earendil "pct push $vmid /tmp/setup-uu.sh /root/setup-uu.sh && pct exec $vmid -- bash /root/setup-uu.sh && pct exec $vmid -- rm /root/setup-uu.sh"
+    done
+    ssh root@earendil 'rm /tmp/setup-uu.sh'
+    echo
+    echo "✓ unattended-upgrades configured on all guests."
 
 # --- Patching ---
+
+# All Debian-based LXCs on earendil
+debian_lxcs := "120 121 130 131 141"
 
 # Patch a single LXC (usage: just patch-lxc 120)
 patch-lxc vmid:
@@ -148,6 +113,18 @@ patch-bazzite:
     @echo "Note: this stages an update; reboot anduril to apply."
     ssh anduril 'rpm-ostree upgrade'
 
+# Open Capacitor (Flux UI) on http://localhost:9000
+capacitor:
+    @echo "Capacitor will be available at http://localhost:9000"
+    kubectl -n flux-system port-forward svc/capacitor 9000:9000
+
+# In ~/repositories/homelab/justfile
+validate path:
+    kustomize build {{path}} | kubectl apply --dry-run=server -f -
+
+flux-monitor:
+    flux get kustomizations -A --watch
+
 # Check pending reboots across all apt-based hosts
 # (Returns nothing if no reboot is pending)
 check-reboots:
@@ -162,28 +139,3 @@ check-reboots:
     echo
     echo "=== gondor ==="
     ssh gondor 'test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs || echo "no reboot needed"'
-
-# --- Setup tasks ---
-
-# Install unattended-upgrades on all Debian-based guests
-# (run once per guest; idempotent if re-run)
-setup-unattended-upgrades:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    SCRIPT="utility/setup-unattended-upgrades.sh"
-
-    echo "=== gondor ==="
-    scp "$SCRIPT" gondor:/tmp/setup-uu.sh
-    ssh gondor 'sudo bash /tmp/setup-uu.sh && rm /tmp/setup-uu.sh'
-
-    echo
-    echo "Pushing to LXCs via earendil..."
-    scp "$SCRIPT" root@earendil:/tmp/setup-uu.sh
-    for vmid in {{debian_lxcs}}; do
-        echo
-        echo "=== LXC $vmid ==="
-        ssh root@earendil "pct push $vmid /tmp/setup-uu.sh /root/setup-uu.sh && pct exec $vmid -- bash /root/setup-uu.sh && pct exec $vmid -- rm /root/setup-uu.sh"
-    done
-    ssh root@earendil 'rm /tmp/setup-uu.sh'
-    echo
-    echo "✓ unattended-upgrades configured on all guests."
