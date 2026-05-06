@@ -1,0 +1,221 @@
+---
+- name: Install and bootstrap step-ca on tirion
+  # Explicitly `hosts: tirion` (not a group) so a typo elsewhere can't run
+  # this against the wrong host. The play also asserts hostname before doing
+  # anything destructive — see first task.
+  hosts: tirion
+  vars:
+    steppath: /etc/step-ca
+    ca_name: vingilot.internal
+    ca_dns_names: tirion,tirion.vingilot.internal,ca.vingilot.internal
+    ca_listen_address: ":443"
+    acme_provisioner_name: acme
+    jwk_provisioner_name: admin
+
+  tasks:
+    - name: Sanity-check that this is tirion
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "tirion"
+          - ansible_facts.hostname == "tirion"
+        fail_msg: >-
+          step-ca playbook is tirion-only; refusing to run against
+          {{ inventory_hostname }} (live hostname {{ ansible_facts.hostname }}).
+
+    - name: Ensure /etc/apt/keyrings exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Smallstep apt signing key
+      ansible.builtin.get_url:
+        url: https://packages.smallstep.com/keys/apt/repo-signing-key.gpg
+        dest: /etc/apt/keyrings/smallstep.asc
+        mode: "0644"
+
+    - name: Add Smallstep apt repo (deb822)
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/smallstep.sources
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          Types: deb
+          URIs: https://packages.smallstep.com/stable/debian
+          Suites: debs
+          Components: main
+          Signed-By: /etc/apt/keyrings/smallstep.asc
+      register: smallstep_repo
+
+    - name: Refresh apt cache after repo change
+      ansible.builtin.apt:
+        update_cache: true
+      when: smallstep_repo.changed
+
+    - name: Install step-cli and step-ca
+      ansible.builtin.apt:
+        name:
+          - step-cli
+          - step-ca
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Create 'step' system user
+      ansible.builtin.user:
+        name: step
+        system: true
+        home: "{{ steppath }}"
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: Ensure {{ steppath }} exists with correct ownership
+      ansible.builtin.file:
+        path: "{{ steppath }}"
+        state: directory
+        owner: step
+        group: step
+        mode: "0755"
+
+    - name: Check whether the CA has already been initialized
+      # CRITICAL safety gate: if ca.json exists, every CA-init task below
+      # is skipped. Re-initializing would generate a fresh root cert and
+      # break trust on every homelab host.
+      ansible.builtin.stat:
+        path: "{{ steppath }}/config/ca.json"
+      register: ca_config
+
+    - name: Initialize CA (one-time only; never re-runs once ca.json exists)
+      when: not ca_config.stat.exists
+      block:
+        - name: Generate random CA password
+          ansible.builtin.shell:
+            cmd: "openssl rand -base64 32 > {{ steppath }}/password"
+            creates: "{{ steppath }}/password"
+
+        - name: Lock down ownership/perms on the CA password file
+          ansible.builtin.file:
+            path: "{{ steppath }}/password"
+            owner: step
+            group: step
+            mode: "0600"
+
+        - name: Run `step ca init`
+          ansible.builtin.command:
+            # `creates:` is a second safety net — even if this task is
+            # somehow reached, step ca init won't re-run when ca.json exists.
+            #
+            # tirion has no sudo (verified 2026-05); using runuser from
+            # util-linux to drop privileges to the step user.
+            cmd: >-
+              runuser -u step -- env STEPPATH={{ steppath }}
+              step ca init
+              --name={{ ca_name }}
+              --dns={{ ca_dns_names }}
+              --address={{ ca_listen_address }}
+              --provisioner={{ jwk_provisioner_name }}
+              --password-file={{ steppath }}/password
+              --provisioner-password-file={{ steppath }}/password
+            creates: "{{ steppath }}/config/ca.json"
+
+    - name: Re-stat ca.json (handles both fresh-init and pre-existing)
+      ansible.builtin.stat:
+        path: "{{ steppath }}/config/ca.json"
+      register: ca_config_post
+
+    - name: List existing provisioners
+      # See note on runuser in the init block: tirion has no sudo.
+      # `check_mode: false` makes this read-only probe execute even during
+      # --check, so the playbook can verify ACME is already registered.
+      ansible.builtin.command:
+        cmd: runuser -u step -- env STEPPATH={{ steppath }} step ca provisioner list
+      register: provisioner_list
+      changed_when: false
+      check_mode: false
+      when: ca_config_post.stat.exists
+
+    - name: Add ACME provisioner if missing
+      ansible.builtin.command:
+        cmd: >-
+          runuser -u step -- env STEPPATH={{ steppath }}
+          step ca provisioner add {{ acme_provisioner_name }} --type ACME
+      when:
+        - ca_config_post.stat.exists
+        - provisioner_list is not skipped
+        - acme_provisioner_name not in (provisioner_list.stdout | default('[]') | from_json | map(attribute='name') | list)
+
+    - name: Install step-ca systemd unit (only if not already present)
+      # `force: false` preserves any in-place tweaks made on the host.
+      # If you want to re-template, delete the file on the host and re-run.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/step-ca.service
+        owner: root
+        group: root
+        mode: "0644"
+        force: false
+        content: |
+          [Unit]
+          Description=step-ca service
+          Documentation=https://smallstep.com/docs/step-ca
+          Documentation=https://smallstep.com/docs/step-ca/certificate-authority-server-production
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitIntervalSec=30
+          StartLimitBurst=3
+          ConditionFileNotEmpty={{ steppath }}/config/ca.json
+          ConditionFileNotEmpty={{ steppath }}/password
+
+          [Service]
+          Type=simple
+          User=step
+          Group=step
+          Environment=STEPPATH={{ steppath }}
+          WorkingDirectory={{ steppath }}
+          ExecStart=/usr/bin/step-ca config/ca.json --password-file=password
+          ExecReload=/bin/kill --signal HUP $MAINPID
+          Restart=on-failure
+          RestartSec=5
+          TimeoutStopSec=30
+          StartLimitInterval=30
+          StartLimitBurst=3
+
+          # Hardening
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+          CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+          NoNewPrivileges=true
+          LimitNOFILE=65536
+          ProtectSystem=full
+          ProtectHome=true
+          PrivateTmp=true
+          PrivateDevices=true
+          ProtectHostname=true
+          ProtectKernelTunables=true
+          ProtectKernelModules=true
+          ProtectKernelLogs=true
+          ProtectControlGroups=true
+          RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+          RestrictNamespaces=true
+          LockPersonality=true
+          MemoryDenyWriteExecute=true
+          RestrictRealtime=true
+          RestrictSUIDSGID=true
+          RemoveIPC=true
+          SystemCallFilter=@system-service
+          SystemCallFilter=~@privileged @resources
+          SystemCallArchitectures=native
+
+          [Install]
+          WantedBy=multi-user.target
+      register: systemd_unit
+
+    - name: Reload systemd if unit file was just created
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: systemd_unit.changed
+
+    - name: Enable and start step-ca
+      ansible.builtin.systemd:
+        name: step-ca
+        enabled: true
+        state: started

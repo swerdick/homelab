@@ -185,3 +185,8 @@ trust-ca-mac:
 # (idempotent; safe to re-run)
 setup-unattended-upgrades:
     ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-unattended-upgrades.yaml
+
+# Install/bootstrap step-ca on tirion via ansible. Idempotent — once the CA
+# is initialized this is a no-op. Targets only tirion.
+setup-step-ca:
+    ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-step-ca.yaml
