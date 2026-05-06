@@ -39,3 +39,14 @@ all:
         aglarond: {}
         gondor: {}
         erebor: {}
+    # Debian-family hosts that should receive automated security updates.
+    # Excludes earendil (Proxmox host — kernel upgrades need manual care)
+    # and anduril (Bazzite/Fedora atomic — uses rpm-ostree).
+    debian_guests:
+      hosts:
+        gondor: {}
+        erebor: {}
+        nfs: {}
+        smb: {}
+        aglarond: {}
+        tirion: {}

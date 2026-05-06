@@ -181,25 +181,7 @@ trust-ca-mac:
 
 # --- Setup tasks ---
 
-# Install unattended-upgrades on all Debian-based guests
-# (run once per guest; idempotent if re-run)
+# Configure unattended-upgrades on all Debian guests via ansible
+# (idempotent; safe to re-run)
 setup-unattended-upgrades:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    SCRIPT="utility/setup-unattended-upgrades.sh"
-
-    echo "=== gondor ==="
-    scp "$SCRIPT" gondor:/tmp/setup-uu.sh
-    ssh gondor 'sudo bash /tmp/setup-uu.sh && rm /tmp/setup-uu.sh'
-
-    echo
-    echo "Pushing to LXCs via earendil..."
-    scp "$SCRIPT" root@earendil:/tmp/setup-uu.sh
-    for vmid in {{debian_lxcs}}; do
-        echo
-        echo "=== LXC $vmid ==="
-        ssh root@earendil "pct push $vmid /tmp/setup-uu.sh /root/setup-uu.sh && pct exec $vmid -- bash /root/setup-uu.sh && pct exec $vmid -- rm /root/setup-uu.sh"
-    done
-    ssh root@earendil 'rm /tmp/setup-uu.sh'
-    echo
-    echo "✓ unattended-upgrades configured on all guests."
+    ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-unattended-upgrades.yaml

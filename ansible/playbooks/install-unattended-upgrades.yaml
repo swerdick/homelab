@@ -1,0 +1,121 @@
+---
+- name: Configure unattended-upgrades on Debian guests
+  hosts: debian_guests
+  tasks:
+    - name: Sanity-check that this is a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+        fail_msg: "Expected Debian-family host, got {{ ansible_facts.os_family }}"
+
+    - name: Refresh apt cache before probing for the reboot-notifier package
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Probe apt for apt-config-auto-update
+      # Prefer apt-config-auto-update where available (Trixie default; also
+      # present on Bookworm). Fall back to update-notifier-common otherwise.
+      # apt-cache rc is per-package, so probe each independently.
+      ansible.builtin.command: apt-cache show apt-config-auto-update
+      changed_when: false
+      failed_when: false
+      register: probe_apt_config_auto_update
+
+    - name: Probe apt for update-notifier-common
+      ansible.builtin.command: apt-cache show update-notifier-common
+      changed_when: false
+      failed_when: false
+      register: probe_update_notifier_common
+      when: probe_apt_config_auto_update.rc != 0
+
+    - name: Pick reboot-notifier package
+      ansible.builtin.set_fact:
+        uu_reboot_pkg: >-
+          {{ 'apt-config-auto-update'
+             if probe_apt_config_auto_update.rc == 0
+             else 'update-notifier-common' }}
+
+    - name: Fail if no reboot-notifier package is available
+      ansible.builtin.fail:
+        msg: >-
+          Neither apt-config-auto-update nor update-notifier-common is
+          available in this host's apt sources. Check /etc/apt/sources.list*.
+      when:
+        - probe_apt_config_auto_update.rc != 0
+        - (probe_update_notifier_common.rc | default(1)) != 0
+
+    - name: Install unattended-upgrades and helpers
+      ansible.builtin.apt:
+        name:
+          - unattended-upgrades
+          - "{{ uu_reboot_pkg }}"
+          - apt-listchanges
+        state: present
+
+    - name: Write /etc/apt/apt.conf.d/50unattended-upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          // Managed by ansible/playbooks/install-unattended-upgrades.yaml
+          // — edit the playbook, not this file.
+
+          Unattended-Upgrade::Origins-Pattern {
+              // Security updates only
+              "origin=Debian,codename=${distro_codename},label=Debian-Security";
+              "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+          };
+
+          // Don't auto-upgrade these even if they have security updates
+          // (add packages here if something breaks during an auto-upgrade).
+          Unattended-Upgrade::Package-Blacklist {
+          };
+
+          // Remove unused kernels and dependencies
+          Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+          Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+          // Treat conffile prompts conservatively — keep the version we have
+          Unattended-Upgrade::DPkg::Options {
+              "--force-confdef";
+              "--force-confold";
+          };
+
+          // Email config — no local mail; leave empty.
+          Unattended-Upgrade::Mail "";
+
+          // IMPORTANT: do not auto-reboot. Reboots are deliberate via
+          // 'just check-reboots' / 'just patch-*'.
+          Unattended-Upgrade::Automatic-Reboot "false";
+
+          // Be quieter in syslog unless something fails.
+          Unattended-Upgrade::Verbose "false";
+          Unattended-Upgrade::Debug "false";
+
+    - name: Write /etc/apt/apt.conf.d/20auto-upgrades
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Verbose "0";
+
+    - name: Enable apt-daily timer
+      ansible.builtin.systemd:
+        name: apt-daily.timer
+        enabled: true
+        state: started
+
+    - name: Enable apt-daily-upgrade timer
+      ansible.builtin.systemd:
+        name: apt-daily-upgrade.timer
+        enabled: true
+        state: started
