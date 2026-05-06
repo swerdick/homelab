@@ -1,0 +1,48 @@
+---
+- name: Install Grafana Alloy on all hosts
+  hosts: alloy
+  tasks:
+    - name: Ensure /etc/apt/keyrings exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Grafana apt key
+      ansible.builtin.get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /etc/apt/keyrings/grafana.asc
+        mode: "0644"
+
+    - name: Add Grafana apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main"
+        state: present
+        filename: grafana
+        update_cache: true
+
+    - name: Install alloy package
+      ansible.builtin.apt:
+        name: alloy
+        state: present
+
+    - name: Template /etc/alloy/config.alloy
+      ansible.builtin.template:
+        src: ../templates/config.alloy.j2
+        dest: /etc/alloy/config.alloy
+        owner: root
+        group: alloy
+        mode: "0640"
+      notify: Restart alloy
+
+    - name: Enable and start alloy
+      ansible.builtin.systemd:
+        name: alloy
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart alloy
+      ansible.builtin.systemd:
+        name: alloy
+        state: restarted

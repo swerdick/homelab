@@ -1,4 +1,10 @@
 creation_rules:
+  # Ansible vars/secrets files. Convention: any file ending in `.sops.yaml`
+  # under ansible/ gets fully encrypted (every value, not just data/stringData)
+  # since these are plain key-value vars, not Kubernetes Secret manifests.
+  - path_regex: ansible/.*\.sops\.ya?ml$
+    age: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+
   # All Kubernetes Secret YAML files under gondor/ get encrypted with this age key.
   # Only the data: and stringData: fields are encrypted (not metadata, kind, etc.)
   - path_regex: gondor/.*\.ya?ml$

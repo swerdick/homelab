@@ -1,0 +1,28 @@
+---
+all:
+  children:
+    root_hosts:
+      hosts:
+        earendil: {}
+        tirion: {}
+        nfs:
+          ansible_user: root
+        smb:
+          ansible_user: root
+        aglarond: {}
+    sudo_hosts:
+      hosts:
+        gondor:
+          ansible_become: true
+          ansible_become_method: sudo
+    proxmox_hosts:
+      hosts:
+        earendil: {}
+    alloy:
+      hosts:
+        earendil: {}
+        tirion: {}
+        nfs: {}
+        smb: {}
+        aglarond: {}
+        gondor: {}

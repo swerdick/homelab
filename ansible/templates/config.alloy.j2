@@ -1,0 +1,47 @@
+// Managed by Ansible. Edits to /etc/alloy/config.alloy will be overwritten;
+// change ansible/templates/config.alloy.j2 and re-run install-alloy.yaml.
+
+// Node-exporter equivalent: CPU, memory, disk, network, filesystem, etc.
+prometheus.exporter.unix "node" { }
+
+prometheus.scrape "node" {
+  targets    = prometheus.exporter.unix.node.targets
+  forward_to = [prometheus.relabel.set_instance.receiver]
+  job_name   = "node"
+}
+
+// Self-scrape Alloy's own metrics (HTTP server is on 12345 by default).
+prometheus.scrape "alloy" {
+  targets    = [{"__address__" = "127.0.0.1:12345"}]
+  forward_to = [prometheus.relabel.set_instance.receiver]
+  job_name   = "alloy"
+}
+
+// Override the `instance` label so all series from this host show up as
+// `instance="{{ inventory_hostname }}"` in Prometheus instead of "127.0.0.1:9100".
+prometheus.relabel "set_instance" {
+  forward_to = [prometheus.remote_write.default.receiver]
+  rule {
+    target_label = "instance"
+    replacement  = "{{ inventory_hostname }}"
+    action       = "replace"
+  }
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "https://prometheus.vingilot.internal/api/v1/write"
+    basic_auth {
+      username = "{{ alloy_remote_write_username }}"
+      password = "{{ alloy_remote_write_password }}"
+    }
+  }
+  // Buffer up to 24h of samples on disk so an extended gondor outage
+  // (e.g. running anduril overnight) doesn't lose data. Default is 8h.
+  wal {
+    max_keepalive_time = "24h"
+  }
+  external_labels = {
+    cluster = "homelab",
+  }
+}

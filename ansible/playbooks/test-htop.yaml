@@ -1,0 +1,10 @@
+---
+- name: Install htop on all hosts
+  hosts: all
+  tasks:
+    - name: Install htop package
+      ansible.builtin.apt:
+        name: htop
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
