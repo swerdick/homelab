@@ -1,0 +1,34 @@
+# Basic-auth credentials for prometheus.vingilot.internal.
+# `users` is htpasswd-format (bcrypt), one user per line. Decoded contents
+# look like:  alloy:$2y$05$...
+#
+# The plaintext password is stored separately in
+# ansible/group_vars/alloy/secrets.sops.yaml (also SOPS-encrypted) so the
+# Alloy collectors can authenticate.
+#
+# To rotate: edit both files via `sops <path>`, regenerate the bcrypt with
+#   htpasswd -nbB alloy "<new-password>"
+# and put the matching plaintext into the Ansible vars file.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: prometheus-basic-auth
+    namespace: monitoring
+type: Opaque
+stringData:
+    users: ENC[AES256_GCM,data:efHAy96f6e+H35ft8DVftbjxJPaEG/vIv8hcqxvp9KopS+Fy1CqJ2imUKn/zMKywzSOXnHNIWmYYXPOkPYYjAL8rXA==,iv:13EeIX5Yx3BjzdydTTLSlh3u1hsKLe0cjCAPEUOf6Ck=,tag:oo5kPqtzV13JxxkVXUw/sA==,type:str]
+sops:
+    age:
+        - recipient: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBNVU16dndlSC9GT1ZoRm54
+            S3RlRGI5cTV6ZERqSHpqYnIzaWMxYmdYN0ZJClJXd1Z0OVNLSUtQWE1mMUF5c3Zl
+            RUtQT3dIVzB4dHZrUHlJWmhtemc2V2sKLS0tIEpMNkNnalBDaCtNTCtCKzltcERU
+            cUwvUkYzOHlwN3kyR09Sbyt2MmFEbzQKQXr0eQsQFoGfCVSpuBqC0O2sP2I5SJYx
+            qmW6UTXyWElGvGtvNnfNA2yW0f6DmmOvRMfqqr2fMSeG5Mk1hPdTeg==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-05-06T21:02:34Z"
+    mac: ENC[AES256_GCM,data:p8YKlkl4MwHO1gJR0m5eCpUuXU+5iiLqam2YGqI+XpgD3TdZnQuxzn8JU+KOCENFd3yaRP7zzOfg5pL7FnE0OkELEyvg/8DQ9nrlG5Cu0ztx+DBMNwpY6yd+mNjMKN2CMzw23aQQCnll6CofO77bMcqGFFqqCgUau3JOsqag/sM=,iv:U1S6FFHkfPR1o/bmPczi8iaQYemrsDg4VtktIMUsGG0=,tag:ztBhI58XMJpXXj+tJE6U2A==,type:str]
+    encrypted_regex: ^(data|stringData)$
+    version: 3.12.2

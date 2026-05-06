@@ -4,3 +4,5 @@ resources:
   - namespace.yaml
   - kube-prometheus-stack.yaml
   - grafana-route.yaml
+  - prometheus-route.yaml
+  - prometheus-basic-auth.yaml

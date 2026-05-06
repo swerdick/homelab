@@ -1,0 +1,43 @@
+---
+# Traefik basicAuth middleware that fronts the Prometheus HTTPRoute.
+# Reads the `users` key (htpasswd-format) from the prometheus-basic-auth
+# Secret in the same namespace.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: prometheus-basic-auth
+  namespace: monitoring
+spec:
+  basicAuth:
+    secret: prometheus-basic-auth
+    realm: "prometheus.vingilot.internal"
+---
+# Routes https://prometheus.vingilot.internal/* to the kube-prometheus-stack
+# Prometheus Service. The basic-auth middleware is attached as an ExtensionRef
+# filter so unauthenticated requests are rejected at the edge.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  parentRefs:
+    - name: vingilot
+      namespace: traefik
+      sectionName: prometheus-https
+  hostnames:
+    - prometheus.vingilot.internal
+  rules:
+    - filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: prometheus-basic-auth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: kube-prometheus-stack-prometheus
+          port: 9090

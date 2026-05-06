@@ -31,6 +31,9 @@ spec:
     # Sized conservatively for the 10GB gondor VM
     prometheus:
       prometheusSpec:
+        # Accept Prometheus remote_write pushes from external collectors
+        # (Alloy on the bare hosts/LXCs/VMs) at /api/v1/write.
+        enableRemoteWriteReceiver: true
         retention: 14d
         retentionSize: "8GB"
         resources:
