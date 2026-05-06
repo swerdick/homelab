@@ -15,6 +15,18 @@ all:
         gondor:
           ansible_become: true
           ansible_become_method: sudo
+        erebor:
+          ansible_become: true
+          ansible_become_method: sudo
+    bazzite_hosts:
+      # anduril is a Bazzite (Fedora-based atomic) gaming VM, off most of the
+      # time. Plays should treat it as opportunistically reachable. SSH is
+      # configured externally via ~/.ssh/config; if/when ansible runs against
+      # it we'll likely need ansible_become details — adjust as needed.
+      hosts:
+        anduril:
+          ansible_become: true
+          ansible_become_method: sudo
     proxmox_hosts:
       hosts:
         earendil: {}
@@ -26,3 +38,4 @@ all:
         smb: {}
         aglarond: {}
         gondor: {}
+        erebor: {}

@@ -1,7 +1,24 @@
 ---
+# Alloy talks to https://prometheus.vingilot.internal, so the homelab root CA
+# must be trusted on every host first. The CA playbook is os-family aware and
+# safe to re-run.
+- import_playbook: distribute-root-ca.yaml
+
 - name: Install Grafana Alloy on all hosts
   hosts: alloy
   tasks:
+    - name: Ensure apt prerequisites for adding the Grafana repo
+      # ansible.builtin.apt_repository sanity-checks for gpg/apt-key even when
+      # we're using the modern signed-by= keyring syntax. Lean LXCs and the
+      # k3s VM don't ship gnupg, so install it explicitly.
+      ansible.builtin.apt:
+        name:
+          - gnupg
+          - apt-transport-https
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
     - name: Ensure /etc/apt/keyrings exists
       ansible.builtin.file:
         path: /etc/apt/keyrings
@@ -40,6 +57,15 @@
         name: alloy
         enabled: true
         state: started
+
+    - name: Restart alloy to pick up an updated CA trust store
+      # Set by playbooks/distribute-root-ca.yaml when the CA file actually
+      # changed on disk. Go binaries cache the system trust store at startup,
+      # so a CA refresh requires a restart to take effect.
+      ansible.builtin.systemd:
+        name: alloy
+        state: restarted
+      when: vingilot_ca_changed | default(false)
 
   handlers:
     - name: Restart alloy

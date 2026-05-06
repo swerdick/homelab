@@ -163,6 +163,22 @@ check-reboots:
     echo "=== gondor ==="
     ssh gondor 'test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs || echo "no reboot needed"'
 
+# --- CA / TLS ---
+
+# Trust the Vingilot root CA in this Mac's System Keychain.
+# Run once per fresh Mac, and again after a CA rotation.
+# (Linux hosts are handled by ansible/playbooks/distribute-root-ca.yaml.)
+trust-ca-mac:
+    @echo "Adding ansible/files/vingilot-root-ca.crt to System Keychain..."
+    @echo "(You'll be prompted for sudo and Keychain admin auth.)"
+    sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ansible/files/vingilot-root-ca.crt
+    @echo
+    @echo "✓ Trusted on this Mac."
+    @echo
+    @echo "Firefox uses its own NSS trust store. To make it follow the system trust:"
+    @echo "  about:config -> security.enterprise_roots.enabled = true"
+    @echo "  Restart Firefox afterward."
+
 # --- Setup tasks ---
 
 # Install unattended-upgrades on all Debian-based guests

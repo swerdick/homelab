@@ -1,0 +1,48 @@
+---
+- name: Distribute the Vingilot root CA to all homelab hosts
+  hosts: all
+  # anduril (Bazzite gaming VM) is off most of the time; don't fail the play
+  # over it. Hosts that are unreachable get a clean "unreachable" recap line
+  # and the play continues for everyone else. Re-run when anduril is on.
+  ignore_unreachable: true
+  tasks:
+    - name: Install root CA (Debian-family hosts)
+      # `| default('')` keeps the conditional safe on hosts where fact-gathering
+      # was skipped (anduril when unreachable). Falls through cleanly to skipped.
+      ansible.builtin.copy:
+        src: ../files/vingilot-root-ca.crt
+        dest: /usr/local/share/ca-certificates/vingilot-root-ca.crt
+        owner: root
+        group: root
+        mode: "0644"
+      when: ansible_facts.os_family | default('') == "Debian"
+      notify: Update CA trust store (Debian)
+      register: ca_debian
+
+    - name: Install root CA (RedHat-family hosts, e.g. Bazzite/Fedora)
+      ansible.builtin.copy:
+        src: ../files/vingilot-root-ca.crt
+        dest: /etc/pki/ca-trust/source/anchors/vingilot-root-ca.crt
+        owner: root
+        group: root
+        mode: "0644"
+      when: ansible_facts.os_family | default('') == "RedHat"
+      notify: Update CA trust store (RedHat)
+      register: ca_redhat
+
+    - name: Record CA change for downstream plays
+      # set_fact persists across plays in the same ansible-playbook invocation,
+      # so install-alloy.yaml (which imports this playbook) can use it to decide
+      # whether to restart alloy and pick up the new trust store.
+      ansible.builtin.set_fact:
+        vingilot_ca_changed: true
+      when: (ca_debian.changed | default(false)) or (ca_redhat.changed | default(false))
+
+  handlers:
+    - name: Update CA trust store (Debian)
+      ansible.builtin.command: update-ca-certificates
+      changed_when: true
+
+    - name: Update CA trust store (RedHat)
+      ansible.builtin.command: update-ca-trust
+      changed_when: true
