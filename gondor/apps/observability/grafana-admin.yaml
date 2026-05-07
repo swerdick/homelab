@@ -1,6 +1,17 @@
-# Grafana admin credentials. Referenced from kube-prometheus-stack.yaml
-# via `grafana.admin.existingSecret`. Edit later with:
-#   sops gondor/apps/observability/grafana-admin.yaml
+# Grafana admin credentials. Used as the INITIAL SEED for the admin user
+# when Grafana boots against an empty database (fresh deploy, PVC wipe,
+# or a Flux rebuild from scratch). Once the admin user exists in
+# Grafana's DB, GF_SECURITY_ADMIN_PASSWORD is ignored on every subsequent
+# pod start — so editing this Secret does NOT rotate the live password.
+#
+# To rotate the live password (and keep the seed in sync for next rebuild):
+#   1. Reset on the live Grafana:
+#      kubectl -n monitoring exec deploy/kube-prometheus-stack-grafana \
+#        -c grafana -- grafana cli admin reset-admin-password '<new>'
+#      (or: change it in the Grafana UI)
+#   2. Update this Secret to match:
+#      sops gondor/apps/observability/grafana-admin.yaml
+#   3. git commit + push (no reconcile needed; the Secret is seed-only).
 apiVersion: v1
 kind: Secret
 metadata:

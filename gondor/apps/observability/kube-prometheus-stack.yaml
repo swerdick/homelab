@@ -51,8 +51,10 @@ spec:
                   storage: 10Gi
 
     grafana:
-      # Admin credentials sourced from a SOPS-encrypted Secret. Edit the
-      # password with: sops gondor/apps/observability/grafana-admin.yaml
+      # Admin credentials seeded from a SOPS-encrypted Secret. Note: the
+      # Secret is read by Grafana only on initial admin-user creation; once
+      # the user exists in the DB, the env var is ignored. See the comment
+      # block in grafana-admin.yaml for the live-password rotation procedure.
       admin:
         existingSecret: grafana-admin
         userKey: admin-user
