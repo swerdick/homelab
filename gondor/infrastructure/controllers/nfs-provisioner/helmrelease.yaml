@@ -22,9 +22,10 @@ spec:
       retries: 3
   values:
     nfs:
-      # Pseudo-root export from the nfs LXC: /etc/exports has fsid=0 on /bulk,
-      # so sub-exports are addressable as /<basename>. /scratch/k3s-pvs is also
-      # exported (separate from the pseudo-root tree) and accessible at /scratch/k3s-pvs.
+      # Path matches the real on-disk path on earendil (the ZFS dataset
+      # scratch/k3s-pvs is mounted at /scratch/k3s-pvs and bind-mounted
+      # into the nfs LXC at the same path). The NFSv4 pseudo-root lives
+      # at the LXC's filesystem root — see ansible/playbooks/setup-k3s-pv-storage.yaml.
       server: nfs.vingilot.internal
       path: /scratch/k3s-pvs
       mountOptions:
