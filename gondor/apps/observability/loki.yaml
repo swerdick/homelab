@@ -72,6 +72,10 @@ spec:
         retention_period: 336h
         # Required for some structured-metadata features in recent Loki.
         allow_structured_metadata: true
+        # Powers Grafana's Logs Drilldown volume-over-time histogram.
+        # Without it, the Drilldown UI shows "Log volume has not been
+        # configured" instead of the volume chart.
+        volume_enabled: true
 
       compactor:
         retention_enabled: true
