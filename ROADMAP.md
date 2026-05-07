@@ -43,6 +43,14 @@ Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux'
 
 Pre-built community dashboards exist (e.g. grafana.com/dashboards/16714). Quick win — import, tag `homelab`, run `just backup-grafana`, commit. Visual answer to "is Flux working" at a glance.
 
+### Tempo for distributed tracing
+
+Loki is up for logs (Phase 2 done) and Prometheus is up for metrics. Tempo is the third leg — Grafana's trace store. Same shape as Loki: HelmRelease + NFS-backed PVC + basic-auth route + Grafana datasource.
+
+Why it'd matter: Alloy is OTel-capable (`otelcol.receiver.otlp` + exporter components), so any app that emits OTLP signals could ship traces here. Without Tempo, Alloy can still receive OTLP traces but has nowhere to forward them to. Currently relevant only if you instrument something yourself; nothing in the homelab fleet emits traces today.
+
+Probably a Phase-2-of-Loki-style session: ~60-90 min for the chart + ingress + datasource, plus a follow-up to point Alloy at it once an actual app is producing traces.
+
 ## Network & DNS
 
 ### Pi-hole / AdGuard for local DNS
