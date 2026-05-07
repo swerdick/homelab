@@ -99,16 +99,6 @@ sops-encrypt path:
     @echo "To re-edit the secret later:"
     @echo "  sops {{path}}    # opens decrypted in your \$EDITOR"
 
-# Open Grafana (port-forward; run after kube-prometheus-stack is deployed)
-grafana:
-    @echo "Grafana at http://localhost:3000 — admin / prom-operator (default; change it)"
-    kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80
-
-# Open Capacitor (Flux UI) on http://localhost:9000
-capacitor:
-    @echo "Capacitor will be available at http://localhost:9000"
-    kubectl -n flux-system port-forward svc/capacitor 9000:9000
-
 # --- Patching ---
 
 # Patch a single LXC (usage: just patch-lxc 120)
@@ -217,14 +207,14 @@ dump-pve-configs:
 
 # Export every Grafana dashboard tagged 'homelab' to grafana-dashboards/.
 # Strips Grafana-assigned id/version so re-saves don't churn the diff.
-# Requires GRAFANA_PASSWORD in the env, e.g.:
-#   export GRAFANA_PASSWORD=$(bw get password grafana-homelab)
 backup-grafana:
     #!/usr/bin/env bash
     set -euo pipefail
     GRAFANA_URL="${GRAFANA_URL:-https://grafana.vingilot.internal}"
-    : "${GRAFANA_USER:=admin}"
-    : "${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set; e.g. export GRAFANA_PASSWORD=\$(bw get password grafana-homelab)}"
+    GRAFANA_USER="${GRAFANA_USER:-admin}"
+    # Pulls from Bitwarden — vault must be unlocked (`bw unlock --raw`).
+    # Item name in the personal vault: `grafana-admin`.
+    GRAFANA_PASSWORD=$(bw get password grafana-admin)
 
     OUTDIR="grafana-dashboards"
     mkdir -p "$OUTDIR"
