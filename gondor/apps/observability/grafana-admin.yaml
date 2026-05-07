@@ -1,0 +1,27 @@
+# Grafana admin credentials. Referenced from kube-prometheus-stack.yaml
+# via `grafana.admin.existingSecret`. Edit later with:
+#   sops gondor/apps/observability/grafana-admin.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+    name: grafana-admin
+    namespace: monitoring
+type: Opaque
+stringData:
+    admin-user: ENC[AES256_GCM,data:4TepM04=,iv:xS6JFsa/UtG9i728X4WQJUSY8m+c2PbRAoSpRldFvmA=,tag:oazeYwfRj1uHxcXtXO2fSQ==,type:str]
+    admin-password: ENC[AES256_GCM,data:ZuDx/H3K6kPMAFSc,iv:c1awzDz3mUxJl5F8+Xpr77n1WIF0URh9+p9alVsmqG8=,tag:/Rmk9yxQ9gfoFDrRt43GVA==,type:str]
+sops:
+    age:
+        - recipient: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBjaXYzbmR3VnJtRlhqWURt
+            R3duakZLTkpwRTYwM2JaS2NudlM0dXV4UVgwClh6MFJFMnExWHdPOE5ETUsyWDFp
+            MTkwMUhqZUtYNGpKTGdBa2lubGp1SG8KLS0tIHI2eWZNUDRCSldScXhwYVZXZGgv
+            aDBzOHJLaU54MUJpS0s4bGlReWo2OE0Keq9yhVed5YLKyWS3Qg7RxK0+xDuqg1BE
+            +l5og6o+aDip1MXbTp9bvfrVSTVKzXw13Rzbfq+O0zyo69m//hvFDw==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-05-07T00:12:24Z"
+    mac: ENC[AES256_GCM,data:qYUyzAmZ/I1jRRiu8W/64wjtIDVworU5DRKS7ZQc41yegmaLM7zgTXGRFxJ+K67OUCayvbzKjm/I1XD/0xN7t+gnm+mWbnPFe89ykrmJfSudB8xxKUlqAhq2/uYgzcHB/PE4+5gHiY3t0xbtrpWjkUvsJKsMdHC9+Y+7fHBGDPU=,iv:h81X+/wSf6/4E4MG4Ap73sZgUrIDRY7D0TFksAleFbs=,tag:mE2AGwqQ3VzbMIYn75YkAw==,type:str]
+    encrypted_regex: ^(data|stringData)$
+    version: 3.12.2

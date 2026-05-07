@@ -51,9 +51,12 @@ spec:
                   storage: 10Gi
 
     grafana:
-      # Default password — change it in the UI after first login,
-      # or replace with a SOPS-encrypted secret next session
-      adminPassword: "prom-operator"
+      # Admin credentials sourced from a SOPS-encrypted Secret. Edit the
+      # password with: sops gondor/apps/observability/grafana-admin.yaml
+      admin:
+        existingSecret: grafana-admin
+        userKey: admin-user
+        passwordKey: admin-password
       persistence:
         enabled: true
         storageClassName: local-path
