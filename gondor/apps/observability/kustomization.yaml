@@ -7,3 +7,6 @@ resources:
   - grafana-route.yaml
   - prometheus-route.yaml
   - prometheus-basic-auth.yaml
+  - loki.yaml
+  - loki-basic-auth.yaml
+  - loki-route.yaml

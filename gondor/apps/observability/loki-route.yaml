@@ -1,0 +1,45 @@
+---
+# Traefik basicAuth middleware that fronts the Loki HTTPRoute.
+# Reads the `users` key (htpasswd-format) from the loki-basic-auth
+# Secret in the same namespace.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: loki-basic-auth
+  namespace: monitoring
+spec:
+  basicAuth:
+    secret: loki-basic-auth
+    realm: "loki.vingilot.internal"
+---
+# Routes https://loki.vingilot.internal/* to the Loki Service.
+# The basic-auth middleware is attached as an ExtensionRef filter
+# so unauthenticated requests are rejected at the edge.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  parentRefs:
+    - name: vingilot
+      namespace: traefik
+      sectionName: loki-https
+  hostnames:
+    - loki.vingilot.internal
+  rules:
+    - filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: loki-basic-auth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # Loki's main HTTP API. The chart names the Service after the
+        # release name (`loki`); port 3100 is the standard HTTP port.
+        - name: loki
+          port: 3100

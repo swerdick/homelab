@@ -63,6 +63,18 @@ spec:
         enabled: true
         storageClassName: local-path
         size: 2Gi
+      # Provision Loki as an additional datasource. In-cluster URL — no
+      # auth needed (basic auth is enforced at the traefik edge for
+      # external clients only).
+      additionalDataSources:
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki.monitoring.svc.cluster.local:3100
+          isDefault: false
+          jsonData:
+            timeout: 60
+            maxLines: 1000
 
     alertmanager:
       alertmanagerSpec:
