@@ -1,0 +1,58 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nfs-subdir-external-provisioner
+  namespace: nfs-provisioner
+spec:
+  interval: 1h
+  releaseName: nfs-subdir-external-provisioner
+  chart:
+    spec:
+      chart: nfs-subdir-external-provisioner
+      version: ">=4.0.0 <5.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: nfs-subdir-external-provisioner
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    nfs:
+      # Pseudo-root export from the nfs LXC: /etc/exports has fsid=0 on /bulk,
+      # so sub-exports are addressable as /<basename>. /scratch/k3s-pvs is also
+      # exported (separate from the pseudo-root tree) and accessible at /scratch/k3s-pvs.
+      server: nfs.vingilot.internal
+      path: /scratch/k3s-pvs
+      mountOptions:
+        - nfsvers=4
+        - hard
+        - noatime
+        - rsize=131072
+        - wsize=131072
+
+    storageClass:
+      name: nfs-scratch
+      # Don't displace the existing local-path default.
+      defaultClass: false
+      # When a PVC is deleted, rename the directory to archived-* rather than
+      # deleting the data outright. Cheap insurance for a homelab — clean it
+      # up by hand later if you want.
+      archiveOnDelete: true
+      # Inherit from chart defaults (Delete reclaim policy with archiveOnDelete
+      # turning that into a rename rather than rm -rf).
+      reclaimPolicy: Delete
+      # Allow PVC expansion later without recreating.
+      allowVolumeExpansion: true
+
+    # Resource requests sized for a tiny provisioner that mostly just creates
+    # subdirectories on demand.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
