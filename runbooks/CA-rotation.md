@@ -146,7 +146,7 @@ The playbook can't help here — handle each device manually:
 
 Long-running TLS clients (Go binaries, JVMs, etc.) load the system trust store at startup. After a root rotation, restart them on the affected hosts. Currently relevant:
 
-- **Alloy** (all 6 alloy hosts): `ansible -m systemd -a 'name=alloy state=restarted' alloy`
+- **Alloy** (all 7 alloy hosts: earendil, tirion, nfs, smb, aglarond, gondor, erebor): `ansible -m systemd -a 'name=alloy state=restarted' alloy`
 
 Add new entries here as more long-running TLS clients are added.
 
@@ -240,12 +240,13 @@ echo | openssl s_client -connect erebor.vingilot.internal:8007 -servername erebo
 The ClusterIssuer in `gondor/infrastructure/instances/cert-manager/clusterissuer.yaml` has the old CA cert inlined in its `caBundle:` field. This needs updating to the new root.
 
 ```bash
-# Get the new root cert content (already on thorondor from distribute-root-ca.sh)
-cat ~/.config/vingilot/root-ca.crt | head -1
+# Source of truth for the root cert is already in this repo at
+# ansible/files/vingilot-root-ca.crt — refreshed in step 2a above.
+cat ansible/files/vingilot-root-ca.crt | head -1
 # Verify: -----BEGIN CERTIFICATE-----
 
 # Generate the base64 form
-base64 -i ~/.config/vingilot/root-ca.crt | tr -d '\n'
+base64 -i ansible/files/vingilot-root-ca.crt | tr -d '\n'
 # Copy that string
 
 # Edit gondor/infrastructure/instances/cert-manager/clusterissuer.yaml

@@ -27,6 +27,21 @@ The balance: don't propose hacky homelab shortcuts that would hurt the resume an
 
 `gondor` and `anduril` share GPU resources — gondor is shut down sometimes so anduril can run. Components that depend on the cluster (Prometheus, Grafana, anything in `gondor/`) should tolerate gondor being unavailable.
 
+## Hardware
+
+Single physical machine (earendil) hosting everything:
+
+- **CPU**: Intel Core i7-6700K (Skylake, 4C/8T, 4.0 GHz base)
+- **RAM**: 16 GB DDR4 — Corsair Vengeance LPX CMK16GX4M2B3000C15 (kit is rated 3000 MHz; running at JEDEC 2133 because no XMP profile is enabled). **TODO**: enable XMP in BIOS during a planned maintenance window for ~40% more memory bandwidth. Requires a full earendil reboot (homelab-wide outage) and a memtest86 pass to confirm Skylake's IMC stays stable at the rated profile.
+- **Motherboard**: MSI Z170A Gaming M7 (MS-7976)
+- **GPU**: Nvidia GeForce GTX 970 — passed through to anduril for Moonlight game streaming
+- **Storage**:
+  - Samsung 850 EVO 250 GB SATA SSD — `rpool` (PVE root, LXC/VM disks)
+  - Seagate ST2000DM005 2 TB HDD + WD WD10EZES 1 TB HDD — combined into the `bulk` and `scratch` zpools (~1.76 TB and ~900 GB usable)
+- **Optical**: LG WH16NS40 16× Blu-ray writer
+
+16 GB is tight for the size of the fleet — VM sizing matters: gondor at 10 GB is the heaviest, others kept under 1 GB where possible.
+
 ## Tooling: prefer justfile recipes
 
 `just --list` shows the full menu. Use these instead of inventing one-liners — they encode learned-the-hard-way details (e.g. SOPS-aware validation). Most relevant for agents:
