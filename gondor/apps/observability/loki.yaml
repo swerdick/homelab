@@ -77,6 +77,9 @@ spec:
         retention_enabled: true
         retention_delete_delay: 2h
         retention_delete_worker_count: 50
+        # Required by Loki 3.7+ when retention is enabled: where to persist
+        # delete-request markers. Match the main storage backend.
+        delete_request_store: filesystem
 
       # Pattern ingester (newer Loki feature) is for log-pattern detection;
       # not needed for journald shipping. Disabling keeps memory down.
