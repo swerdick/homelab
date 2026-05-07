@@ -190,3 +190,41 @@ setup-unattended-upgrades:
 # is initialized this is a no-op. Targets only tirion.
 setup-step-ca:
     ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-step-ca.yaml
+
+# --- Grafana ---
+
+# Export every Grafana dashboard tagged 'homelab' to grafana-dashboards/.
+# Strips Grafana-assigned id/version so re-saves don't churn the diff.
+# Requires GRAFANA_PASSWORD in the env, e.g.:
+#   export GRAFANA_PASSWORD=$(bw get password grafana-homelab)
+backup-grafana:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GRAFANA_URL="${GRAFANA_URL:-https://grafana.vingilot.internal}"
+    : "${GRAFANA_USER:=admin}"
+    : "${GRAFANA_PASSWORD:?GRAFANA_PASSWORD must be set; e.g. export GRAFANA_PASSWORD=\$(bw get password grafana-homelab)}"
+
+    OUTDIR="grafana-dashboards"
+    mkdir -p "$OUTDIR"
+
+    # Tag filter excludes the ~30 dashboards auto-shipped by kube-prometheus-stack.
+    UIDS=$(curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASSWORD" \
+        "$GRAFANA_URL/api/search?type=dash-db&tag=homelab" | jq -r '.[].uid')
+
+    if [[ -z "$UIDS" ]]; then
+        echo "No dashboards tagged 'homelab' found."
+        exit 0
+    fi
+
+    count=0
+    for uid in $UIDS; do
+        curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASSWORD" \
+            "$GRAFANA_URL/api/dashboards/uid/$uid" | \
+            jq '.dashboard | del(.id, .version)' > "$OUTDIR/${uid}.json"
+        echo "  ✓ ${uid}.json"
+        count=$((count + 1))
+    done
+
+    echo
+    echo "Exported $count dashboard(s) to $OUTDIR/"
+    echo "Review with: git diff $OUTDIR/"
