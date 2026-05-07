@@ -1,0 +1,110 @@
+---
+# The Alloy chart stays on the original grafana/helm-charts repo (verified
+# 2026-05-07: the Loki migration to grafana-community/helm-charts didn't
+# include Alloy).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: grafana
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://grafana.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alloy
+  namespace: monitoring
+spec:
+  interval: 30m
+  releaseName: alloy
+  chart:
+    spec:
+      chart: alloy
+      version: ">=1.0.0 <2.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # DaemonSet is the chart default — one Alloy pod per node. Currently a
+    # single-node k3s cluster, but future-proofs for adding nodes later.
+    controller:
+      type: daemonset
+
+    # Keep this Alloy modest — it just discovers + tails pod logs.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+    # Chart's RBAC defaults are sufficient for loki.source.kubernetes
+    # (pods/log subresource access).
+    rbac:
+      create: true
+    serviceAccount:
+      create: true
+
+    alloy:
+      configMap:
+        create: true
+        content: |
+          // Discover every pod in the cluster.
+          discovery.kubernetes "pods" {
+            role = "pod"
+          }
+
+          // Attach useful labels for Loki querying.
+          discovery.relabel "pod_logs" {
+            targets = discovery.kubernetes.pods.targets
+
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_container_name"]
+              target_label  = "container"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              target_label  = "app"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+          }
+
+          // Stream container logs via the Kubernetes API. No hostPath mount
+          // required — uses the ServiceAccount's pods/log permission.
+          loki.source.kubernetes "pod_logs" {
+            targets    = discovery.relabel.pod_logs.output
+            forward_to = [loki.write.default.receiver]
+          }
+
+          // In-cluster URL — basic auth is enforced at the traefik edge for
+          // *external* clients; pod-to-pod traffic inside the cluster is
+          // unauthenticated by design (network-isolated).
+          loki.write "default" {
+            endpoint {
+              url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+            }
+            external_labels = {
+              cluster = "homelab",
+              source  = "k8s",
+            }
+          }

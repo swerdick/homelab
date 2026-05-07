@@ -24,13 +24,14 @@ GitOps-managed where it makes sense:
 
 ## Ansible playbooks
 
-Playbooks live under [`ansible/playbooks/`](ansible/playbooks/) and run from the repo root:
+Playbooks live under [`ansible/playbooks/`](ansible/playbooks/). Run them from the [`ansible/`](ansible/) directory so `ansible.cfg` is picked up (it enables the `community.sops.sops` vars plugin that auto-decrypts `*.sops.yaml` files):
 
 ```bash
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/<playbook>.yaml
+cd ansible
+ansible-playbook playbooks/<playbook>.yaml
 
 # Dry-run with diff to preview without making changes:
-ansible-playbook -i ansible/inventory.yaml ansible/playbooks/<playbook>.yaml --check --diff
+ansible-playbook playbooks/<playbook>.yaml --check --diff
 ```
 
 Inventory groups (`alloy`, `debian_guests`, `root_hosts`, `sudo_hosts`, etc.) are defined in [`ansible/inventory.yaml`](ansible/inventory.yaml). Some playbooks have `just` recipe wrappers (`just setup-unattended-upgrades`, `just setup-step-ca`) where it adds value; see `just --list`.

@@ -10,3 +10,4 @@ resources:
   - loki.yaml
   - loki-basic-auth.yaml
   - loki-route.yaml
+  - alloy.yaml

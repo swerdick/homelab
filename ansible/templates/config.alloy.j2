@@ -1,6 +1,10 @@
 // Managed by Ansible. Edits to /etc/alloy/config.alloy will be overwritten;
 // change ansible/templates/config.alloy.j2 and re-run install-alloy.yaml.
 
+// ============================================================================
+// Metrics → Prometheus (remote_write)
+// ============================================================================
+
 // Node-exporter equivalent: CPU, memory, disk, network, filesystem, etc.
 prometheus.exporter.unix "node" { }
 
@@ -40,6 +44,36 @@ prometheus.remote_write "default" {
   // (e.g. running anduril overnight) doesn't lose data. Default is 8h.
   wal {
     max_keepalive_time = "24h"
+  }
+  external_labels = {
+    cluster = "homelab",
+  }
+}
+
+// ============================================================================
+// Logs → Loki (systemd journal)
+// ============================================================================
+
+// Read from this host's systemd journal. Requires the `alloy` user to be in
+// the `systemd-journal` group — the install-alloy playbook handles that.
+loki.source.journal "system" {
+  forward_to = [loki.write.vingilot.receiver]
+  labels = {
+    host = "{{ inventory_hostname }}",
+    job  = "systemd-journal",
+  }
+  // No `path` set → defaults to /var/log/journal (or /run/log/journal if
+  // persistent storage isn't configured).
+  // No `matches` set → all journal entries.
+}
+
+loki.write "vingilot" {
+  endpoint {
+    url = "https://loki.vingilot.internal/loki/api/v1/push"
+    basic_auth {
+      username = "alloy"
+      password = "{{ loki_basic_auth_password }}"
+    }
   }
   external_labels = {
     cluster = "homelab",

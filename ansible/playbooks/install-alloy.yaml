@@ -43,6 +43,16 @@
         name: alloy
         state: present
 
+    - name: Add alloy user to systemd-journal group (needed for loki.source.journal)
+      # The alloy systemd unit runs as the `alloy` user; that user needs read
+      # access to /var/log/journal/* (or /run/log/journal/*) to ship journald
+      # logs to Loki. systemd-journal group has those perms.
+      ansible.builtin.user:
+        name: alloy
+        groups: systemd-journal
+        append: true
+      notify: Restart alloy
+
     - name: Template /etc/alloy/config.alloy
       ansible.builtin.template:
         src: ../templates/config.alloy.j2
