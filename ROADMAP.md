@@ -1,0 +1,94 @@
+# Roadmap
+
+Living list of work that's deliberately *not done yet*. New ideas land here; promote to a focused session when ready. Drop or rewrite when reality changes.
+
+Things already done aren't tracked here — `git log` is the source of truth for that.
+
+## Security & access hardening
+
+### Pseudo users + sudo on root-only hosts
+
+Currently `aglarond`, `tirion`, `earendil` (and the `nfs` / `smb` LXCs) are accessed as `root` directly. Goal: a `pseudo` user on every host with SSH-key auth and sudo (NOPASSWD or password — TBD), so day-to-day login follows least-privilege ergonomics and `sudo` logs give attribution.
+
+Estimated ~45–60 min per host because lockout risk is real (validate from a parallel SSH session before logging out of the original). **tirion specifically lacks `sudo` entirely** (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_tirion_no_sudo.md)) — would need either `apt install sudo` or a `doas` setup as part of the work.
+
+### mTLS for Alloy → Prometheus
+
+Currently basic auth (htpasswd / SOPS-encrypted password). Tirion's CA already issues client certs, so Alloy collectors could authenticate with mTLS instead of a shared password. Cleaner threat model; harder to leak; uses PKI we already maintain.
+
+### Pre-commit hook in a durable dotfiles repo
+
+The private-key-marker pre-commit hook lives at `~/.config/git/hooks/pre-commit` on thorondor. Should be tracked somewhere — chezmoi-style dotfiles repo would be the natural home. "Future weekend" project.
+
+## Observability
+
+### Loki + journald shipping (actively in progress)
+
+Phase 1 complete: NFS-backed StorageClass for k3s PVs (`nfs-scratch`). Phase 2: Loki HelmRelease + basic auth + HTTPRoute + Grafana datasource. Phase 3: Alloy `loki.source.journal` + `loki.write` config rolled out via ansible.
+
+### Cert expiration alerting
+
+Silent renewal failures (Proxmox ACME on earendil/erebor, cert-manager Certificates, step-ca's own root) could go unnoticed for weeks. Stack:
+- `cert-manager` already exposes `certmanager_certificate_expiration_timestamp_seconds`; Prometheus already scrapes it.
+- For non-k8s certs (Proxmox, step-ca), deploy `blackbox_exporter` and probe the HTTPS endpoints to surface `probe_ssl_earliest_cert_expiry`.
+- `PrometheusRule` CRD with the threshold (e.g. 14d), `AlertmanagerConfig` for routing.
+
+The whole thing also forces picking a notification channel (Discord webhook, ntfy.sh, email via Mailgun) — that's the rabbit-hole part.
+
+### Flux health alerting
+
+Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux's perspective once retries are exhausted. Capacitor shows them but you have to look. Add Prometheus alert on `gotk_reconcile_condition{type="Ready",status="False"}` (or similar) so a wedged release pages instead of being noticed days later. Pair naturally with the cert-expiration alerting work since the Alertmanager plumbing is the same.
+
+### Flux observability dashboard in Grafana
+
+Pre-built community dashboards exist (e.g. grafana.com/dashboards/16714). Quick win — import, tag `homelab`, run `just backup-grafana`, commit. Visual answer to "is Flux working" at a glance.
+
+## Network & DNS
+
+### Pi-hole / AdGuard for local DNS
+
+Right now `vingilot.internal` records live on the Verizon CR1000A router. Adding any new internal hostname requires a manual A-record on the router *before* cert-manager can complete its HTTP-01 self-check (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_dns.md)).
+
+A local resolver (Pi-hole or AdGuard Home) on a dedicated LXC would unlock wildcard `*.vingilot.internal → 192.168.1.220` and remove the per-service DNS friction. Probably a 2-hour session.
+
+## Specific upgrades
+
+### erebor (PBS) trixie upgrade
+
+PBS 3 → 4 follows its own ritual; deferred until summer 2026 since PBS 3.x has security support through August. Inherently risky because erebor is the backup target — if the upgrade goes badly, restoring relies on the system you're upgrading. Snapshot first.
+
+### Alloy on erebor
+
+Pending erebor's trixie upgrade — Alloy via the Grafana apt repo wants newer libc than PBS 3 ships. Once that's done, erebor joins the alloy fleet.
+
+### Anduril in PBS backups + Ansible inventory + Alloy rollout
+
+Three blockers stacked:
+- **PBS backups**: anduril is excluded right now. Wants more RAM allocated before re-including (current size makes the backup quiesce window painful).
+- **Ansible inventory**: not in `inventory.yaml` yet. Needs `ansible_become` settings for Bazzite.
+- **Alloy install**: would also need OS-family branching (RPM-based, not apt). The existing `install-alloy.yaml` plays would need an `ansible.builtin.dnf` path or split.
+- **distribute-root-ca**: anduril is currently skipped because Bazzite uses different cert paths and `rpm-ostree` semantics. Same OS-family branching applies.
+
+All four naturally land in a single anduril-day session.
+
+### XMP enable on RAM
+
+See [`AGENTS.md` Hardware section](AGENTS.md#hardware). Free ~40% memory bandwidth; requires a full earendil reboot (homelab-wide outage) and a memtest86 pass. Pair with a planned maintenance window.
+
+### iOS device trust
+
+Each iOS device that wants to access internal HTTPS services needs the `vingilot` root CA in its trust store. Manual procedure: AirDrop the cert, install Profile, toggle on in Certificate Trust Settings. Captured in the CA-rotation runbook; just needs doing per device.
+
+## Generalize / refactor
+
+### Ansible playbook for new-host onboarding
+
+Codify the manual steps for adding a new homelab host into a single `bootstrap.yaml -l <new-host>`: distribute root CA, install unattended-upgrades, install alloy, etc. Today these live as separate playbooks; an importing parent playbook would let `bootstrap.yaml` just pull them all in.
+
+### `nfs-common` install — generalize beyond k3s
+
+Currently the `setup-k3s-pv-storage` playbook installs `nfs-common` on gondor as a third play. If/when other guests need to mount NFS, that play should move to a generic "ensure nfs client" playbook (or fold into the new-host onboarding playbook above) rather than living inside the k3s storage one.
+
+### `tirion-root-ca` Secret cleanup
+
+Originally a manually-applied Secret for cert-manager bootstrap; replaced by inlining the cert into the `ClusterIssuer`'s `caBundle:`. The old Secret may still be lingering in-cluster. Verify and `kubectl delete` if so. Mostly hygiene.

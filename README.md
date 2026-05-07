@@ -56,4 +56,5 @@ Revisit when: a second PVE host gets added (where fleet-management value compoun
 
 - [`AGENTS.md`](AGENTS.md) — guidance for AI assistants working in this repo (and a useful overview for human contributors)
 - [`runbooks/`](runbooks/) — written procedures for things not yet fully automated (e.g. CA rotation)
+- [`ROADMAP.md`](ROADMAP.md) — work that's deliberately *not done yet* (future ideas, deferred upgrades, hardening)
 - `just --list` — recipes for common day-to-day operations
