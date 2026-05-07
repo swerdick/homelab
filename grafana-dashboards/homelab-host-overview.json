@@ -195,50 +195,127 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
+      "description": "Per-mountpoint used/free/total + % used at the current moment.",
       "fieldConfig": {
-        "defaults": {
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Used"
+            },
+            "properties": [
               {
-                "color": "green",
-                "value": null
+                "id": "unit",
+                "value": "bytes"
               },
               {
-                "color": "yellow",
-                "value": 80
-              },
-              {
-                "color": "red",
-                "value": 90
+                "id": "custom.align",
+                "value": "right"
               }
             ]
           },
-          "unit": "percent"
-        },
-        "overrides": []
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Free"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Total"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "% Used"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.align",
+                "value": "right"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "gradient",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 80
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
+        "w": 12,
         "x": 0,
         "y": 8
       },
       "id": 3,
       "options": {
-        "displayMode": "gradient",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "footer": {
+          "show": false
         },
-        "showUnfilled": true,
-        "valueMode": "color"
+        "showHeader": true
       },
       "targets": [
         {
@@ -246,14 +323,89 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "100 * (node_filesystem_size_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"} - node_filesystem_avail_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"}) / node_filesystem_size_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"}",
+          "expr": "node_filesystem_size_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"} - node_filesystem_avail_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"}",
+          "format": "table",
           "instant": true,
-          "legendFormat": "{{mountpoint}}",
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "node_filesystem_avail_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"} + 0",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "100 * (node_filesystem_size_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"} - node_filesystem_avail_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"}) / node_filesystem_size_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "node_filesystem_size_bytes{instance=\"$host\",job=\"integrations/unix\",fstype!~\"tmpfs|fuse.*|squashfs|devtmpfs|overlay|nsfs\"} + 0",
+          "format": "table",
+          "instant": true,
+          "refId": "D"
         }
       ],
       "title": "Filesystem usage — $host (now)",
-      "type": "bargauge"
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "cluster": true,
+              "device": true,
+              "fstype": true,
+              "instance": true,
+              "job": true
+            },
+            "indexByName": {
+              "Value #A": 1,
+              "Value #B": 2,
+              "Value #C": 4,
+              "Value #D": 3,
+              "mountpoint": 0
+            },
+            "renameByName": {
+              "Value #A": "Used",
+              "Value #B": "Free",
+              "Value #C": "% Used",
+              "Value #D": "Total",
+              "mountpoint": "Mount"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "desc": true,
+                "field": "% Used"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "table"
     },
     {
       "datasource": {
@@ -293,8 +445,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 16,
-        "x": 8,
+        "w": 12,
+        "x": 12,
         "y": 8
       },
       "id": 4,
@@ -348,7 +500,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 28
       },
       "id": 5,
       "options": {
@@ -402,7 +554,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 28
       },
       "id": 6,
       "options": {
@@ -456,7 +608,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 36
       },
       "id": 7,
       "options": {
@@ -510,7 +662,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 36
       },
       "id": 8,
       "options": {
@@ -541,6 +693,44 @@
       ],
       "title": "Network transmit — $host",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "P8E80F9AEF21F6940"
+      },
+      "description": "systemd journal entries from the selected host, shipped via Alloy to Loki.",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 9,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "P8E80F9AEF21F6940"
+          },
+          "expr": "{host=\"$host\"}",
+          "maxLines": 1000,
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs — $host (journald)",
+      "type": "logs"
     }
   ],
   "refresh": "30s",

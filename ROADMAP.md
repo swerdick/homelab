@@ -43,6 +43,25 @@ Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux'
 
 Pre-built community dashboards exist (e.g. grafana.com/dashboards/16714). Quick win — import, tag `homelab`, run `just backup-grafana`, commit. Visual answer to "is Flux working" at a glance.
 
+### Hardware status dashboard (SMART + hwmon)
+
+A separate Grafana dashboard for physical-hardware metrics, mostly relevant on earendil (the only host with non-virtual disks). What goes on it:
+
+- **Disk SMART**: temperatures, reallocated sector count, hours powered, projected SSD lifetime, current pending sectors. Needs a SMART exporter — `smartctl_exporter` is the modern actively-maintained choice; install on earendil via ansible (extension of `install-alloy.yaml` or its own playbook). Add `prometheus.scrape` in alloy's config to pull it.
+- **Board hwmon**: CPU temperature, fan speeds, voltages. node_exporter's `hwmon` collector likely already exposes these on earendil — check `node_hwmon_temp_celsius` in Prometheus first; if so, this is purely a dashboard-build task with no new exporter needed.
+- **Memory**: actual operating frequency (sanity-check after the XMP TODO in AGENTS.md eventually flips). Limited info from node_exporter; may need dmidecode-textfile-export or just rely on `journalctl | grep "DDR"` once.
+
+The other guests (gondor VM, LXCs, anduril) see virtual disks, so SMART doesn't apply and hwmon mostly returns nothing. earendil is ~80% of the value here.
+
+### Ship PVE/PBS task logs to Loki
+
+systemd-journald (now flowing to Loki via Alloy) catches the bulk of host logs, but Proxmox writes its task/operation logs directly to files outside the journal:
+
+- earendil: `/var/log/pveproxy/access.log`, `/var/log/pve/tasks/index` + per-task files in `/var/log/pve/tasks/{0..F}/UPID:...`, `/var/log/pve-firewall.log`
+- erebor: `/var/log/proxmox-backup/api/access.log`, `/var/log/proxmox-backup/tasks/*`
+
+These contain backup runs, snapshots, migrations, UI/API access — exactly what you want to query when something goes wrong overnight. Add `loki.source.file` components to the host alloy template (one per relevant path) plus appropriate label-extraction stages. APT history (`/var/log/apt/history.log`) is a smaller second candidate.
+
 ### Tempo for distributed tracing
 
 Loki is up for logs (Phase 2 done) and Prometheus is up for metrics. Tempo is the third leg — Grafana's trace store. Same shape as Loki: HelmRelease + NFS-backed PVC + basic-auth route + Grafana datasource.
@@ -64,6 +83,8 @@ A local resolver (Pi-hole or AdGuard Home) on a dedicated LXC would unlock wildc
 ### erebor (PBS) trixie upgrade
 
 PBS 3 → 4 follows its own ritual; deferred until summer 2026 since PBS 3.x has security support through August. Inherently risky because erebor is the backup target — if the upgrade goes badly, restoring relies on the system you're upgrading. Snapshot first.
+
+**Verify after upgrade**: `zfs-zed.service` is currently in a restart loop on PBS 3.x (visible in Loki: `Failed with result 'exit-code'` + `Scheduled restart job, restart counter is at 1006`). PBS 4 ships newer OpenZFS (2.3.x vs 2.2.x) and may resolve this. If it still flaps after the upgrade, investigate as a standalone issue.
 
 ### Alloy on erebor
 
