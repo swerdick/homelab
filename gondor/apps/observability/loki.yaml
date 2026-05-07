@@ -125,3 +125,14 @@ spec:
     # validate the pipeline; we don't need it for a homelab).
     lokiCanary:
       enabled: false
+
+    # Disable the chunks/results caches. These are memcached pods that the
+    # chart enables by default (keys aren't visible in some abridged values
+    # references but ARE in the actual chart). They're sized for high-traffic
+    # Loki and want gigabytes of memory each — which gondor doesn't have to
+    # spare. With journald-only ingestion at homelab scale, query latency is
+    # fine without them.
+    chunksCache:
+      enabled: false
+    resultsCache:
+      enabled: false
