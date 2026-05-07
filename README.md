@@ -22,6 +22,36 @@ GitOps-managed where it makes sense:
 | erebor   | debian LXC  | Proxmox Backup Server                         |
 | aglarond | debian LXC  | restic shipping backups to Backblaze          |
 
+## Ansible playbooks
+
+Playbooks live under [`ansible/playbooks/`](ansible/playbooks/) and run from the repo root:
+
+```bash
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/<playbook>.yaml
+
+# Dry-run with diff to preview without making changes:
+ansible-playbook -i ansible/inventory.yaml ansible/playbooks/<playbook>.yaml --check --diff
+```
+
+Inventory groups (`alloy`, `debian_guests`, `root_hosts`, `sudo_hosts`, etc.) are defined in [`ansible/inventory.yaml`](ansible/inventory.yaml). Some playbooks have `just` recipe wrappers (`just setup-unattended-upgrades`, `just setup-step-ca`) where it adds value; see `just --list`.
+
+## Where's the Terraform?
+
+Deliberately not used. The choice between *managing-Proxmox-from-code* and *clicking through the UI* is a real one, and this repo currently chooses the UI:
+
+- **Proxmox UI** for guest topology — creating/destroying LXCs and VMs, assigning hardware, networking, storage. Day-to-day changes happen there.
+- **Ansible** ([`ansible/`](ansible/)) for in-guest configuration — package installs, service config, TLS trust, log shipping.
+- **Flux** ([`gondor/`](gondor/)) for everything inside the k3s cluster.
+- **Snapshots** of PVE guest config files (committed under [`earendil/pve-configs/`](earendil/pve-configs/), produced by `just dump-pve-configs`) as a documentation + audit trail. Re-run after a UI change to capture it.
+
+The case for Terraform is real (drift detection, reproducibility, hardware-as-code), but the cost at this scale is also real:
+
+- A single-host fleet of ~8 guests is below the scale where Terraform's fleet-management value really pays off.
+- Terraform conflicts with continuing to use the UI: every UI change creates state drift, and you have to either commit to "no more UI" or accept that your `.tf` lags reality.
+- The Proxmox provider ecosystem is OK but historically rocky. `bpg/proxmox` is the actively-maintained one to use if/when the migration happens.
+
+Revisit when: a second PVE host gets added (where fleet-management value compounds), or when UI clicks become a real pain point.
+
 ## See also
 
 - [`AGENTS.md`](AGENTS.md) — guidance for AI assistants working in this repo (and a useful overview for human contributors)

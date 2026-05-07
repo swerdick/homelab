@@ -191,6 +191,28 @@ setup-unattended-upgrades:
 setup-step-ca:
     ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-step-ca.yaml
 
+# --- PVE config snapshot ---
+
+# Snapshot PVE guest configs (LXC + QEMU) from earendil into
+# earendil/pve-configs/. Read-only documentation/audit trail — git diff
+# after running shows what changed in the UI since the last snapshot.
+#
+# Cloudinit password hashes (`cipassword:` lines in qemu configs) are
+# redacted before the local copy lands. Review the first dump for any
+# other sensitive content before committing.
+dump-pve-configs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p earendil/pve-configs/lxc earendil/pve-configs/qemu
+    rsync -a --delete root@earendil:/etc/pve/lxc/ earendil/pve-configs/lxc/
+    rsync -a --delete root@earendil:/etc/pve/qemu-server/ earendil/pve-configs/qemu/
+    # Redact any cloudinit password hashes (BSD/GNU sed compatible)
+    find earendil/pve-configs -name "*.conf" -exec sed -i.bak 's|^cipassword:.*|cipassword: <REDACTED>|' {} \;
+    find earendil/pve-configs -name "*.bak" -delete
+    echo
+    echo "✓ Snapshotted PVE configs to earendil/pve-configs/"
+    echo "Review changes: git diff earendil/pve-configs/"
+
 # --- Grafana ---
 
 # Export every Grafana dashboard tagged 'homelab' to grafana-dashboards/.

@@ -1,0 +1,114 @@
+---
+# Sets up an NFS-backed StorageClass path for k3s PersistentVolumes:
+#   1. Creates ZFS dataset scratch/k3s-pvs on earendil with a 200G quota
+#   2. Bind-mounts it into the nfs LXC at /scratch/k3s-pvs (free mpN slot)
+#   3. Adds an /etc/exports entry inside the LXC and reloads
+#
+# scratch/ was chosen over bulk/ because the scratch zpool has more
+# headroom (~880G total vs 354G AVAIL on bulk) and bulk is dominated
+# by media/games/photos that need durability. k3s PVs are scratch-class:
+# losing them is annoying, not catastrophic, and can be re-created.
+#
+# Idempotent — safe to re-run. The LXC is restarted only when the bind-mount
+# changes (or is added for the first time).
+
+- name: Create ZFS dataset and add bind-mount to nfs LXC
+  hosts: earendil
+  vars:
+    zfs_dataset: scratch/k3s-pvs
+    zfs_quota: 200G
+    nfs_lxc_id: 120
+    # Next free mpN slot in /etc/pve/lxc/120.conf as of 2026-05-07.
+    # If you reuse this for another export later, bump to mp7 etc.
+    nfs_lxc_mp_slot: mp6
+    nfs_mount_path: /scratch/k3s-pvs
+
+  tasks:
+    - name: Sanity-check that this is earendil
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "earendil"
+        fail_msg: "This playbook only runs against earendil."
+
+    - name: Create ZFS dataset for k3s persistent volumes
+      community.general.zfs:
+        name: "{{ zfs_dataset }}"
+        state: present
+        extra_zfs_properties:
+          quota: "{{ zfs_quota }}"
+          # compression and atime are inherited from the bulk pool, but be
+          # explicit so this doesn't drift if the parent ever changes.
+          compression: lz4
+          atime: "off"
+
+    - name: Bind-mount the dataset into the nfs LXC
+      # PVE stores LXC configs at /etc/pve/lxc/<vmid>.conf. lineinfile is
+      # idempotent (regexp matches the slot, replaces if present, inserts
+      # after the last mpN otherwise).
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ nfs_lxc_id }}.conf"
+        regexp: "^{{ nfs_lxc_mp_slot }}:"
+        line: "{{ nfs_lxc_mp_slot }}: {{ nfs_mount_path }},mp={{ nfs_mount_path }},shared=1"
+        insertafter: "^mp[0-9]+:"
+      notify: Restart nfs LXC
+
+    # Force handlers to run before play 2 starts SSHing to the nfs LXC.
+    # The LXC restart needs to complete + come back up before play 2.
+    - name: Flush handlers
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart nfs LXC
+      # Reboot rather than start/stop — `pct reboot` is the documented
+      # PVE way to apply config changes without dropping ZFS state.
+      ansible.builtin.command: "pct reboot {{ nfs_lxc_id }}"
+      changed_when: true
+
+
+- name: Configure NFS export inside the nfs LXC
+  hosts: nfs
+  vars:
+    nfs_export_path: /scratch/k3s-pvs
+    # User explicitly chose /24 over the existing /16 convention because
+    # tightening ACLs on new exports is good hygiene; old ones can migrate
+    # later when there's a reason to touch them.
+    nfs_export_acl: 192.168.1.0/24
+    # no_root_squash because k3s pods (incl. the nfs-subdir-external-provisioner)
+    # run as root and need to chown subdirectories. Matches the documented
+    # convention in /etc/pve/lxc/120.conf comments for k3s-pvs.
+    nfs_export_options: rw,sync,no_subtree_check,no_root_squash
+
+  # pre_tasks runs before fact-gathering so we can wait for SSH to come
+  # back after Play 1's LXC reboot. With wait_for_connection in regular
+  # tasks, the implicit Gathering Facts step would race the reboot and
+  # fail with "No route to host".
+  pre_tasks:
+    - name: Wait for the LXC to be reachable after restart
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+
+  tasks:
+    - name: Sanity-check that the bind-mount is visible inside the LXC
+      # In --check mode the prerequisite tasks (dataset create, LXC config edit,
+      # LXC restart) are no-ops, so the bind mount won't be present yet. Skip
+      # the failure assertion in that case so the dry-run isn't noisy.
+      ansible.builtin.stat:
+        path: "{{ nfs_export_path }}"
+      register: bind_mount
+      failed_when:
+        - not ansible_check_mode
+        - not bind_mount.stat.exists or not bind_mount.stat.isdir
+
+    - name: Add /etc/exports entry for k3s-pvs
+      ansible.builtin.lineinfile:
+        path: /etc/exports
+        # Match any existing line for this path so we replace if options drift.
+        regexp: "^{{ nfs_export_path }}\\s"
+        line: "{{ nfs_export_path }}  {{ nfs_export_acl }}({{ nfs_export_options }})"
+        state: present
+      notify: Reload NFS exports
+
+  handlers:
+    - name: Reload NFS exports
+      ansible.builtin.command: exportfs -ra
+      changed_when: true

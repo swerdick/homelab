@@ -5,3 +5,8 @@ collections:
   # `*.sops.yaml` file under group_vars/ or host_vars/ at playbook time.
   # Requires the `sops` binary on the controller (already in use for gondor/).
   - name: community.sops
+
+  # Provides the `zfs` module (used by setup-k3s-pv-storage.yaml).
+  # Already comes as a transitive dependency of community.sops, but we
+  # depend on it directly so the requirement is documented.
+  - name: community.general
