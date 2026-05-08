@@ -70,18 +70,6 @@ Probably a Phase-2-of-Loki-style session: ~60-90 min for the chart + ingress + d
 
 ## Apps & data services
 
-### CloudNativePG operator (Postgres platform)
-
-Foundation for Immich (and any future app that wants Postgres). CNPG is the actively-maintained, k8s-native Postgres operator — lightweight, supports backup to S3-compatible (Backblaze, which `aglarond` already has creds for), point-in-time recovery, replication, automated failover.
-
-Tasks:
-- HelmRelease under `gondor/infrastructure/controllers/cnpg/` (operator install)
-- A `Cluster` manifest for an Immich-flavored Postgres using `tensorchord/cloudnative-pg-vectorchord` (vectorchord extension is required for Immich's face/object recognition features)
-- Test pod that connects to validate
-- Optional: wire backup to Backblaze in the same session
-
-Worth its own ~60-90 min session before Immich.
-
 ### Jellyfin
 
 Self-hosted media server. Lightweight: ~1 GiB memory request, no DB, just config + media PVCs. Plugs into the existing NFS-backed media on `/bulk/media`.
@@ -92,7 +80,11 @@ Self-hosted media server. Lightweight: ~1 GiB memory request, no DB, just config
 
 ### Immich
 
-Self-hosted photo library with face/object recognition. Heavier than Jellyfin: needs Postgres-with-vectorchord (provided by CNPG above) + Valkey (`valkey.enabled: true` in the chart bundles it) + a beefy machine-learning container if AI features are enabled.
+Self-hosted photo library with face/object recognition. Heavier than Jellyfin: needs Postgres-with-vectorchord + Valkey (`valkey.enabled: true` in the chart bundles it) + a beefy machine-learning container if AI features are enabled.
+
+The CNPG operator is already deployed (`gondor/infrastructure/controllers/cnpg/`); the remaining database work is a vectorchord-flavored `Cluster` CR. Heads-up: the Immich-published `ghcr.io/immich-app/postgres:14-vectorchord*` image isn't CNPG-compatible (CNPG needs `barman-cloud` + custom entrypoints baked into the image). Two options for the Cluster's `imageName`:
+- `ghcr.io/tensorchord/cloudnative-pg-vchord` — community-built CNPG-compatible image with vectorchord pre-installed
+- Build our own (extend the CNPG base image with the vectorchord apt package)
 
 Resource sketch on gondor:
 - With ML: ~4-5 GiB total across server/microservices/ml + Postgres + Valkey
