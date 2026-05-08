@@ -52,6 +52,17 @@ spec:
     # — Immich re-syncs jobs from Postgres on restart).
     valkey:
       enabled: true
+      controllers:
+        main:
+          containers:
+            main:
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
 
     # Photo library volume — pre-created PVC in library-pvc.yaml. Chart
     # docs explicitly say the volume must exist before this points at it.
@@ -64,6 +75,13 @@ spec:
     # `uri` key is the full postgresql:// connection string Immich expects.
     # bjw-s common library accepts dict-style env with object values for
     # valueFrom references.
+    #
+    # Resource limits cap the server pod (which also runs the microservices /
+    # thumbnail-and-transcode workers in current Immich versions) so a runaway
+    # job can't pin gondor's whole CPU/RAM budget. Sized for gondor at 4c/10G:
+    # server gets up to half the cores and ~30% of the VM's memory, leaving
+    # headroom for kubelet, observability stack, and CNPG. Bump alongside the
+    # gondor capacity rebalance — see ROADMAP "Audit guest CPU/memory".
     controllers:
       main:
         containers:
@@ -74,6 +92,13 @@ spec:
                   secretKeyRef:
                     name: immich-postgresql-app
                     key: uri
+            resources:
+              requests:
+                cpu: 250m
+                memory: 1Gi
+              limits:
+                cpu: 2000m
+                memory: 3Gi
 
     # External library mount for the existing /bulk/photos NFS export.
     # PV+PVC defined in bulk-photos-pv.yaml. This block is merged into the
