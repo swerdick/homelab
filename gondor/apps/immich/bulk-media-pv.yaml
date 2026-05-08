@@ -1,0 +1,42 @@
+---
+# Static PV+PVC pair for the /bulk/media NFS export. Mounted read-only
+# alongside /bulk/photos so Immich can index selected media subfolders
+# as External Libraries.
+#
+# Same pattern as bulk-photos-pv.yaml — /bulk/media is a separate NFS
+# export (see `exportfs -v` on the nfs LXC), so it gets its own PV.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-bulk-media
+  labels:
+    app: immich
+    purpose: external-library
+spec:
+  capacity:
+    storage: 4Ti
+  accessModes:
+    - ReadOnlyMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: nfs.vingilot.internal
+    path: /bulk/media
+  mountOptions:
+    - nfsvers=4
+    - hard
+    - noatime
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-bulk-media
+  namespace: immich
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 4Ti
+  volumeName: immich-bulk-media

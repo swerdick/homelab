@@ -104,3 +104,16 @@ spec:
               main:
                 - path: /mnt/external/bulk-photos
                   readOnly: true
+        bulk-media:
+          enabled: true
+          type: persistentVolumeClaim
+          existingClaim: immich-bulk-media
+          readOnly: true
+          # Whole /bulk/media tree is mounted; point Immich's UI at the
+          # specific subfolders we want indexed — others (movies/, music/,
+          # etc.) are visible but not added as libraries.
+          advancedMounts:
+            main:
+              main:
+                - path: /mnt/external/bulk-media
+                  readOnly: true
