@@ -1,0 +1,123 @@
+---
+# Installs prometheus-community/smartctl_exporter on physical hosts so SMART
+# data flows into Prometheus alongside node_exporter's hwmon metrics. Bound
+# to 127.0.0.1 — only the same-host alloy collector scrapes it; no LAN
+# exposure.
+#
+# Idempotent — safe to re-run. Bumping smartctl_exporter_version triggers a
+# fresh download (checksum-verified) and a service restart.
+
+- name: Install smartctl_exporter on physical hosts
+  hosts: physical_hosts
+  vars:
+    smartctl_exporter_version: "0.14.0"
+    # SHA256 sums from the upstream release's sha256sums.txt:
+    # https://github.com/prometheus-community/smartctl_exporter/releases/download/v0.14.0/sha256sums.txt
+    smartctl_exporter_sha256:
+      amd64: 875983cd27affc5a682401930e5a8eea3f06c325fe6d6a7228c5547d882685b3
+      arm64: 27353b3adca7f54dd486417412041a17260709c724ea63f5138df2612ecf4299
+    smartctl_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_facts['architecture']] }}"
+    smartctl_exporter_listen: "127.0.0.1:9633"
+    smartctl_exporter_dist: "smartctl_exporter-{{ smartctl_exporter_version }}.linux-{{ smartctl_exporter_arch }}"
+
+  tasks:
+    - name: Ensure smartmontools is installed
+      # smartctl_exporter requires smartmontools >=7.0 for JSON export.
+      # Trixie ships 7.4 in main; PVE repo also carries 7.4-pve1.
+      ansible.builtin.apt:
+        name: smartmontools
+        state: present
+        cache_valid_time: 3600
+
+    - name: Download smartctl_exporter release tarball (checksum-verified)
+      # check_mode: false so --check actually downloads to /tmp — otherwise
+      # the unarchive task below has no source and the play fails in check
+      # mode. Fetching to /tmp is harmless and lets the rest of the play
+      # produce an accurate check-mode preview.
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/prometheus-community/smartctl_exporter/releases/download/v{{ smartctl_exporter_version }}/{{ smartctl_exporter_dist }}.tar.gz
+        dest: "/tmp/{{ smartctl_exporter_dist }}.tar.gz"
+        checksum: "sha256:{{ smartctl_exporter_sha256[smartctl_exporter_arch] }}"
+        mode: "0644"
+      check_mode: false
+
+    - name: Extract smartctl_exporter binary
+      # check_mode: false for the same reason as the download task — keeps
+      # the chain working under --check so the copy task below has a real
+      # source to read. Extraction lives in /tmp and is harmless.
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ smartctl_exporter_dist }}.tar.gz"
+        dest: /tmp/
+        remote_src: true
+        creates: "/tmp/{{ smartctl_exporter_dist }}/smartctl_exporter"
+      check_mode: false
+
+    - name: Install smartctl_exporter binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: "/tmp/{{ smartctl_exporter_dist }}/smartctl_exporter"
+        dest: /usr/local/bin/smartctl_exporter
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: true
+      notify: Restart smartctl_exporter
+
+    - name: Install smartctl_exporter systemd unit
+      # Runs as root: SATA ATA commands are kernel-blocked for non-root,
+      # so CAP_SYS_RAWIO alone is insufficient (per upstream README).
+      # --smartctl.rescan=10m auto-discovers disks so we don't have to
+      # re-template when hardware changes.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/smartctl_exporter.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Prometheus exporter for S.M.A.R.T. data via smartctl
+          Documentation=https://github.com/prometheus-community/smartctl_exporter
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          ExecStart=/usr/local/bin/smartctl_exporter \
+            --smartctl.rescan=10m \
+            --web.listen-address={{ smartctl_exporter_listen }}
+          Restart=on-failure
+          RestartSec=5
+
+          # Hardening — kept minimal because the process needs root and
+          # raw device access. PrivateDevices=true would block SMART reads.
+          NoNewPrivileges=true
+          RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+          ProtectKernelTunables=true
+          ProtectKernelLogs=true
+          ProtectControlGroups=true
+          LockPersonality=true
+          RestrictRealtime=true
+          RestrictSUIDSGID=true
+
+          [Install]
+          WantedBy=multi-user.target
+      register: smartctl_exporter_unit
+      notify: Restart smartctl_exporter
+
+    - name: Reload systemd if unit file changed
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: smartctl_exporter_unit.changed
+
+    - name: Enable and start smartctl_exporter
+      ansible.builtin.systemd:
+        name: smartctl_exporter
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart smartctl_exporter
+      ansible.builtin.systemd:
+        name: smartctl_exporter
+        state: restarted

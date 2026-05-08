@@ -28,6 +28,12 @@ all:
     proxmox_hosts:
       hosts:
         earendil: {}
+    # Hosts with real (non-virtual) hardware — physical disks for SMART,
+    # hwmon-relevant sensors, etc. Distinct from `proxmox_hosts` because a
+    # future Pi would be physical without being a Proxmox node.
+    physical_hosts:
+      hosts:
+        earendil: {}
     alloy:
       hosts:
         earendil: {}

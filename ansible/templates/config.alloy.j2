@@ -21,6 +21,17 @@ prometheus.scrape "alloy" {
   job_name   = "alloy"
 }
 
+{% if 'physical_hosts' in group_names %}
+// Hardware SMART metrics (physical hosts only — installed by
+// install-smartctl-exporter.yaml). Bound to localhost on the exporter side,
+// so the scrape stays on-host.
+prometheus.scrape "smartctl" {
+  targets    = [{"__address__" = "127.0.0.1:9633"}]
+  forward_to = [prometheus.relabel.set_instance.receiver]
+  job_name   = "smartctl"
+}
+
+{% endif %}
 // Override the `instance` label so all series from this host show up as
 // `instance="{{ inventory_hostname }}"` in Prometheus instead of "127.0.0.1:9100".
 prometheus.relabel "set_instance" {
