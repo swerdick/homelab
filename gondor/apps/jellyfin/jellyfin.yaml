@@ -31,6 +31,31 @@ spec:
     remediation:
       retries: 3
   values:
+    # The pod runs as a non-root service UID and joins the `shares` group
+    # (GID 10000) on the nfs LXC. Granting access via supplementary group
+    # rather than impersonating the file owner means future media consumers
+    # (Sonarr/Radarr/etc.) can join the same group without each one needing
+    # its own bespoke UID — this matches how /bulk/media is already laid
+    # out: mode 770 owned by :shares with the setgid bit set so new files
+    # inherit the group.
+    #
+    # Non-root is also what makes NFS access work at all: the export uses
+    # `root_squash` (default), so a root-running pod gets remapped to
+    # nobody and locked out. Any non-zero UID bypasses the squash rule.
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      supplementalGroups:
+        - 10000
+      # fsGroup applies to the config PVC (local-path); ensures the
+      # dynamically-created config dir is group-readable. NFS volumes
+      # ignore fsGroup, so this is a no-op for /media.
+      fsGroup: 1000
+      # Defensive: if a future volume type ever did honor fsGroup chowns,
+      # OnRootMismatch prevents a recursive chown on every mount (would
+      # be catastrophic across a TB of media).
+      fsGroupChangePolicy: OnRootMismatch
+
     service:
       type: ClusterIP
       port: 8096
