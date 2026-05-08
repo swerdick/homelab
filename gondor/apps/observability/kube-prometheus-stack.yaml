@@ -53,6 +53,13 @@ spec:
                 name: grafana-cloud-creds
                 key: token
             writeRelabelConfigs:
+              # Add cluster=homelab on the way out so cross-source queries
+              # like `{cluster="homelab"}` match both host-alloy series
+              # (which set this via alloy's external_labels) and these
+              # k8s-side series. Cloud-only — in-cluster TSDB is unaffected.
+              - targetLabel: cluster
+                replacement: homelab
+                action: replace
               - sourceLabels: [__name__]
                 regex: "up|gotk_.*|controller_runtime_active_workers|controller_runtime_reconcile_errors_total|workqueue_depth|kube_pod_status_(phase|ready)|kube_pod_owner|kube_pod_container_status_restarts_total|kube_pod_container_status_last_terminated_(exitcode|reason)|kube_pod_container_resource_(limits|requests)|kube_deployment_(spec|status)_replicas.*|container_cpu_usage_seconds_total|container_memory_working_set_bytes|node_namespace_pod_container:.*"
                 action: keep
