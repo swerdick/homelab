@@ -174,6 +174,3 @@ Approach: move `/etc/exports` to a Jinja template at `ansible/templates/etc-expo
 
 Same story for the smb LXC: `/etc/samba/smb.conf`, share definitions, user mappings — none of it currently in ansible. Bring under management before the next "add a share" or "tweak permissions" task. Pattern mirrors the NFS one above (template + playbook + handlers).
 
-### `tirion-root-ca` Secret cleanup
-
-Originally a manually-applied Secret for cert-manager bootstrap; replaced by inlining the cert into the `ClusterIssuer`'s `caBundle:`. The old Secret may still be lingering in-cluster. Verify and `kubectl delete` if so. Mostly hygiene.
