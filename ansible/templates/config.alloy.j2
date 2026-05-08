@@ -34,8 +34,13 @@ prometheus.scrape "smartctl" {
 {% endif %}
 // Override the `instance` label so all series from this host show up as
 // `instance="{{ inventory_hostname }}"` in Prometheus instead of "127.0.0.1:9100".
+// Forwards to BOTH the in-cluster Prom (default) and the Grafana Cloud
+// allowlist filter (grafana_cloud_keep), giving us dual export.
 prometheus.relabel "set_instance" {
-  forward_to = [prometheus.remote_write.default.receiver]
+  forward_to = [
+    prometheus.remote_write.default.receiver,
+    prometheus.relabel.grafana_cloud_keep.receiver,
+  ]
   rule {
     target_label = "instance"
     replacement  = "{{ inventory_hostname }}"
@@ -61,14 +66,78 @@ prometheus.remote_write "default" {
   }
 }
 
+// Allowlist filter for Grafana Cloud free tier (10k active series cap).
+// Only the metrics referenced by our homelab dashboards land here, plus
+// alloy self-metrics for cloud forwarding health. Estimated cardinality:
+// ~700 series across the 7-host fleet (incl. earendil's smartctl + hwmon).
+prometheus.relabel "grafana_cloud_keep" {
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+  // Keep only allowlisted metric names.
+  rule {
+    source_labels = ["__name__"]
+    regex         = "up|node_uname_info|node_time_seconds|node_boot_time_seconds|node_load(1|5|15)|node_cpu_seconds_total|node_memory_(MemTotal|MemAvailable|SwapTotal|SwapFree|Buffers|Cached)_bytes|node_filesystem_(avail|size)_bytes|node_network_(receive|transmit)_(bytes|errs|drop)_total|node_disk_(io_time_seconds|read_bytes|written_bytes|reads_completed|writes_completed)_total|node_context_switches_total|node_sockstat_TCP_inuse|node_hwmon_temp_celsius|smartctl_device|smartctl_device_smart_status|smartctl_device_temperature|smartctl_device_attribute|smartctl_device_power_on_seconds|smartctl_device_power_cycle_count|smartctl_device_error_log_count|prometheus_remote_storage_samples_(pending|failed_total|total)"
+    action        = "keep"
+  }
+
+  // Drop CPU modes other than idle. Standard usage formula uses idle only:
+  // `100 - rate(node_cpu_seconds_total{mode="idle"}[5m]) * 100`.
+  rule {
+    source_labels = ["__name__", "mode"]
+    separator     = ";"
+    regex         = "node_cpu_seconds_total;(user|system|nice|iowait|irq|softirq|steal)"
+    action        = "drop"
+  }
+
+  // Drop pseudo-filesystems on node_filesystem_* metrics.
+  rule {
+    source_labels = ["__name__", "fstype"]
+    separator     = ";"
+    regex         = "node_filesystem_.*;(tmpfs|devtmpfs|fuse.*|squashfs|overlay|proc|sysfs|cgroup.*|nsfs|tracefs|debugfs)"
+    action        = "drop"
+  }
+
+  // Drop loopback + virtual/internal network interfaces (k8s pod nets, docker, etc.).
+  rule {
+    source_labels = ["__name__", "device"]
+    separator     = ";"
+    regex         = "node_network_.*;(lo|veth.*|tunl.*|cni.*|kube-.*|flannel.*|cali.*|docker.*|br-.*)"
+    action        = "drop"
+  }
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = "{{ gc_metrics_url }}"
+    basic_auth {
+      username = "{{ gc_metrics_username }}"
+      password = "{{ gc_token }}"
+    }
+  }
+  // Short WAL — in-cluster Prom is the durable copy. If cloud writes
+  // back up due to series-cap rejection, we want to drop fast rather
+  // than buffer indefinitely.
+  wal {
+    max_keepalive_time = "1h"
+  }
+  external_labels = {
+    cluster = "homelab",
+  }
+}
+
 // ============================================================================
 // Logs → Loki (systemd journal)
 // ============================================================================
 
 // Read from this host's systemd journal. Requires the `alloy` user to be in
 // the `systemd-journal` group — the install-alloy playbook handles that.
+// Forwards to BOTH in-cluster Loki and Grafana Cloud — log volume is
+// ~16 MB/day fleet-wide, well under the 50 GB/month free-tier cap.
 loki.source.journal "system" {
-  forward_to = [loki.write.vingilot.receiver]
+  forward_to = [
+    loki.write.vingilot.receiver,
+    loki.write.grafana_cloud.receiver,
+  ]
   labels = {
     host = "{{ inventory_hostname }}",
     job  = "systemd-journal",
@@ -84,6 +153,19 @@ loki.write "vingilot" {
     basic_auth {
       username = "alloy"
       password = "{{ loki_basic_auth_password }}"
+    }
+  }
+  external_labels = {
+    cluster = "homelab",
+  }
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = "{{ gc_logs_url }}"
+    basic_auth {
+      username = "{{ gc_logs_username }}"
+      password = "{{ gc_token }}"
     }
   }
   external_labels = {
