@@ -1,0 +1,20 @@
+# PVC for Immich's photo library — the chart explicitly does not auto-create
+# this volume; an existing PVC must be referenced from the HelmRelease values
+# (see immich.yaml: immich.persistence.library.existingClaim).
+#
+# 50 GiB starter — easy to expand later (nfs-scratch supports volume
+# expansion). Eventually we'll likely point Immich at a bulk-backed export
+# for the long-term photo library, but for the initial validate-the-pipe
+# pass nfs-scratch is fine.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-library
+  namespace: immich
+spec:
+  storageClassName: nfs-scratch
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi

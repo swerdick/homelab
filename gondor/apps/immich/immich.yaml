@@ -1,0 +1,73 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: immich
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://immich-app.github.io/immich-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: immich
+  namespace: immich
+spec:
+  interval: 30m
+  releaseName: immich
+  chart:
+    spec:
+      chart: immich
+      version: ">=4.6.0 <5.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: immich
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  # The chart depends on the immich-postgresql Cluster CR being present
+  # when Immich starts (otherwise the immich-postgresql-app Secret it
+  # reads doesn't exist yet). dependsOn at the HelmRelease level isn't
+  # quite right (CNPG provisions the Secret asynchronously, not as part
+  # of a HelmRelease); Immich pods will CrashLoopBackOff briefly until
+  # CNPG creates the Secret, then settle.
+  values:
+    # ML disabled for the initial deploy. Save 1-2 GiB of memory; lose
+    # face/object recognition (can be flipped on later by setting
+    # machine-learning.enabled=true once we've validated the rest works
+    # and the capacity-rebalance ROADMAP item lands).
+    machine-learning:
+      enabled: false
+
+    # Bundled Valkey for the in-cluster job queue / cache. Single replica;
+    # ephemeral by default (loses queue state on pod restart, which is fine
+    # — Immich re-syncs jobs from Postgres on restart).
+    valkey:
+      enabled: true
+
+    # Photo library volume — pre-created PVC in library-pvc.yaml. Chart
+    # docs explicitly say the volume must exist before this points at it.
+    immich:
+      persistence:
+        library:
+          existingClaim: immich-library
+
+    # Wire DB_URL straight from CNPG's auto-generated app secret. The
+    # `uri` key is the full postgresql:// connection string Immich expects.
+    # bjw-s common library accepts dict-style env with object values for
+    # valueFrom references.
+    controllers:
+      main:
+        containers:
+          main:
+            env:
+              DB_URL:
+                valueFrom:
+                  secretKeyRef:
+                    name: immich-postgresql-app
+                    key: uri

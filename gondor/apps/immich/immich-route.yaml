@@ -1,0 +1,26 @@
+# Routes https://immich.vingilot.internal/* to the Immich server Service.
+# No basic-auth middleware — Immich has its own user/auth system and the
+# mobile app authenticates against that, so wrapping the whole thing in
+# basic auth would break the mobile clients.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: immich
+  namespace: immich
+spec:
+  parentRefs:
+    - name: vingilot
+      namespace: traefik
+      sectionName: immich-https
+  hostnames:
+    - immich.vingilot.internal
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        # Immich's chart names the server service after the release name
+        # plus `-server` suffix. Standard port: 2283 (server's HTTP API).
+        - name: immich-server
+          port: 2283

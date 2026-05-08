@@ -1,0 +1,51 @@
+---
+# CNPG-managed Postgres cluster for Immich.
+#
+# Image: tensorchord/cloudnative-vectorchord — a CNPG-compatible Postgres
+# image with the vchord (VectorChord) extension pre-installed. Tag pinned
+# to 16.9-0.4.3 to match the vchord version Immich themselves test against
+# (immich-app's own non-CNPG image is `14-vectorchord0.4.3-pgvectors0.2.0`,
+# so 0.4.3 is the proven-good vchord version for current Immich).
+#
+# CNPG auto-generates an `immich-postgresql-app` Secret holding connection
+# details — Immich's HelmRelease wires DB_URL from the `uri` key of that
+# Secret (see immich.yaml).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: immich-postgresql
+  namespace: immich
+spec:
+  instances: 1
+  imageName: ghcr.io/tensorchord/cloudnative-vectorchord:16.9-0.4.3
+
+  # vchord requires its shared library preloaded for the CREATE EXTENSION
+  # to succeed. Without this, postgres comes up but the bootstrap SQL fails.
+  postgresql:
+    shared_preload_libraries:
+      - vchord.so
+
+  storage:
+    size: 20Gi
+    storageClass: nfs-scratch
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  bootstrap:
+    initdb:
+      database: immich
+      owner: immich
+      dataChecksums: true
+      # Run once against the freshly-created `immich` database. Granting
+      # SUPERUSER is the simplest path per the Immich docs — it lets
+      # Immich's startup migrations create/drop extensions as needed.
+      # earthdistance depends on cube; CASCADE on vchord pulls in pgvector.
+      postInitApplicationSQL:
+        - ALTER USER immich WITH SUPERUSER
+        - CREATE EXTENSION IF NOT EXISTS vchord CASCADE
+        - CREATE EXTENSION IF NOT EXISTS earthdistance CASCADE
