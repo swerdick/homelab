@@ -74,3 +74,33 @@ spec:
                   secretKeyRef:
                     name: immich-postgresql-app
                     key: uri
+
+    # External library mount for the existing /bulk/photos NFS export.
+    # PV+PVC defined in bulk-photos-pv.yaml. This block is merged into the
+    # server component (chart pattern: top-level keys under `server` extend
+    # what server.yaml hardcodes), so the volume only mounts on the server
+    # pod — not Valkey or anything else.
+    #
+    # supplementalGroups: 10000 matches the gid that owns files under
+    # /bulk/photos on the NFS server (same strategy Jellyfin uses for
+    # /bulk/media). Requires manage-gids=n on the NFS server — otherwise
+    # nfsd ignores client-supplied groups and reads get EACCES regardless
+    # of what we set here.
+    server:
+      defaultPodOptions:
+        securityContext:
+          supplementalGroups:
+            - 10000
+      persistence:
+        bulk-photos:
+          enabled: true
+          type: persistentVolumeClaim
+          existingClaim: immich-bulk-photos
+          readOnly: true
+          # Mount only on the server pod. Path is what we'll point the
+          # External Library at in Immich's UI (Admin → Libraries).
+          advancedMounts:
+            main:
+              main:
+                - path: /mnt/external/bulk-photos
+                  readOnly: true

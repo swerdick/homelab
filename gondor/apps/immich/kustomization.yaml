@@ -4,5 +4,6 @@ resources:
   - namespace.yaml
   - postgres-cluster.yaml
   - library-pvc.yaml
+  - bulk-photos-pv.yaml
   - immich.yaml
   - immich-route.yaml

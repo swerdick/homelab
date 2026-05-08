@@ -1,0 +1,54 @@
+---
+# Static PV+PVC pair pointing at the existing /bulk/photos NFS export
+# (managed via ansible/host_vars/nfs.yaml). Used by Immich as a read-only
+# external library — Immich scans + indexes the existing photo collection
+# without moving/renaming/modifying anything on disk. New photos dropped
+# via SMB are picked up on Immich's next scan cycle.
+#
+# Not auto-provisioned by nfs-subdir-external-provisioner — that one only
+# handles /scratch/k3s-pvs and creates per-PVC subdirs. For a pre-existing
+# NFS path we use a static PV + PVC pair with explicit volumeName binding.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-bulk-photos
+  labels:
+    app: immich
+    purpose: external-library
+spec:
+  # Nominal capacity — NFS doesn't enforce quota at the PV level. Set
+  # high enough that PVC binding succeeds even as the underlying ZFS
+  # dataset grows.
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadOnlyMany
+  # Retain so deleting the PVC doesn't even consider touching the
+  # underlying NFS data. Belt-and-suspenders next to readOnly: true.
+  persistentVolumeReclaimPolicy: Retain
+  # Empty string signals "do not match any StorageClass" — the PVC
+  # below uses the same empty value to bind to this static PV directly.
+  storageClassName: ""
+  nfs:
+    server: nfs.vingilot.internal
+    path: /bulk/photos
+  mountOptions:
+    - nfsvers=4
+    - hard
+    - noatime
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: immich-bulk-photos
+  namespace: immich
+spec:
+  accessModes:
+    - ReadOnlyMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Ti
+  # Explicit binding to the PV above — avoids any chance of matching a
+  # different PV by accident.
+  volumeName: immich-bulk-photos
