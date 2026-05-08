@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # bootstrap/bootstrap-flux.sh
-# Bootstraps Flux against the existing pseudo/homelab repo.
+# Bootstraps Flux against the swerdick/homelab repo.
 # Requires: GITHUB_TOKEN (classic PAT with `repo` scope) exported in env.
 
 set -euo pipefail
 
-GITHUB_USER="${GITHUB_USER:-pseudo}"
+GITHUB_USER="${GITHUB_USER:-swerdick}"
 GITHUB_REPO="${GITHUB_REPO:-homelab}"
 CLUSTER_NAME="${CLUSTER_NAME:-gondor}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"

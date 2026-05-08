@@ -29,7 +29,7 @@ set -euo pipefail
 #    - Install the App on the homelab repo only
 #    - From the install URL (https://github.com/settings/installations/<ID>),
 #      copy the Installation ID
-# 3. Store App ID, Installation ID, and the .pem in 1Password.
+# 3. Store App ID, Installation ID, and the .pem in Bitwarden.
 
 # --- Required inputs (export before running, or hardcode for one-off) ---
 : "${GITHUB_APP_ID:?Set GITHUB_APP_ID environment variable}"
@@ -79,4 +79,4 @@ echo "  [ ] Update gondor/flux-system/gotk-sync.yaml to include 'provider: githu
 echo "      (drift detection will revert the live patch otherwise)"
 echo "  [ ] Revoke the old PAT at https://github.com/settings/tokens"
 echo "  [ ] Securely delete the local .pem file: rm -P ${GITHUB_APP_PRIVATE_KEY_PATH}"
-echo "  [ ] Confirm App private key is in 1Password"
+echo "  [ ] Confirm App private key is in Bitwarden"

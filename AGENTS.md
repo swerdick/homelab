@@ -61,7 +61,6 @@ If a workflow you'd repeat is missing, propose adding a recipe rather than runni
 - `ansible/` — playbooks targeting bare hosts/LXCs/VMs (community.sops vars plugin enabled)
 - `<hostname>/` — host-specific scripts/notes (e.g. `earendil/`, `tirion/`)
 - `runbooks/` — written-down procedures for things not yet automated
-- `utility/` — one-off scripts (e.g. `distribute-root-ca.sh`)
 
 ## Secrets
 
@@ -86,7 +85,7 @@ PiHole / AdGuard is on the roadmap; update this section when that lands.
 
 Internal CA: **step-ca on `tirion`**. cert-manager `ClusterIssuer` named `tirion` issues per-service certs via HTTP-01 over the `vingilot` Gateway. The root CA is already trusted on every homelab host.
 
-**Do not run `utility/distribute-root-ca.sh` reflexively** — it has cascading effects (Proxmox fingerprint pinning, etc.). Only run during an actual root rotation.
+**Do not run `ansible/playbooks/distribute-root-ca.yaml` reflexively** — it has cascading effects (Proxmox fingerprint pinning, etc.). Only run during an actual root rotation.
 
 ## Conventions
 
