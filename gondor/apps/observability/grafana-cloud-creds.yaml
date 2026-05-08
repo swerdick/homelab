@@ -1,0 +1,33 @@
+# Grafana Cloud credentials for the in-cluster kube-prometheus-stack
+# Prometheus to remote_write a curated subset of k8s metrics. Pairs with
+# ansible/group_vars/alloy/secrets.sops.yaml on the host-alloy side; both
+# files reference the same access policy token (homelab-alloy with
+# scope set:alloy-data-write).
+#
+# Rotation: regenerate token via grafana.com → Administration → Access
+# Policies → stack-1573548-alloy → Add token, then update both files in
+# lockstep.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: grafana-cloud-creds
+    namespace: monitoring
+type: Opaque
+stringData:
+    metrics_username: ENC[AES256_GCM,data:jbrZmtUSQw==,iv:RmvxLOn8+uLG7Xg9WWUBGFCYQ+H2Be093RDck0qeXuA=,tag:F4FPkv9W9PtahbXLIfnNTg==,type:str]
+    token: ENC[AES256_GCM,data:qnAvOGg0mfLaxYcv0xod/nzNzTeOxcBpBD5ETSNuIDzJtq6m/MifunOIoVseGDUCpspS4q+C0oYQhlqQ9Z6EO2xSzck2sCvXlKyQXnLwm+spsoGPTMW0Ry1YCQu28ifFYkbozZ34Oxn1jPHHMi0/Yv48sLkUzJlf5HoYrGZAPLhjWpRUh+Dpua4W/HmrolrEF+nfDXQqeQvbBaoc,iv:bZNEreuKx4cfFEqmFBVx2I1aJvAGZAnUb2ptTET02NQ=,tag:UsHH9ULiPPWTVuffV6Qp7A==,type:str]
+sops:
+    age:
+        - recipient: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBOeGpTK0V0YTU2ZEN3Ympu
+            RHhHR3F6MHFVZnBLaFBIYzBnYU9sbTBjdkRBCkNLRzQ0NWhERlZrNTl4aXNoZ2tN
+            WVEwQk1rUHhyWE1CQnp5SXNjVjFVRTgKLS0tIFVla1JVZ0JsZWU5R0ZuWmdQRktM
+            T3EzQUlBRGQ3aWtDV3pLYXlNdTE3c1kKvFP1Xks75YTuQL7WCM3VSsmjkfMvhw0x
+            lJi2sxIcuEGDCC341kb0Totx/jN2R6RbD+cmYsocSFmX26T05kKHGA==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-05-08T22:05:58Z"
+    mac: ENC[AES256_GCM,data:qb17SZzWhFFy3+wNLbpGiy2wcnYceAF5VsQdOH9w1wrkLdbZgFRAHrFytrj7ntsEBumwFCGfp6na1T2bshscDveI+XvIMs9Ib/YLw/rYSU00W5QC0J3/gt3nyU0mWQ0/LOOZU1Bdos9dcJg1sb2pZVCew2pcDFFTxEyiwAVMS0c=,iv:mcjkRvzR2c+ft881sZ04wv/8lgC02cP286bloXcEYYQ=,tag:E5dI/VfLjYwQcJGwmb38wg==,type:str]
+    encrypted_regex: ^(data|stringData)$
+    version: 3.12.2
