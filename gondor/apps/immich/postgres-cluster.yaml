@@ -32,9 +32,14 @@ spec:
   resources:
     requests:
       cpu: 100m
-      memory: 256Mi
-    limits:
       memory: 512Mi
+    limits:
+      # 1 GiB lets vchord index ops + Immich's connection pool breathe. The
+      # initial 512Mi was too tight — postgres came up cleanly but got
+      # OOMKilled (exit 137) once Immich started running migrations and
+      # vchord indexing. CNPG default if unset is unlimited; capping at
+      # 1 GiB keeps gondor's total committed memory predictable.
+      memory: 1Gi
 
   bootstrap:
     initdb:
