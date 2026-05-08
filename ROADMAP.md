@@ -22,10 +22,6 @@ The private-key-marker pre-commit hook lives at `~/.config/git/hooks/pre-commit`
 
 ## Observability
 
-### Loki + journald shipping (actively in progress)
-
-Phase 1 complete: NFS-backed StorageClass for k3s PVs (`nfs-scratch`). Phase 2: Loki HelmRelease + basic auth + HTTPRoute + Grafana datasource. Phase 3: Alloy `loki.source.journal` + `loki.write` config rolled out via ansible.
-
 ### Cert expiration alerting
 
 Silent renewal failures (Proxmox ACME on earendil/erebor, cert-manager Certificates, step-ca's own root) could go unnoticed for weeks. Stack:
@@ -69,6 +65,56 @@ Loki is up for logs (Phase 2 done) and Prometheus is up for metrics. Tempo is th
 Why it'd matter: Alloy is OTel-capable (`otelcol.receiver.otlp` + exporter components), so any app that emits OTLP signals could ship traces here. Without Tempo, Alloy can still receive OTLP traces but has nowhere to forward them to. Currently relevant only if you instrument something yourself; nothing in the homelab fleet emits traces today.
 
 Probably a Phase-2-of-Loki-style session: ~60-90 min for the chart + ingress + datasource, plus a follow-up to point Alloy at it once an actual app is producing traces.
+
+## Apps & data services
+
+### CloudNativePG operator (Postgres platform)
+
+Foundation for Immich (and any future app that wants Postgres). CNPG is the actively-maintained, k8s-native Postgres operator — lightweight, supports backup to S3-compatible (Backblaze, which `aglarond` already has creds for), point-in-time recovery, replication, automated failover.
+
+Tasks:
+- HelmRelease under `gondor/infrastructure/controllers/cnpg/` (operator install)
+- A `Cluster` manifest for an Immich-flavored Postgres using `tensorchord/cloudnative-pg-vectorchord` (vectorchord extension is required for Immich's face/object recognition features)
+- Test pod that connects to validate
+- Optional: wire backup to Backblaze in the same session
+
+Worth its own ~60-90 min session before Immich.
+
+### Jellyfin
+
+Self-hosted media server. Lightweight: ~1 GiB memory request, no DB, just config + media PVCs. Plugs into the existing NFS-backed media on `/bulk/media`.
+
+- Config PVC on `local-path` (5 Gi). Media PVC referencing the existing NFS export.
+- New HTTPRoute + Gateway listener + Cert + DNS record (`jellyfin.vingilot.internal → 192.168.1.220`).
+- No GPU on gondor (GTX 970 is passed through to anduril) → software transcoding only. Fine for single-stream direct-play of common codecs, painful at 4K/HEVC re-encode.
+
+### Immich
+
+Self-hosted photo library with face/object recognition. Heavier than Jellyfin: needs Postgres-with-vectorchord (provided by CNPG above) + Valkey (`valkey.enabled: true` in the chart bundles it) + a beefy machine-learning container if AI features are enabled.
+
+Resource sketch on gondor:
+- With ML: ~4-5 GiB total across server/microservices/ml + Postgres + Valkey
+- Without ML: ~2-3 GiB; loses face grouping and content-search but otherwise full-featured
+
+Recommend deploying with ML disabled first to validate the pipe end-to-end, then flip ML on once memory is confirmed (likely after the capacity rebalance below). Library PVC on `nfs-scratch` or a new bulk-backed export. New HTTPRoute + Gateway listener + Cert + DNS (`immich.vingilot.internal`).
+
+## Capacity & resource management
+
+### Audit guest CPU/memory + rebalance
+
+Some guests are over-provisioned. Per the host-overview dashboard:
+- gondor has 10 GiB allocated, uses ~3.5-4 GiB (will grow with Loki/Alloy/Immich)
+- LXCs allocate 1 GiB each, peak usage in the 150-300 MiB range
+- Total host RAM is 16 GiB — the budget is real
+
+Steps:
+1. Sample memory usage on each guest over a representative window (include a backup run for erebor, plex/streaming activity for media-using guests)
+2. Identify safe shrinks (`allocated 1 GiB → peak 250 MiB → shrink to 512 MiB` style)
+3. Apply via PVE UI (or via the eventual Terraform pivot — see README's "Where's the Terraform?")
+4. Re-run `just dump-pve-configs` to capture the new shape
+5. Reallocate the freed RAM to gondor as Immich's appetite demands
+
+~30-45 min once the targets are clear.
 
 ## Network & DNS
 
@@ -117,6 +163,16 @@ Codify the manual steps for adding a new homelab host into a single `bootstrap.y
 ### `nfs-common` install — generalize beyond k3s
 
 Currently the `setup-k3s-pv-storage` playbook installs `nfs-common` on gondor as a third play. If/when other guests need to mount NFS, that play should move to a generic "ensure nfs client" playbook (or fold into the new-host onboarding playbook above) rather than living inside the k3s storage one.
+
+### Manage NFS exports in ansible
+
+Today only the `/scratch/k3s-pvs` export is managed by the `setup-k3s-pv-storage` playbook. The pre-existing exports (`/bulk/media`, `/bulk/photos`, `/bulk/documents`, etc.) are hand-edited in the nfs LXC's `/etc/exports`. Once Jellyfin/Immich start consuming media via NFS we'll want to tweak exports more often — bring them all under ansible before that happens.
+
+Approach: move `/etc/exports` to a Jinja template at `ansible/templates/etc-exports.j2`, define each export as a structured entry in `group_vars/`, write a `manage-nfs-exports.yaml` playbook that templates + reloads. Existing pseudo-root-at-`/` layout stays.
+
+### Manage Samba config in ansible
+
+Same story for the smb LXC: `/etc/samba/smb.conf`, share definitions, user mappings — none of it currently in ansible. Bring under management before the next "add a share" or "tweak permissions" task. Pattern mirrors the NFS one above (template + playbook + handlers).
 
 ### `tirion-root-ca` Secret cleanup
 
