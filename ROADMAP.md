@@ -41,19 +41,19 @@ The whole thing also forces picking a notification channel (Discord webhook, ntf
 
 Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux's perspective once retries are exhausted. Capacitor shows them but you have to look. Add Prometheus alert on `gotk_reconcile_condition{type="Ready",status="False"}` (or similar) so a wedged release pages instead of being noticed days later. Pair naturally with the cert-expiration alerting work since the Alertmanager plumbing is the same.
 
-### Flux observability dashboard in Grafana
+### Mirror metrics + logs to Grafana Cloud free tier
 
-Pre-built community dashboards exist (e.g. grafana.com/dashboards/16714). Quick win — import, tag `homelab`, run `just backup-grafana`, commit. Visual answer to "is Flux working" at a glance.
+In-cluster Loki/Prom/Grafana means the moment k3s wedges, the observability stack is the first thing you can't query. Grafana Cloud's free tier (10k active metrics series, 50 GB logs, 14d retention) is enough to mirror "what you'd actually want during an incident" — the rest stays in-cluster.
 
-### Per-deployment workload dashboard
+Approach: dual-export from each Alloy collector. Second `prometheus.remote_write` and `loki.write` component pointing at Grafana Cloud, alongside the existing in-cluster targets. Free-tier survival depends on only forwarding the high-signal series (host CPU/mem, controlPlaneNotReady, key app readiness) — full kube-state-metrics fanout would blow past 10k series instantly. Cardinality tuning is the rabbit hole.
 
-Inspired by Grafana's built-in "Kubernetes / Compute Resources / Namespace (Workloads)" but rebuilt for homelab triage. Template variables: `namespace`, `deployment`. Panels:
+Open: where the Grafana Cloud auth credentials live — per-host SOPS env file (matches the alloy ansible pattern) or a shared k8s Secret for the in-cluster Alloy.
 
-- CPU and memory utilization plotted against `requests` and `limits` on the same axis (spot throttling and near-OOM at a glance — exactly what was missing during the Immich thumbnail incident)
-- Active vs failed pod counts for the selection
-- Loki logs panel auto-filtered to the selected deployment so triage stays on one screen
+### Add CloudWatch as a Grafana datasource
 
-Today's flow when something misbehaves jumps between Capacitor (for Flux state), a generic resource dashboard (cluster-wide, requires manual filtering), and Loki Explore with hand-typed label selectors. One variable-driven dashboard collapses that into a single tab.
+User's Grafana Cloud instance currently queries CloudWatch from a personal AWS account; some dashboards live there. Get the same view on the local Grafana so AWS metrics aren't trapped behind Grafana Cloud.
+
+Steps: extend `apps/observability/kube-prometheus-stack.yaml` `grafana.additionalDataSources` (alongside the existing Loki entry) with a CloudWatch entry. AWS auth via IAM access-key pair stored in a SOPS-encrypted Secret. Recreate / import the existing dashboards, tag `homelab`, run `just backup-grafana`. Set the datasource's default interval to 5m or higher — CloudWatch GetMetricData calls are billed and a tight refresh loop quietly racks up charges.
 
 ### Hardware status dashboard (SMART + hwmon)
 
@@ -96,6 +96,53 @@ Server pod currently runs as `runAsUser: 0` with `supplementalGroups: [10000]` f
 
 The Immich Postgres cluster is currently durability-insured only by gondor's PBS snapshots — crash-consistent at best, since PBS doesn't quiesce the database. CNPG has first-class barman-cloud support; pointing it at the Backblaze bucket aglarond already uses gives application-consistent base backups + continuous WAL archiving. Pre-flight: confirm aglarond's Backblaze creds are valid via a no-op `restic check` first, otherwise debugging happens during the wrong session. Configuration lives on the `Cluster` CR (`spec.backup.barmanObjectStore`) plus a `ScheduledBackup` CR for the cadence. Applies cluster-wide, not just to Immich — any future CNPG cluster benefits.
 
+### Deploy Vibeseeker to local k3s
+
+User's own app — currently developed elsewhere, wants a stable in-cluster deployment as a real "production"-feeling target. Standard shape: HelmRelease in a `vibeseeker` namespace, HTTPRoute at `vibeseeker.vingilot.internal` (or whatever public hostname makes sense via Cloudflare Tunnel), CNPG-backed Postgres if it needs persistent state, image pulled from the local registry (see CI/CD section) or upstream until that lands. Image probably built by self-hosted GHA runners — three of the CI/CD items below are natural preconditions if the goal is full local dev-loop.
+
+## CI/CD & developer infrastructure
+
+### Self-hosted GitHub Actions runners
+
+GitHub-hosted runners have monthly minute caps and can't reach internal homelab services without exposing them. Self-hosted runners give faster builds + access to in-cluster registries, databases, and the future SonarQube/Harbor/Vibeseeker triad below. Two viable shapes:
+
+- **`actions-runner-controller` (ARC) in k3s** — operator scales runner pods up on workflow events, down to zero between. GitHub App authentication. Most-homelabby choice; deploys via HelmRelease, plays well with Flux.
+- **Docker-based runners on a dedicated LXC** — simpler, no scale-to-zero. Lower complexity but always-running cost.
+
+Security: a self-hosted runner executes whatever workflow code is in the repo. Restrict via `runs-on: self-hosted` + first-time-contributor approval, and isolate runners from credential-bearing infrastructure (separate namespace, no cluster-admin). Pairs with the local registry + security scanning items below.
+
+### Gitea / Forgejo as GitHub mirror
+
+Single-failure-domain risk: any of "GitHub repo disappearing" (account suspension, outage, policy change) cripples Flux which reconciles from `github.com/swerdick/homelab.git`. A local Gitea (or its more-active fork Forgejo) running as a HelmRelease can mirror every repo we care about on a schedule.
+
+HelmRelease in `gitea` namespace, CNPG-backed Postgres (extends the operator pattern Immich already uses), HTTPRoute at `gitea.vingilot.internal`, NFS-backed PVC for repo storage. Configure each repo as a "pull mirror" against GitHub. Optionally re-point Flux's `GitRepository` at the local Gitea once it's been operating reliably — full dogfooding, GitHub becomes the upstream-of-the-mirror.
+
+Mirror-only is the right scope. Pushing changes back to GitHub stays the source-of-truth flow; local Gitea is the read-only insurance copy.
+
+### Local container + Helm registry (Harbor)
+
+Two motivations: (1) external Helm charts and container images can vanish or rate-limit at the worst time — a chart's index.yaml going away breaks Flux mid-deploy. (2) Need a write target for the security-scanning item below.
+
+**Harbor** is the natural fit — bundles an OCI registry + Helm chart support + replication policies + Trivy-based vuln scanning + RBAC + a UI, CNCF-maintained. Helm-installable. Storage on NFS-backed PVC (50-100 GiB to start; will grow). Replication policies pull-mirror upstream registries on a schedule (Docker Hub, ghcr.io, quay.io, immich-app.github.io). Apps re-point at `harbor.vingilot.internal/library/...` instead of upstream URLs; Flux's `HelmRepository` resources can also reference Harbor's `oci://` Helm support.
+
+Lighter alternative if Harbor's UI/RBAC are overkill: **Zot** (OCI-only, tiny). Sonatype Nexus / JFrog are realistically paid-tier for the features that matter here; skip.
+
+### Security scanning (Trivy)
+
+Pairs with the registry above and runs in two modes that share the same scanner:
+- **Registry-side**: Harbor's bundled Trivy scanner auto-scans every image that lands. Surfaces CVE counts per repo/tag in the Harbor UI. Free if Harbor lands.
+- **CI-side**: `aquasecurity/trivy-action` in GitHub Actions workflows scans images before they're pushed. Pairs with self-hosted runners.
+
+Both modes incremental — pick one and the other is a small additional step. Threshold gates (fail build on HIGH+ CVEs) come later; first goal is "we can see CVE counts at all."
+
+### Self-hosted SonarQube for static analysis
+
+Static-analysis side of the quality/security story (Trivy covers CVEs; SQ covers code smells / bugs / coverage / duplications). Community Edition is free, Helm-installable, Postgres-backed — extends the existing CNPG operator pattern.
+
+Resource cost is the gotcha: ~3-4 GiB RAM for the SQ server idle, plus CPU spikes during analysis runs. Almost certainly lands *after* the gondor capacity rebalance, or runs as a dedicated PVE LXC if it doesn't fit in k3s.
+
+GitHub Actions integration via `sonarsource/sonarqube-scan-action` — works cleanly when the runner can reach the SQ server over the in-cluster network. So this item realistically depends on self-hosted runners landing first; cloud-runner access would need Cloudflare Tunnel + auth gymnastics that aren't worth it.
+
 ## Capacity & resource management
 
 ### Audit guest CPU/memory + rebalance
@@ -121,6 +168,39 @@ Steps:
 Right now `vingilot.internal` records live on the Verizon CR1000A router. Adding any new internal hostname requires a manual A-record on the router *before* cert-manager can complete its HTTP-01 self-check (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_dns.md)).
 
 A local resolver (Pi-hole or AdGuard Home) on a dedicated LXC would unlock wildcard `*.vingilot.internal → 192.168.1.220` and remove the per-service DNS friction. Probably a 2-hour session.
+
+If the Pi-orchestrator item under "Architecture & topology" lands, the resolver lives there (natively, not in k3s) and supersedes this entry.
+
+### Headscale / Tailscale for remote access
+
+Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Where it runs depends on the Pi-orchestrator decision: ideal home is the always-on Pi (covered in Architecture & topology), with fallbacks of a HelmRelease on gondor or a PVE LXC on earendil.
+
+Two related capabilities to layer in once the coordinator is up:
+- **Tailscale subnet router**: announce `192.168.1.0/24` so the whole LAN is reachable through one node — no per-LXC client install.
+- **WoL bridge**: a small HTTP service on the tailnet that wakes earendil via magic packet from anywhere (described in the Pi-orchestrator entry).
+
+If the Pi-orchestrator item slips, this becomes a different decision: Headscale-as-k3s-pod buys remote access only while gondor is up (daytime-only under the nightly-shutdown model). Cloudflare Tunnel stays the answer for "always reachable" public HTTP. Headscale only earns its place if SSH/non-HTTP access is part of the use case.
+
+## Architecture & topology
+
+### Pi 5 as always-on orchestrator (architecture not yet settled)
+
+Driver: earendil shuts down nightly to save power, so anything in-cluster — DNS via Pi-hole/AdGuard, Headscale remote access, Alloy buffering, observability, scheduled jobs — disappears for ~12h every day. A small always-on node solves that whole class of problems. Discussion sketch from 2026-05-08 chat with web Claude landed on the shape below; recording it before the details rot.
+
+**Most-promising shape (not yet committed):**
+- **Pi 5 hosts the k3s control plane.** USB-SSD boot, NOT SD card — the combined write workload of k3s + Alloy WAL + Pi-hole logs would shred any SD card in months. Wired Ethernet only (WiFi causes API-server / kubelet flapping).
+- **gondor VM becomes a worker** for x86 workloads only. ARM workloads schedule on the Pi via `kubernetes.io/arch=arm64` nodeSelector.
+- **Pi-hole/AdGuard runs natively on the Pi**, not in k3s. DNS shouldn't depend on k3s being healthy, and the port-53/MetalLB choreography adds moving parts to a service whose value is being boring. Ansible role for it (overlaps with the existing "local DNS" roadmap item — supersede it if this lands).
+- **Headscale + Alloy run as k3s pods on the Pi** so remote access and observability buffering survive nightly downtime.
+- **Watering / GPIO services** schedule on the Pi worker via taint + nodeSelector (or move off-cluster to native systemd if the cluster-up assumption keeps biting).
+
+Bonus capability that falls out: SSH-via-Headscale-to-Pi → `wakeonlan` magic packet → wakes earendil. Lab boots in 2-5 min from anywhere.
+
+**Open questions before this becomes a project:**
+- **One Pi or two?** Orchestrator role wants "next to the switch with a wired link"; watering wants "near the plants." Splitting onto a dedicated cheap Pi (Pi 4 / Zero 2 W) for plants might be cleaner than dual-purposing one Pi 5.
+- **Migration order.** Moving the k3s control plane from gondor to a Pi is the riskiest single step — needs a planned outage and a fallback.
+- **Alternative: just leave earendil on.** Pi pattern saves ~$50-90/yr in electricity vs always-on earendil; that's not free, and "remove the constraint" is a legitimate alternative to "engineer around it."
+- **CR1000A as DNS fallback.** Router can hand out a secondary DNS — useful safety net for "Pi failed at 2am" but DNS leaks through to the secondary on Windows/Linux clients aren't great.
 
 ## Specific upgrades
 
