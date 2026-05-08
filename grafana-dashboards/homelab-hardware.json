@@ -9,7 +9,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "smartctl_device_smart_status: 1 = PASS, 0 = FAIL. One tile per disk.",
       "fieldConfig": {
@@ -73,7 +73,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_smart_status{instance=\"$instance\"} * on (device, instance) group_left(model_name) smartctl_device{instance=\"$instance\"}",
           "instant": true,
@@ -87,7 +87,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "smartctl_device_temperature{temperature_type=\"current\"} per disk.",
       "fieldConfig": {
@@ -145,7 +145,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_temperature{instance=\"$instance\",temperature_type=\"current\"} * on (device, instance) group_left(model_name) smartctl_device{instance=\"$instance\"}",
           "instant": true,
@@ -159,7 +159,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "fieldConfig": {
         "defaults": {
@@ -219,7 +219,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_temperature{instance=\"$instance\",temperature_type=\"current\"} * on (device, instance) group_left(model_name) smartctl_device{instance=\"$instance\"}",
           "legendFormat": "{{device}} ({{model_name}})",
@@ -232,7 +232,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "platform_coretemp_0: temp1 = package, temp2-5 = cores 0-3.",
       "fieldConfig": {
@@ -292,7 +292,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "node_hwmon_temp_celsius{instance=\"$instance\",chip=\"platform_coretemp_0\"}",
           "legendFormat": "{{sensor}}",
@@ -305,7 +305,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "thermal_zone0 (acpitz) = chassis/board area; thermal_zone2 (pch_skylake) = chipset PCH. zone1 (second acpitz) and zone3 (x86_pkg_temp, duplicate of CPU package) aren't exposed by node_exporter's hwmon collector.",
       "fieldConfig": {
@@ -345,7 +345,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "node_hwmon_temp_celsius{instance=\"$instance\",chip=~\"thermal_thermal_zone.*\"}",
           "legendFormat": "{{chip}} {{sensor}}",
@@ -358,7 +358,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "Active running time per disk. Formatted as duration with multi-unit precision (year/month/week/day).",
       "fieldConfig": {
@@ -403,7 +403,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_power_on_seconds{instance=\"$instance\"}",
           "format": "table",
@@ -439,7 +439,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "Reallocated_Sector_Ct raw value. Any non-zero on a rotational drive is worth flagging; growth over time = drive failing.",
       "fieldConfig": {
@@ -492,7 +492,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_attribute{instance=\"$instance\",attribute_name=\"Reallocated_Sector_Ct\",attribute_value_type=\"raw\"}",
           "instant": true,
@@ -506,7 +506,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "Current_Pending_Sector raw value. Any non-zero = sectors waiting to be remapped on next write; replace soon.",
       "fieldConfig": {
@@ -555,7 +555,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_attribute{instance=\"$instance\",attribute_name=\"Current_Pending_Sector\",attribute_value_type=\"raw\"}",
           "instant": true,
@@ -569,7 +569,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "Wear_Leveling_Count normalized value. Starts at 100 on a fresh SSD; vendor-defined floor is typically 0 (drive declares end-of-life, may go read-only).",
       "fieldConfig": {
@@ -626,7 +626,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_attribute{instance=\"$instance\",attribute_name=\"Wear_Leveling_Count\",attribute_value_type=\"value\"}",
           "instant": true,
@@ -640,7 +640,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "LBAs are 512-byte sectors on these drives. Useful as a cumulative-write proxy on the SSD.",
       "fieldConfig": {
@@ -709,7 +709,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_attribute{instance=\"$instance\",attribute_name=\"Total_LBAs_Written\",attribute_value_type=\"raw\"} * 512",
           "instant": true,
@@ -719,7 +719,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device_power_cycle_count{instance=\"$instance\"}",
           "instant": true,
@@ -733,7 +733,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "prometheus"
+        "uid": "${datasource}"
       },
       "description": "Device → model lookup, pulled from the smartctl_device info metric.",
       "fieldConfig": {
@@ -762,7 +762,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "prometheus"
+            "uid": "${datasource}"
           },
           "expr": "smartctl_device{instance=\"$instance\"}",
           "format": "table",
@@ -824,12 +824,30 @@
     "list": [
       {
         "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Prometheus",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
           "text": "earendil",
           "value": "earendil"
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "prometheus"
+          "uid": "${datasource}"
         },
         "includeAll": false,
         "label": "Host",
