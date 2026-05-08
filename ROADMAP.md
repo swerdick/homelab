@@ -8,9 +8,11 @@ Things already done aren't tracked here — `git log` is the source of truth for
 
 ### Pseudo users + sudo on root-only hosts
 
-Currently `aglarond`, `tirion`, `earendil` (and the `nfs` / `smb` LXCs) are accessed as `root` directly. Goal: a `pseudo` user on every host with SSH-key auth and sudo (NOPASSWD or password — TBD), so day-to-day login follows least-privilege ergonomics and `sudo` logs give attribution.
+Currently `aglarond`, `tirion`, `earendil` (and the `nfs` / `smb` LXCs) are accessed as `root` directly. Some hosts already have a `pseudo` user from earlier work; others don't. Goal: a `pseudo` user on **every** host with SSH-key auth and **NOPASSWD sudo** (cleanest for ansible automation), so day-to-day login follows least-privilege ergonomics and `sudo` logs give attribution.
 
-Estimated ~45–60 min per host because lockout risk is real (validate from a parallel SSH session before logging out of the original). **tirion specifically lacks `sudo` entirely** (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_tirion_no_sudo.md)) — would need either `apt install sudo` or a `doas` setup as part of the work.
+One ansible playbook handles all 5 hosts (idempotent — `ansible.builtin.user` no-ops on existing users; `authorized_keys` and sudoers are also idempotent). **tirion specifically lacks `sudo` entirely** (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_tirion_no_sudo.md)) — needs `apt install sudo` as a first step.
+
+Total estimate: ~90-120 min for the playbook + per-host validation + inventory flip from `ansible_user: root` to `ansible_user: pseudo` + `ansible_become: true`. Plus thorondor `~/.ssh/config` cleanup. Lockout risk: keep a root SSH session open as fallback during validation; PVE console is the ultimate fallback for LXCs.
 
 ### mTLS for Alloy → Prometheus
 
@@ -158,11 +160,9 @@ Each iOS device that wants to access internal HTTPS services needs the `vingilot
 
 ### Ansible playbook for new-host onboarding
 
-Codify the manual steps for adding a new homelab host into a single `bootstrap.yaml -l <new-host>`: distribute root CA, install unattended-upgrades, install alloy, etc. Today these live as separate playbooks; an importing parent playbook would let `bootstrap.yaml` just pull them all in.
+Codify the manual steps for adding a new homelab host into a single `bootstrap.yaml -l <new-host>`: distribute root CA, install unattended-upgrades, install alloy, ensure NFS client (`nfs-common`), set up the `pseudo` user, etc. Today these live as separate playbooks (or in `setup-k3s-pv-storage`'s third play in the case of `nfs-common`); an importing parent playbook would let `bootstrap.yaml` just pull them all in.
 
-### `nfs-common` install — generalize beyond k3s
-
-Currently the `setup-k3s-pv-storage` playbook installs `nfs-common` on gondor as a third play. If/when other guests need to mount NFS, that play should move to a generic "ensure nfs client" playbook (or fold into the new-host onboarding playbook above) rather than living inside the k3s storage one.
+The `nfs-common` install in particular is currently buried inside `setup-k3s-pv-storage.yaml` because gondor was the only NFS client at the time. It should be lifted out into either a dedicated "ensure nfs client" playbook or this onboarding parent — pick whichever fits when a second NFS client actually appears.
 
 ### Manage NFS exports in ansible
 
