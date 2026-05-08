@@ -6,14 +6,6 @@ Things already done aren't tracked here — `git log` is the source of truth for
 
 ## Security & access hardening
 
-### Pseudo users + sudo on root-only hosts
-
-Currently `aglarond`, `tirion`, `earendil` (and the `nfs` / `smb` LXCs) are accessed as `root` directly. Some hosts already have a `pseudo` user from earlier work; others don't. Goal: a `pseudo` user on **every** host with SSH-key auth and **NOPASSWD sudo** (cleanest for ansible automation), so day-to-day login follows least-privilege ergonomics and `sudo` logs give attribution.
-
-One ansible playbook handles all 5 hosts (idempotent — `ansible.builtin.user` no-ops on existing users; `authorized_keys` and sudoers are also idempotent). **tirion specifically lacks `sudo` entirely** (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_tirion_no_sudo.md)) — needs `apt install sudo` as a first step.
-
-Total estimate: ~90-120 min for the playbook + per-host validation + inventory flip from `ansible_user: root` to `ansible_user: pseudo` + `ansible_become: true`. Plus thorondor `~/.ssh/config` cleanup. Lockout risk: keep a root SSH session open as fallback during validation; PVE console is the ultimate fallback for LXCs.
-
 ### mTLS for Alloy → Prometheus
 
 Currently basic auth (htpasswd / SOPS-encrypted password). Tirion's CA already issues client certs, so Alloy collectors could authenticate with mTLS instead of a shared password. Cleaner threat model; harder to leak; uses PKI we already maintain.
@@ -70,43 +62,33 @@ Probably a Phase-2-of-Loki-style session: ~60-90 min for the chart + ingress + d
 
 ## Apps & data services
 
-### Jellyfin
+### Immich machine-learning enable
 
-Self-hosted media server. Lightweight: ~1 GiB memory request, no DB, just config + media PVCs. Plugs into the existing NFS-backed media on `/bulk/media`.
+Immich currently runs with `machine-learning.enabled: false` to keep memory predictable while the rest of the pipeline gets validated. Flipping it on adds ~1-2 GiB of RAM (the ML container holds CLIP + face-detection models in memory) and unlocks face grouping, smart search, and content-aware tagging. Wait until the capacity rebalance below frees up the budget on gondor; the deploy itself is a one-line values change.
 
-- Config PVC on `local-path` (5 Gi). Media PVC referencing the existing NFS export.
-- New HTTPRoute + Gateway listener + Cert + DNS record (`jellyfin.vingilot.internal → 192.168.1.220`).
-- No GPU on gondor (GTX 970 is passed through to anduril) → software transcoding only. Fine for single-stream direct-play of common codecs, painful at 4K/HEVC re-encode.
+### Immich non-root hardening
 
-### Immich
+Server pod currently runs as `runAsUser: 0` with `supplementalGroups: [10000]` for `/bulk/*` access. Both `/bulk/photos` and `/bulk/media` are mounted `readOnly: true`, so the actual blast radius is small — but there's no reason to keep root. Flip to `runAsUser: 1000` + `runAsGroup: 1000` once the external-library scans are confirmed working end-to-end. Need to verify the immich-library PVC (managed library on `nfs-scratch`, written-to) tolerates the uid change; nfs-subdir-external-provisioner directories are mode 777 by default so it should.
 
-Self-hosted photo library with face/object recognition. Heavier than Jellyfin: needs Postgres-with-vectorchord + Valkey (`valkey.enabled: true` in the chart bundles it) + a beefy machine-learning container if AI features are enabled.
+### CNPG cluster backups (barman → Backblaze)
 
-The CNPG operator is already deployed (`gondor/infrastructure/controllers/cnpg/`); the remaining database work is a vectorchord-flavored `Cluster` CR. Heads-up: the Immich-published `ghcr.io/immich-app/postgres:14-vectorchord*` image isn't CNPG-compatible (CNPG needs `barman-cloud` + custom entrypoints baked into the image). Two options for the Cluster's `imageName`:
-- `ghcr.io/tensorchord/cloudnative-pg-vchord` — community-built CNPG-compatible image with vectorchord pre-installed
-- Build our own (extend the CNPG base image with the vectorchord apt package)
-
-Resource sketch on gondor:
-- With ML: ~4-5 GiB total across server/microservices/ml + Postgres + Valkey
-- Without ML: ~2-3 GiB; loses face grouping and content-search but otherwise full-featured
-
-Recommend deploying with ML disabled first to validate the pipe end-to-end, then flip ML on once memory is confirmed (likely after the capacity rebalance below). Library PVC on `nfs-scratch` or a new bulk-backed export. New HTTPRoute + Gateway listener + Cert + DNS (`immich.vingilot.internal`).
+The Immich Postgres cluster is currently durability-insured only by gondor's PBS snapshots — crash-consistent at best, since PBS doesn't quiesce the database. CNPG has first-class barman-cloud support; pointing it at the Backblaze bucket aglarond already uses gives application-consistent base backups + continuous WAL archiving. Pre-flight: confirm aglarond's Backblaze creds are valid via a no-op `restic check` first, otherwise debugging happens during the wrong session. Configuration lives on the `Cluster` CR (`spec.backup.barmanObjectStore`) plus a `ScheduledBackup` CR for the cadence. Applies cluster-wide, not just to Immich — any future CNPG cluster benefits.
 
 ## Capacity & resource management
 
 ### Audit guest CPU/memory + rebalance
 
 Some guests are over-provisioned. Per the host-overview dashboard:
-- gondor has 10 GiB allocated, uses ~3.5-4 GiB (will grow with Loki/Alloy/Immich)
+- gondor has 10 GiB allocated; usage will climb when Immich's ML container is enabled (see "Immich machine-learning enable" above)
 - LXCs allocate 1 GiB each, peak usage in the 150-300 MiB range
 - Total host RAM is 16 GiB — the budget is real
 
 Steps:
-1. Sample memory usage on each guest over a representative window (include a backup run for erebor, plex/streaming activity for media-using guests)
+1. Sample memory usage on each guest over a representative window (include a backup run for erebor, streaming activity for media-using guests, an Immich library scan)
 2. Identify safe shrinks (`allocated 1 GiB → peak 250 MiB → shrink to 512 MiB` style)
 3. Apply via PVE UI (or via the eventual Terraform pivot — see README's "Where's the Terraform?")
 4. Re-run `just dump-pve-configs` to capture the new shape
-5. Reallocate the freed RAM to gondor as Immich's appetite demands
+5. Reallocate the freed RAM to gondor — gives ML headroom on Immich and breathing room for future apps
 
 ~30-45 min once the targets are clear.
 
