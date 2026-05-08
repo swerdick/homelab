@@ -2,7 +2,7 @@
 
 Living list of work that's deliberately *not done yet*. New ideas land here; promote to a focused session when ready. Drop or rewrite when reality changes.
 
-Things already done aren't tracked here — `git log` is the source of truth for that.
+When something ships, move it to **Completed** at the bottom as a one-line bullet — that gives an at-a-glance "what's been built" view without bloating the active sections. `git log` remains the canonical source for the *how*.
 
 ## Security & access hardening
 
@@ -41,29 +41,11 @@ The whole thing also forces picking a notification channel (Discord webhook, ntf
 
 Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux's perspective once retries are exhausted. Capacitor shows them but you have to look. Add Prometheus alert on `gotk_reconcile_condition{type="Ready",status="False"}` (or similar) so a wedged release pages instead of being noticed days later. Pair naturally with the cert-expiration alerting work since the Alertmanager plumbing is the same.
 
-### Mirror metrics + logs to Grafana Cloud free tier
-
-In-cluster Loki/Prom/Grafana means the moment k3s wedges, the observability stack is the first thing you can't query. Grafana Cloud's free tier (10k active metrics series, 50 GB logs, 14d retention) is enough to mirror "what you'd actually want during an incident" — the rest stays in-cluster.
-
-Approach: dual-export from each Alloy collector. Second `prometheus.remote_write` and `loki.write` component pointing at Grafana Cloud, alongside the existing in-cluster targets. Free-tier survival depends on only forwarding the high-signal series (host CPU/mem, controlPlaneNotReady, key app readiness) — full kube-state-metrics fanout would blow past 10k series instantly. Cardinality tuning is the rabbit hole.
-
-Open: where the Grafana Cloud auth credentials live — per-host SOPS env file (matches the alloy ansible pattern) or a shared k8s Secret for the in-cluster Alloy.
-
 ### Add CloudWatch as a Grafana datasource
 
 User's Grafana Cloud instance currently queries CloudWatch from a personal AWS account; some dashboards live there. Get the same view on the local Grafana so AWS metrics aren't trapped behind Grafana Cloud.
 
 Steps: extend `apps/observability/kube-prometheus-stack.yaml` `grafana.additionalDataSources` (alongside the existing Loki entry) with a CloudWatch entry. AWS auth via IAM access-key pair stored in a SOPS-encrypted Secret. Recreate / import the existing dashboards, tag `homelab`, run `just backup-grafana`. Set the datasource's default interval to 5m or higher — CloudWatch GetMetricData calls are billed and a tight refresh loop quietly racks up charges.
-
-### Hardware status dashboard (SMART + hwmon)
-
-A separate Grafana dashboard for physical-hardware metrics, mostly relevant on earendil (the only host with non-virtual disks). What goes on it:
-
-- **Disk SMART**: temperatures, reallocated sector count, hours powered, projected SSD lifetime, current pending sectors. Needs a SMART exporter — `smartctl_exporter` is the modern actively-maintained choice; install on earendil via ansible (extension of `install-alloy.yaml` or its own playbook). Add `prometheus.scrape` in alloy's config to pull it.
-- **Board hwmon**: CPU temperature, fan speeds, voltages. node_exporter's `hwmon` collector likely already exposes these on earendil — check `node_hwmon_temp_celsius` in Prometheus first; if so, this is purely a dashboard-build task with no new exporter needed.
-- **Memory**: actual operating frequency (sanity-check after the XMP TODO in AGENTS.md eventually flips). Limited info from node_exporter; may need dmidecode-textfile-export or just rely on `journalctl | grep "DDR"` once.
-
-The other guests (gondor VM, LXCs, anduril) see virtual disks, so SMART doesn't apply and hwmon mostly returns nothing. earendil is ~80% of the value here.
 
 ### Ship PVE/PBS task logs to Loki
 
@@ -289,3 +271,22 @@ Driver: earendil shuts down nightly, so anything in-cluster (DNS, Headscale, obs
 - **One Pi or two?** Orchestrator wants "next to the switch with wired link"; watering wants "near the plants." A dedicated cheap Pi (Pi 4 / Zero 2 W) for plants is the obvious resolution if those goals conflict.
 - **CR1000A as DNS fallback.** Router can hand out a secondary DNS — useful safety net for "Pi failed at 2am," but the leak-through behavior on Windows/Linux clients (clients sometimes prefer/cache the secondary) isn't great.
 
+---
+
+## Completed
+
+Reverse-chronological — most recent first. One line each; `git log` carries the rest.
+
+- **Mirror metrics + logs to Grafana Cloud free tier** — host-alloy + k-p-s Prom dual-export with curated allowlists; ~3,100 of 10k series. Same JSON imports cleanly into both Grafanas via `$datasource` parameterization.
+- **Hardware status dashboard (SMART + hwmon)** — `smartctl_exporter` on earendil, `homelab-hardware` Grafana dashboard for disk health + CPU/PCH temps.
+- **Per-deployment workload dashboard** — `homelab-workload`, namespace + deployment-scoped utilization vs requests/limits + pod state + scoped Loki logs.
+- **Flux observability dashboard in Grafana** — `homelab-flux`, gotk_resource_info-driven per-resource state plus reconcile rate/latency/errors.
+- **Loki + journald shipping** — Phase 2 of observability stack; Alloy → in-cluster Loki via `loki.source.journal`, basic-auth at the Traefik edge.
+- **Manage Samba config in ansible** — `manage-samba-config.yaml` templates `/etc/samba/smb.conf` from `host_vars/smb.yaml`; `testparm` validation before reload.
+- **Manage NFS exports in ansible** — `manage-nfs-exports.yaml` templates `/etc/exports` from `host_vars/nfs.yaml`; idempotent re-runs.
+- **CloudNativePG operator** — Postgres platform on gondor; underpins Immich, available for future stateful apps.
+- **Immich** — deployed; ML enable still pending (see active entry above).
+- **Jellyfin** — deployed.
+- **Pseudo users + sudo on root-only hosts** — `setup-pseudo-user.yaml`; SSH switched from root → pseudo with NOPASSWD sudo.
+- **`nfs-common` install — generalize beyond k3s** — folded into the planned onboarding-playbook entry.
+- **`tirion-root-ca` Secret cleanup** — one-off cleanup, completed.
