@@ -95,6 +95,7 @@ Internal CA: **step-ca on `tirion`**. cert-manager `ClusterIssuer` named `tirion
 - **Always pause for human review before `git commit` or `git push`**, even when prior approval to "commit as we go" was given. The user wants to inspect staged changes first.
 - Cluster changes flow through Flux — don't `kubectl apply` directly to gondor for things that should be in `gondor/`. Edit the manifest, commit, push, `just reconcile`.
 - **When deploying a new service to gondor (or anywhere else), search for current installation documentation online before drafting manifests.** Don't rely on memory for chart versions, values structure, deployment modes, or required fields — they drift fast (the Loki chart jumped from 6.x to 13.x in months, with breaking values changes; landing on a stale constraint silently rendered an empty install before we caught it). Fetch the project's official install docs *and* the chart's current `values.yaml` from `main` (or the specific tagged release) before writing the HelmRelease.
+- **Tag every Grafana dashboard you build with `homelab`.** The `just backup-grafana` recipe filters `?tag=homelab` to skip the ~30 dashboards auto-shipped by kube-prometheus-stack — anything you create without that tag won't be backed up to git, and won't survive a Grafana DB wipe.
 
 ## Worked examples (read these before adding similar things)
 
