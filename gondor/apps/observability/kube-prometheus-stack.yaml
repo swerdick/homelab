@@ -36,6 +36,16 @@ spec:
         enableRemoteWriteReceiver: true
         retention: 14d
         retentionSize: "8GB"
+        # Discover PodMonitor/ServiceMonitor/Probe/PrometheusRule resources
+        # cluster-wide, not just those carrying the chart's helm-release
+        # label. Without these flags Prometheus only sees in-chart monitors;
+        # CNPG's auto-generated PodMonitor and the Flux PodMonitor would be
+        # silently ignored. Single-Prometheus homelab — broad discovery is
+        # what we want.
+        podMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorSelectorNilUsesHelmValues: false
+        probeSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
         resources:
           requests:
             memory: 1Gi

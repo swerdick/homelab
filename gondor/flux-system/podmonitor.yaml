@@ -1,0 +1,36 @@
+---
+# Scrapes Flux's six controllers on their /metrics endpoint (port http-prom,
+# 8080) so kube-prometheus-stack can populate `gotk_*` metrics. Pattern lifted
+# from fluxcd/flux2-monitoring-example. Required for the Flux Grafana
+# dashboard (community dashboard 16714) to render anything.
+#
+# Discovery depends on kube-prometheus-stack having
+# podMonitorSelectorNilUsesHelmValues=false (set in
+# apps/observability/kube-prometheus-stack.yaml) — otherwise Prometheus
+# would only pick up monitors carrying the `release: kube-prometheus-stack`
+# label.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flux-system
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: flux
+    app.kubernetes.io/component: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - flux-system
+  selector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - helm-controller
+          - source-controller
+          - kustomize-controller
+          - notification-controller
+          - image-automation-controller
+          - image-reflector-controller
+  podMetricsEndpoints:
+    - port: http-prom
