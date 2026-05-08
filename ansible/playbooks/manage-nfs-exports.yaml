@@ -1,0 +1,32 @@
+---
+# Manages /etc/exports inside the nfs LXC. The export list is defined in
+# ansible/host_vars/nfs.yaml; this playbook renders the template and
+# reloads exportfs whenever the rendered file changes.
+#
+# Idempotent — safe to re-run. The template overwrites /etc/exports
+# entirely, so any direct edits on the LXC will be reverted (which is
+# the point: this playbook is the source of truth).
+#
+# Bind-mounts (the PVE-side `mpN:` lines in /etc/pve/lxc/120.conf that
+# expose host directories inside the LXC) are managed separately in
+# setup-k3s-pv-storage.yaml. /etc/exports paths must reference mounts
+# that already exist inside the LXC.
+
+- name: Manage NFS exports on the nfs LXC
+  hosts: nfs
+  tasks:
+    - name: Template /etc/exports from nfs_exports
+      ansible.builtin.template:
+        src: ../templates/etc-exports.j2
+        dest: /etc/exports
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload NFS exports
+
+  handlers:
+    - name: Reload NFS exports
+      # `exportfs -ra` re-reads /etc/exports and applies changes without
+      # restarting the NFS server (no client disruption).
+      ansible.builtin.command: exportfs -ra
+      changed_when: true

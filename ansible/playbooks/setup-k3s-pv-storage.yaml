@@ -1,20 +1,14 @@
 ---
-# Sets up an NFS-backed StorageClass path for k3s PersistentVolumes:
-#   1. Creates ZFS dataset scratch/k3s-pvs on earendil with a 200G quota
-#   2. Bind-mounts it into the nfs LXC at /scratch/k3s-pvs (host-path =
-#      LXC-path = client-path; everything matches end-to-end)
-#   3. Updates /etc/exports inside the LXC to:
-#        a) move the NFSv4 pseudo-root from /bulk to / (so paths outside
-#           the /bulk tree, like /scratch/*, are reachable to clients)
-#        b) keep /bulk as a regular export (no fsid=0)
-#        c) add /scratch/k3s-pvs as the k3s PV export
-#   4. Installs nfs-common on gondor so the kubelet can mount NFS PVs
+# Sets up the storage substrate for k3s-PV-style NFS exports:
+#   1. Creates the ZFS dataset (scratch/k3s-pvs on earendil, 200G quota)
+#   2. Bind-mounts it into the nfs LXC at /scratch/k3s-pvs
+#   3. Installs nfs-common on gondor so the kubelet can mount NFS PVs
 #
-# Clients mount the export at its real path (nfs:/scratch/k3s-pvs)
-# rather than a pseudo-root-relative alias. After this playbook,
-# the existing /bulk/* exports also migrate from :/<basename> to
-# :/bulk/<basename> for clients — there are no NFSv4 clients yet
-# (verified 2026-05-07), so this is a clean greenfield change.
+# Adding the dataset to /etc/exports is a SEPARATE concern, owned by
+# ansible/playbooks/manage-nfs-exports.yaml — that playbook templates
+# the entire /etc/exports from ansible/host_vars/nfs.yaml. After running
+# this playbook for a brand-new dataset, also edit host_vars/nfs.yaml
+# to add the corresponding export entry and re-run manage-nfs-exports.
 
 - name: Create ZFS dataset and add bind-mount to nfs LXC
   hosts: earendil
@@ -57,11 +51,6 @@
         insertafter: "^mp[0-9]+:"
       notify: Restart nfs LXC
 
-    # Force handlers to run before play 2 starts SSHing to the nfs LXC.
-    # The LXC restart needs to complete + come back up before play 2.
-    - name: Flush handlers
-      ansible.builtin.meta: flush_handlers
-
   handlers:
     - name: Restart nfs LXC
       # Reboot rather than start/stop — `pct reboot` is the documented
@@ -70,90 +59,23 @@
       changed_when: true
 
 
-- name: Configure NFS exports inside the nfs LXC
-  hosts: nfs
-  vars:
-    nfs_export_path: /scratch/k3s-pvs
-    # User explicitly chose /24 over the existing /16 convention because
-    # tightening ACLs on new exports is good hygiene; old ones can migrate
-    # later when there's a reason to touch them.
-    nfs_export_acl: 192.168.1.0/24
-    # no_root_squash because k3s pods (incl. the nfs-subdir-external-provisioner)
-    # run as root and need to chown subdirectories.
-    nfs_export_options: rw,sync,no_subtree_check,no_root_squash
-
-  # pre_tasks runs before fact-gathering so we can wait for SSH to come
-  # back after Play 1's LXC reboot. With wait_for_connection in regular
-  # tasks, the implicit Gathering Facts step would race the reboot and
-  # fail with "No route to host".
-  pre_tasks:
-    - name: Wait for the LXC to be reachable after restart
-      ansible.builtin.wait_for_connection:
-        timeout: 120
-
-  tasks:
-    - name: Sanity-check that the bind-mount is visible inside the LXC
-      # In --check mode the prerequisite tasks (dataset create, LXC config edit,
-      # LXC restart) are no-ops, so the bind mount won't be present yet. Skip
-      # the failure assertion in that case so the dry-run isn't noisy.
-      ansible.builtin.stat:
-        path: "{{ nfs_export_path }}"
-      register: bind_mount
-      failed_when:
-        - not ansible_check_mode
-        - not bind_mount.stat.exists or not bind_mount.stat.isdir
-
-    # Move the NFSv4 pseudo-root from /bulk to /. Splits the existing
-    # `/bulk ... fsid=0,crossmnt ...` line into two: a new `/` pseudo-root
-    # at the LXC's filesystem root, and a plain `/bulk` regular export.
-    # Effect: paths outside /bulk (notably /scratch/k3s-pvs) become
-    # reachable to NFSv4 clients at their real paths.
-    - name: Move NFSv4 pseudo-root from /bulk to /
-      ansible.builtin.replace:
-        path: /etc/exports
-        regexp: '^/bulk\s+(\S+)\(rw,sync,fsid=0,crossmnt,no_subtree_check,root_squash\)\s*$'
-        replace: |-
-          /              \1(ro,fsid=0,crossmnt,no_subtree_check,root_squash)
-          /bulk          \1(rw,sync,no_subtree_check,root_squash)
-      notify: Reload NFS exports
-
-    - name: Remove the orphan /bulk/k3s-pvs export line
-      # Was added during the (now-rejected) bind-mount-aliasing approach.
-      ansible.builtin.lineinfile:
-        path: /etc/exports
-        regexp: '^/bulk/k3s-pvs\s'
-        state: absent
-      notify: Reload NFS exports
-
-    - name: Remove the stale /bulk/k3s-pvs comment block
-      ansible.builtin.lineinfile:
-        path: /etc/exports
-        regexp: "{{ item }}"
-        state: absent
-      loop:
-        - '^# Writable by root for k3s PVs'
-        - '^# /bulk/k3s-pvs\s'
-      notify: Reload NFS exports
-
-    - name: Add /etc/exports entry for k3s-pvs at its real path
-      ansible.builtin.lineinfile:
-        path: /etc/exports
-        regexp: "^{{ nfs_export_path }}\\s"
-        line: "{{ nfs_export_path }}  {{ nfs_export_acl }}({{ nfs_export_options }})"
-        state: present
-      notify: Reload NFS exports
-
-  handlers:
-    - name: Reload NFS exports
-      ansible.builtin.command: exportfs -ra
-      changed_when: true
-
-
 - name: Install NFS client tools on the k3s host
   # The kubelet on gondor needs `mount.nfs` from nfs-common to mount NFS-backed
   # PVs; without it, pods using nfs-subdir-external-provisioner sit in
   # ContainerCreating with "mount program didn't pass remote address" errors.
   hosts: gondor
+  # Wait for the nfs LXC to come back up after the bind-mount restart in
+  # Play 1 — gondor itself doesn't restart, but if the LXC is mid-reboot
+  # the kubelet's existing NFS mounts are briefly unavailable. (Not strictly
+  # needed for the apt install step, but good hygiene.)
+  pre_tasks:
+    - name: Wait for the nfs LXC to be reachable
+      ansible.builtin.wait_for:
+        host: nfs.vingilot.internal
+        port: 2049
+        timeout: 120
+        delay: 5
+
   tasks:
     - name: Ensure nfs-common is installed
       ansible.builtin.apt:

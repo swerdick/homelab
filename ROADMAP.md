@@ -164,12 +164,6 @@ Codify the manual steps for adding a new homelab host into a single `bootstrap.y
 
 The `nfs-common` install in particular is currently buried inside `setup-k3s-pv-storage.yaml` because gondor was the only NFS client at the time. It should be lifted out into either a dedicated "ensure nfs client" playbook or this onboarding parent — pick whichever fits when a second NFS client actually appears.
 
-### Manage NFS exports in ansible
-
-Today only the `/scratch/k3s-pvs` export is managed by the `setup-k3s-pv-storage` playbook. The pre-existing exports (`/bulk/media`, `/bulk/photos`, `/bulk/documents`, etc.) are hand-edited in the nfs LXC's `/etc/exports`. Once Jellyfin/Immich start consuming media via NFS we'll want to tweak exports more often — bring them all under ansible before that happens.
-
-Approach: move `/etc/exports` to a Jinja template at `ansible/templates/etc-exports.j2`, define each export as a structured entry in `group_vars/`, write a `manage-nfs-exports.yaml` playbook that templates + reloads. Existing pseudo-root-at-`/` layout stays.
-
 ### Manage Samba config in ansible
 
 Same story for the smb LXC: `/etc/samba/smb.conf`, share definitions, user mappings — none of it currently in ansible. Bring under management before the next "add a share" or "tweak permissions" task. Pattern mirrors the NFS one above (template + playbook + handlers).

@@ -1,0 +1,38 @@
+---
+# NFS exports served by the nfs LXC (CT 120). The full /etc/exports file
+# is managed by ansible/playbooks/manage-nfs-exports.yaml — to add, remove,
+# or tweak an export, edit this list and re-run the playbook.
+#
+# Each entry:
+#   path:    server-side path (must already exist; bind-mounts are managed
+#            separately in /etc/pve/lxc/120.conf)
+#   acl:     CIDR or hostname pattern allowed to mount
+#   options: NFS export options (no parentheses)
+#   comment: optional — emits a `# <comment>` line above the export
+#            (treated as a section header by the template)
+#
+# Keep the pseudo-root entry (`fsid=0`) at the top of this list — the
+# template emits entries in order, and the NFSv4 server treats the first
+# `fsid=0` it sees as the root of its namespace.
+
+nfs_exports:
+  - comment: NFSv4 pseudo-root
+    path: /
+    acl: 192.168.0.0/16
+    options: ro,fsid=0,crossmnt,no_subtree_check,root_squash
+  - path: /bulk
+    acl: 192.168.0.0/16
+    options: rw,sync,no_subtree_check,root_squash
+  - comment: Shares — media apps and k3s consumers
+    path: /bulk/media
+    acl: 192.168.0.0/16
+    options: rw,sync,no_subtree_check,root_squash
+  - path: /bulk/photos
+    acl: 192.168.0.0/16
+    options: rw,sync,no_subtree_check,root_squash
+  - path: /bulk/documents
+    acl: 192.168.0.0/16
+    options: rw,sync,no_subtree_check,root_squash
+  - path: /scratch/k3s-pvs
+    acl: 192.168.1.0/24
+    options: rw,sync,no_subtree_check,no_root_squash

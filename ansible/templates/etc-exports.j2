@@ -1,0 +1,10 @@
+# Managed by ansible/playbooks/manage-nfs-exports.yaml.
+# Edit ansible/host_vars/nfs.yaml and re-run the playbook — direct edits
+# to this file will be overwritten on the next reconcile.
+{% for export in nfs_exports %}
+{% if export.comment is defined %}
+
+# {{ export.comment }}
+{% endif %}
+{{ export.path }}  {{ export.acl }}({{ export.options }})
+{% endfor %}
