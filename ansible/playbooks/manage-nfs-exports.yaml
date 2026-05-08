@@ -1,18 +1,19 @@
 ---
-# Manages /etc/exports inside the nfs LXC. The export list is defined in
-# ansible/host_vars/nfs.yaml; this playbook renders the template and
-# reloads exportfs whenever the rendered file changes.
+# Manages NFS server config on the nfs LXC:
+#   - /etc/exports — rendered from host_vars/nfs.yaml via etc-exports.j2
+#   - /etc/nfs.conf — selected daemon settings (manage-gids)
 #
-# Idempotent — safe to re-run. The template overwrites /etc/exports
-# entirely, so any direct edits on the LXC will be reverted (which is
-# the point: this playbook is the source of truth).
+# Idempotent — safe to re-run. The /etc/exports template overwrites the
+# file entirely, so direct edits on the LXC will be reverted (the point:
+# this playbook is the source of truth). The nfs.conf settings are
+# managed surgically with ini_file so unrelated keys aren't disturbed.
 #
 # Bind-mounts (the PVE-side `mpN:` lines in /etc/pve/lxc/120.conf that
 # expose host directories inside the LXC) are managed separately in
 # setup-k3s-pv-storage.yaml. /etc/exports paths must reference mounts
 # that already exist inside the LXC.
 
-- name: Manage NFS exports on the nfs LXC
+- name: Manage NFS server config on the nfs LXC
   hosts: nfs
   tasks:
     - name: Template /etc/exports from nfs_exports
@@ -24,9 +25,39 @@
         mode: "0644"
       notify: Reload NFS exports
 
+    - name: Disable manage-gids in /etc/nfs.conf
+      # With manage-gids=y, rpc.mountd ignores the supplementary groups a
+      # client sends and instead looks up the calling UID's groups in the
+      # server's local /etc/group. That breaks the kubernetes pattern of
+      # granting NFS access via supplementalGroups: the server doesn't
+      # have UIDs for our pods, so the lookup yields no group membership
+      # and access is denied even when the pod claims the right group.
+      #
+      # Disabling it makes the server trust the client's claimed groups
+      # again. Slight security trade-off (any client UID can claim any
+      # group over the wire) — acceptable here since every NFS client is
+      # infrastructure on a trusted internal network.
+      community.general.ini_file:
+        path: /etc/nfs.conf
+        section: mountd
+        option: manage-gids
+        value: "n"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart NFS server
+
   handlers:
     - name: Reload NFS exports
       # `exportfs -ra` re-reads /etc/exports and applies changes without
       # restarting the NFS server (no client disruption).
       ansible.builtin.command: exportfs -ra
       changed_when: true
+
+    - name: Restart NFS server
+      # nfs.conf is read at daemon startup, so a full restart is required
+      # for changes to take effect. Brief client disruption (open file
+      # handles will block during the restart, then resume).
+      ansible.builtin.systemd:
+        name: nfs-server
+        state: restarted
