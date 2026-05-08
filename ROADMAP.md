@@ -169,38 +169,17 @@ Right now `vingilot.internal` records live on the Verizon CR1000A router. Adding
 
 A local resolver (Pi-hole or AdGuard Home) on a dedicated LXC would unlock wildcard `*.vingilot.internal → 192.168.1.220` and remove the per-service DNS friction. Probably a 2-hour session.
 
-If the Pi-orchestrator item under "Architecture & topology" lands, the resolver lives there (natively, not in k3s) and supersedes this entry.
+If the Pi-orchestrator proposal (see Proposals at the bottom) lands, the resolver lives there (natively, not in k3s) and supersedes this entry.
 
 ### Headscale / Tailscale for remote access
 
-Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Where it runs depends on the Pi-orchestrator decision: ideal home is the always-on Pi (covered in Architecture & topology), with fallbacks of a HelmRelease on gondor or a PVE LXC on earendil.
+Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Where it runs depends on the Pi-orchestrator proposal (see Proposals): ideal home is the always-on Pi as a native daemon, with fallbacks of a HelmRelease on gondor or a PVE LXC on earendil.
 
 Two related capabilities to layer in once the coordinator is up:
 - **Tailscale subnet router**: announce `192.168.1.0/24` so the whole LAN is reachable through one node — no per-LXC client install.
 - **WoL bridge**: a small HTTP service on the tailnet that wakes earendil via magic packet from anywhere (described in the Pi-orchestrator entry).
 
 If the Pi-orchestrator item slips, this becomes a different decision: Headscale-as-k3s-pod buys remote access only while gondor is up (daytime-only under the nightly-shutdown model). Cloudflare Tunnel stays the answer for "always reachable" public HTTP. Headscale only earns its place if SSH/non-HTTP access is part of the use case.
-
-## Architecture & topology
-
-### Pi 5 as always-on orchestrator (architecture not yet settled)
-
-Driver: earendil shuts down nightly to save power, so anything in-cluster — DNS via Pi-hole/AdGuard, Headscale remote access, Alloy buffering, observability, scheduled jobs — disappears for ~12h every day. A small always-on node solves that whole class of problems. Discussion sketch from 2026-05-08 chat with web Claude landed on the shape below; recording it before the details rot.
-
-**Most-promising shape (not yet committed):**
-- **Pi 5 hosts the k3s control plane.** USB-SSD boot, NOT SD card — the combined write workload of k3s + Alloy WAL + Pi-hole logs would shred any SD card in months. Wired Ethernet only (WiFi causes API-server / kubelet flapping).
-- **gondor VM becomes a worker** for x86 workloads only. ARM workloads schedule on the Pi via `kubernetes.io/arch=arm64` nodeSelector.
-- **Pi-hole/AdGuard runs natively on the Pi**, not in k3s. DNS shouldn't depend on k3s being healthy, and the port-53/MetalLB choreography adds moving parts to a service whose value is being boring. Ansible role for it (overlaps with the existing "local DNS" roadmap item — supersede it if this lands).
-- **Headscale + Alloy run as k3s pods on the Pi** so remote access and observability buffering survive nightly downtime.
-- **Watering / GPIO services** schedule on the Pi worker via taint + nodeSelector (or move off-cluster to native systemd if the cluster-up assumption keeps biting).
-
-Bonus capability that falls out: SSH-via-Headscale-to-Pi → `wakeonlan` magic packet → wakes earendil. Lab boots in 2-5 min from anywhere.
-
-**Open questions before this becomes a project:**
-- **One Pi or two?** Orchestrator role wants "next to the switch with a wired link"; watering wants "near the plants." Splitting onto a dedicated cheap Pi (Pi 4 / Zero 2 W) for plants might be cleaner than dual-purposing one Pi 5.
-- **Migration order.** Moving the k3s control plane from gondor to a Pi is the riskiest single step — needs a planned outage and a fallback.
-- **Alternative: just leave earendil on.** Pi pattern saves ~$50-90/yr in electricity vs always-on earendil; that's not free, and "remove the constraint" is a legitimate alternative to "engineer around it."
-- **CR1000A as DNS fallback.** Router can hand out a secondary DNS — useful safety net for "Pi failed at 2am" but DNS leaks through to the secondary on Windows/Linux clients aren't great.
 
 ## Specific upgrades
 
@@ -266,4 +245,47 @@ Codify the manual steps for adding a new homelab host into a single `bootstrap.y
 
 The `nfs-common` install in particular is currently buried inside `setup-k3s-pv-storage.yaml` because gondor was the only NFS client at the time. It should be lifted out into either a dedicated "ensure nfs client" playbook or this onboarding parent — pick whichever fits when a second NFS client actually appears.
 
+## Proposals
+
+Items above are "decided, just need time." Items in this section are speculative — captured so the thinking doesn't rot, but not committed to. Graduation to a section above means a decision was made.
+
+### Measure earendil idle/load wattage with Kill-A-Watt
+
+Drives the cost-justification side of the nightly-shutdown calculus. Today the decision rests on a guess (~35-65W idle, varying heavily on whether the GTX 970 enters deep idle when passed through to a powered-off anduril). Without a real number, downstream decisions like "is the Pi-orchestrator proposal worth the architectural cost" are unanchored.
+
+Setup: Kill-A-Watt meter inline with earendil's PSU for at least a full week. Capture three states if practical:
+
+- **Earendil idle, anduril off** (current default state) — shows the GPU-passthrough idle overhead
+- **Earendil idle, anduril running** — shows full normal operating cost
+- **Earendil under load** (PBS backup window, Immich job runs) — shows realistic peak
+
+Outcome: a real $/yr cost figure for nightly shutdown vs always-on, and a sanity check on whether vfio-pci is keeping the GTX 970 out of deep idle (suspected, not confirmed).
+
+### Pi 5 as always-on companion node (architecture not settled)
+
+Driver: earendil shuts down nightly, so anything in-cluster (DNS, Headscale, observability, scheduled jobs) disappears for ~12h every day. A Pi 5 always-on solves that whole class of problems. The shape it takes is the open question.
+
+**Two shapes under consideration:**
+
+*Phase 1 — Pi as native appliance, optionally a k3s worker:*
+- Pi-hole/AdGuard, Headscale, watering all run as native systemd services on the Pi (Ansible-managed). Always available, never depend on cluster health.
+- Pi optionally joins k3s as a worker for ARM-tagged pods (Vibeseeker, etc.) — daytime-active when gondor's API server is reachable; cached pods coast through nightly shutdown but no new scheduling.
+- ~30-min Pi join, easy backout. Sets up Phase 2 naturally if the limitations are concretely felt.
+
+*Phase 2 — Pi promoted to k3s control plane:*
+- Resolves "API server gone overnight" — CronJobs fire, Flux reconciles, kubectl works at 3am.
+- Heavier migration: relocate gondor's local-path PVs, re-bootstrap flux-system at the new endpoint, ~2-4h planned outage. Trust the Pi to host etcd/SQLite writes 24/7 (USB SSD non-negotiable).
+- Worth doing if/when Phase-1 limitations are concretely felt — don't preemptively pay this cost.
+
+**Things settled regardless of phase:**
+- USB-SSD boot, not SD card (k3s + Alloy WAL + Pi-hole logs would shred an SD card in months). Wired Ethernet only — WiFi causes API/kubelet flapping.
+- Pi-hole/Headscale stay native — DNS shouldn't depend on k3s health, and DNS feeds the cluster on Pi reboot before kubelet starts.
+- Watering = systemd timer + Python script natively. Doesn't need a cluster regardless of topology.
+- Bonus capability: SSH-via-Headscale-to-Pi → `wakeonlan` magic packet → wakes earendil. Lab boots in 2-5 min from anywhere on the tailnet.
+
+**Open questions before this graduates from proposal:**
+- **Cost-justified?** Depends on the Kill-A-Watt measurement above. If earendil idles at 60W with the GTX 970 holding power, nightly shutdown saves more and the Pi pattern earns its place financially. If it idles at 35W, the savings are thin and the Pi becomes pure operational-leverage / learning play (still legitimate — over-engineering for learning is the point of the homelab).
+- **Watering deadline.** If auto-water needs to ship for *this* growing season, Phase 1 native is the only path that ships in time.
+- **One Pi or two?** Orchestrator wants "next to the switch with wired link"; watering wants "near the plants." A dedicated cheap Pi (Pi 4 / Zero 2 W) for plants is the obvious resolution if those goals conflict.
+- **CR1000A as DNS fallback.** Router can hand out a secondary DNS — useful safety net for "Pi failed at 2am," but the leak-through behavior on Windows/Linux clients (clients sometimes prefer/cache the secondary) isn't great.
 
