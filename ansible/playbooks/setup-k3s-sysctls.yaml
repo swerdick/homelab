@@ -1,0 +1,43 @@
+---
+# Tunes kernel sysctls on the k3s node for kubernetes-scale workloads.
+#
+# Background — inotify limits:
+#   `fs.inotify.max_user_instances` and `fs.inotify.max_user_watches` are
+#   per-UID kernel limits. The defaults (128 / 8192 on Debian) are 2005-era
+#   desktop values; a kubernetes node easily blows past them because every
+#   process running as root on the host (kubelet, containerd, every
+#   containerized process running as UID 0) draws from the same pool —
+#   k3s doesn't enable user namespaces by default. Symptom: pods crash on
+#   startup with "The configured user limit (128) on the number of inotify
+#   instances has been reached" (e.g. Jellyfin's .NET FileSystemWatcher).
+#
+# 8192 / 524288 are the de-facto modern-node values (k3s, Cilium, Talos,
+# Flatcar all recommend the same order of magnitude). Memory cost is
+# negligible (~1 KiB per instance, ~1 KiB per watch).
+
+- name: Tune kernel sysctls on the k3s node
+  hosts: gondor
+  tasks:
+    - name: Sanity-check that this is a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+        fail_msg: "Expected Debian-family host, got {{ ansible_facts.os_family }}"
+
+    - name: Raise fs.inotify.max_user_instances
+      ansible.posix.sysctl:
+        name: fs.inotify.max_user_instances
+        value: "8192"
+        state: present
+        sysctl_file: /etc/sysctl.d/99-k3s-inotify.conf
+        sysctl_set: true
+        reload: true
+
+    - name: Raise fs.inotify.max_user_watches
+      ansible.posix.sysctl:
+        name: fs.inotify.max_user_watches
+        value: "524288"
+        state: present
+        sysctl_file: /etc/sysctl.d/99-k3s-inotify.conf
+        sysctl_set: true
+        reload: true

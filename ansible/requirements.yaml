@@ -11,6 +11,7 @@ collections:
   # depend on it directly so the requirement is documented.
   - name: community.general
 
-  # Provides the `authorized_key` module (used by setup-pseudo-user.yaml).
-  # Also already a transitive dep of the others.
+  # Provides the `authorized_key` (used by setup-pseudo-user.yaml) and
+  # `sysctl` (used by setup-k3s-sysctls.yaml) modules. Also already a
+  # transitive dep of the others.
   - name: ansible.posix

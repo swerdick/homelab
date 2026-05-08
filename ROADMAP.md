@@ -163,19 +163,6 @@ The GTX 970 is passed through to anduril for Moonlight game streaming. The host-
 
 Inherently risky — a misstep in the kernel cmdline or vfio config can prevent boot. Run `--check --diff` first, then real run during a planned outage window. Probably 45-60 min for the playbook + 30 min for reboot validation.
 
-### k8s node sysctls — `setup-k8s-sysctls.yaml`
-
-Diagnosed during the Jellyfin deploy: `fs.inotify.max_user_instances` defaults to 128 on Debian, which is a 2005-era desktop default. Kubernetes nodes routinely blow past it because the limit is *per-UID* and every root-running pod (kubelet, Flux controllers, kube-prometheus-stack, Loki, etc.) draws from the same pool. .NET apps like Jellyfin make this worse since each `FileSystemWatcher` consumes a full inotify instance, not a watch.
-
-Standard k8s-node tuning for gondor (and any future cluster nodes):
-
-```
-fs.inotify.max_user_instances = 8192
-fs.inotify.max_user_watches   = 524288
-```
-
-Pattern: `ansible.posix.sysctl` module dropping into `/etc/sysctl.d/99-k8s.conf`, idempotent, no reboot needed (sysctl applies immediately). Pair with restarting any pods that hit the old limit so they reconcile.
-
 ## Cleanup
 
 ### Re-document PVE guest configs after recent ansible work
