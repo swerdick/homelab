@@ -1,0 +1,75 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: jellyfin
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://jellyfin.github.io/jellyfin-helm
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: jellyfin
+  namespace: jellyfin
+spec:
+  interval: 30m
+  releaseName: jellyfin
+  chart:
+    spec:
+      chart: jellyfin
+      version: ">=3.0.0 <4.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: jellyfin
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    service:
+      type: ClusterIP
+      port: 8096
+
+    # Ingress is handled out-of-band by an HTTPRoute attached to the vingilot
+    # Gateway (see jellyfin-route.yaml) — matches the repo pattern used by
+    # grafana/loki/prometheus rather than the chart's bundled httpRoute.
+    ingress:
+      enabled: false
+    httpRoute:
+      enabled: false
+
+    persistence:
+      # Config DB + metadata. local-path keeps it on the gondor node-local SSD;
+      # cheap, fast, fine for a single-replica deployment.
+      config:
+        enabled: true
+        accessMode: ReadWriteOnce
+        size: 5Gi
+        storageClass: local-path
+      # Bind to the manually-provisioned PV in media-pv.yaml, which mounts the
+      # /bulk/media export on the nfs LXC. RWX so the same library could be
+      # mounted by another consumer later (e.g. Immich) without dance.
+      media:
+        enabled: true
+        type: pvc
+        existingClaim: jellyfin-media
+      # Transcode/scratch cache. emptyDir is fine — software transcodes on this
+      # box are rare (no GPU) and the cache rebuilds on its own.
+      cache:
+        enabled: false
+
+    # Sized per ROADMAP: ~1 GiB for steady-state direct-play. No CPU limit so
+    # software transcodes (no GPU on gondor) can use whatever cycles are free.
+    # If anduril is up and gondor is contended, the request still guarantees
+    # 100m for direct-play.
+    resources:
+      requests:
+        cpu: 100m
+        memory: 1Gi
+      limits:
+        memory: 2Gi
