@@ -1,23 +1,21 @@
 ---
 all:
   children:
-    root_hosts:
+    # Every Linux host in the homelab is reached as `pseudo` with NOPASSWD
+    # sudo. Set up via ansible/playbooks/setup-pseudo-user.yaml.
+    sudo_hosts:
+      vars:
+        ansible_user: pseudo
+        ansible_become: true
+        ansible_become_method: sudo
       hosts:
         earendil: {}
         tirion: {}
-        nfs:
-          ansible_user: root
-        smb:
-          ansible_user: root
+        nfs: {}
+        smb: {}
         aglarond: {}
-    sudo_hosts:
-      hosts:
-        gondor:
-          ansible_become: true
-          ansible_become_method: sudo
-        erebor:
-          ansible_become: true
-          ansible_become_method: sudo
+        gondor: {}
+        erebor: {}
     bazzite_hosts:
       # anduril is a Bazzite (Fedora-based atomic) gaming VM, off most of the
       # time. Plays should treat it as opportunistically reachable. SSH is

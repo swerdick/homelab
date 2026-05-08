@@ -10,3 +10,7 @@ collections:
   # Already comes as a transitive dependency of community.sops, but we
   # depend on it directly so the requirement is documented.
   - name: community.general
+
+  # Provides the `authorized_key` module (used by setup-pseudo-user.yaml).
+  # Also already a transitive dep of the others.
+  - name: ansible.posix

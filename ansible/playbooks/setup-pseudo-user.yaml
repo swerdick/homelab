@@ -1,0 +1,70 @@
+---
+# Creates a `pseudo` user on every Linux host (excluding anduril/Bazzite for
+# now — its setup is RPM-based and tracked separately on the roadmap).
+#
+# Idempotent — safe to re-run. ansible.builtin.user no-ops when the user
+# exists with matching attributes; ansible.posix.authorized_key adds the
+# key if missing; the sudoers drop-in is overwritten only if content drifts
+# (and validated via visudo before being moved into place).
+#
+# Run-time pre-req: this playbook is invoked as root (since the pseudo
+# user might not exist yet), so the inventory still has root_hosts members
+# at the time of first execution. After this playbook completes successfully
+# on every target host, flip the inventory: move root_hosts members into
+# sudo_hosts and use ansible_user: pseudo + ansible_become: true thereafter.
+
+- name: Set up pseudo user with NOPASSWD sudo on all Linux hosts
+  hosts: alloy
+  vars:
+    pseudo_user_name: pseudo
+    pseudo_user_shell: /bin/bash
+    # Read at playbook time from the operator's workstation. Override via
+    # `--extra-vars` if you ever run with a different key file.
+    pseudo_user_pubkey_file: "~/.ssh/id_ed25519.pub"
+
+  tasks:
+    - name: Ensure sudo is installed
+      # Only changes anything on tirion (which lacks sudo by default — see
+      # project memory). All other hosts already have sudo and this is a no-op.
+      ansible.builtin.apt:
+        name: sudo
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure the pseudo user exists
+      ansible.builtin.user:
+        name: "{{ pseudo_user_name }}"
+        shell: "{{ pseudo_user_shell }}"
+        state: present
+        create_home: true
+        # Don't set or modify a password. New users get a locked password
+        # (no UNIX-password login), which is what we want — auth is via
+        # SSH key, and privilege escalation is via NOPASSWD sudo.
+
+    - name: Install operator's SSH public key in pseudo's authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ pseudo_user_name }}"
+        state: present
+        # Add this key without removing any others that may already be
+        # there (so manual additions on a host aren't blown away).
+        exclusive: false
+        key: "{{ lookup('file', pseudo_user_pubkey_file) }}"
+        # Explicit path + manage_dir so the module doesn't have to look up
+        # the user's home dir — needed for check-mode runs where the user
+        # is being created in the same playbook (the user-create task above
+        # only "would" run in check mode, so the home dir isn't really there).
+        path: "/home/{{ pseudo_user_name }}/.ssh/authorized_keys"
+        manage_dir: true
+
+    - name: Grant pseudo NOPASSWD sudo via /etc/sudoers.d/pseudo
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/pseudo
+        content: "{{ pseudo_user_name }} ALL=(ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        # visudo -cf checks syntax before the new file replaces the live
+        # one — if the content is malformed, the task fails and the live
+        # sudoers state is unchanged.
+        validate: "visudo -cf %s"
