@@ -106,11 +106,11 @@
       },
       "targets": [
         {
-          "expr": "sum(gotk_resource_info{ready=\"False\", customresource_kind=~\"$kind\", exported_namespace=~\"$ns\"}) or vector(0)",
+          "expr": "count(max_over_time(gotk_resource_info{ready=\"False\", customresource_kind=~\"$kind\", exported_namespace=~\"$ns\"}[$__range])) or vector(0)",
           "refId": "A"
         }
       ],
-      "title": "Resources — Stalled",
+      "title": "Resources — Stalled (in range)",
       "type": "stat"
     },
     {
@@ -160,11 +160,11 @@
       },
       "targets": [
         {
-          "expr": "sum(gotk_resource_info{ready=\"Unknown\", customresource_kind=~\"$kind\", exported_namespace=~\"$ns\"}) or vector(0)",
+          "expr": "count(max_over_time(gotk_resource_info{ready=\"Unknown\", customresource_kind=~\"$kind\", exported_namespace=~\"$ns\"}[$__range])) or vector(0)",
           "refId": "A"
         }
       ],
-      "title": "Resources — Unknown",
+      "title": "Resources — Unknown (in range)",
       "type": "stat"
     },
     {
@@ -404,13 +404,13 @@
       "id": 7,
       "targets": [
         {
-          "expr": "gotk_resource_info{ready=~\"False|Unknown\", customresource_kind=~\"$kind\", exported_namespace=~\"$ns\"}",
+          "expr": "max_over_time(gotk_resource_info{ready=~\"False|Unknown\", customresource_kind=~\"$kind\", exported_namespace=~\"$ns\"}[$__range])",
           "format": "table",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Needs Attention — Stalled or Unknown",
+      "title": "Needs Attention — Stalled or Unknown (in time range)",
       "transformations": [
         {
           "id": "organize",
