@@ -1,0 +1,54 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cloudnative-pg
+  namespace: cnpg-system
+spec:
+  interval: 1h
+  releaseName: cloudnative-pg
+  chart:
+    spec:
+      chart: cloudnative-pg
+      version: ">=0.28.0 <0.29.0"
+      sourceRef:
+        kind: HelmRepository
+        name: cnpg
+        namespace: flux-system
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Single-node k3s cluster — one replica is enough.
+    replicaCount: 1
+
+    # Modest sizing; the operator is lightweight (it watches CRs and
+    # delegates Postgres lifecycle to the per-Cluster pods it spawns).
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+    # Watch all namespaces (cluster-scoped). One operator instance can
+    # service Postgres clusters in monitoring/, immich/, or anywhere else.
+    config:
+      clusterWide: true
+
+    monitoring:
+      # Generate a PodMonitor for the operator and (more importantly) for
+      # every Cluster CR it manages. kube-prometheus-stack's Prometheus
+      # picks these up automatically.
+      podMonitorEnabled: true
+      # Drop a default Postgres dashboard ConfigMap labeled
+      # `grafana_dashboard: "1"` so the kube-prometheus-stack Grafana
+      # sidecar auto-loads it. NB: this isn't tagged `homelab`, so it
+      # won't be captured by `just backup-grafana` — it's redeployed
+      # on every chart reconcile, so that's fine.
+      grafanaDashboard:
+        create: true
