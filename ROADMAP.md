@@ -45,6 +45,16 @@ Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux'
 
 Pre-built community dashboards exist (e.g. grafana.com/dashboards/16714). Quick win — import, tag `homelab`, run `just backup-grafana`, commit. Visual answer to "is Flux working" at a glance.
 
+### Per-deployment workload dashboard
+
+Inspired by Grafana's built-in "Kubernetes / Compute Resources / Namespace (Workloads)" but rebuilt for homelab triage. Template variables: `namespace`, `deployment`. Panels:
+
+- CPU and memory utilization plotted against `requests` and `limits` on the same axis (spot throttling and near-OOM at a glance — exactly what was missing during the Immich thumbnail incident)
+- Active vs failed pod counts for the selection
+- Loki logs panel auto-filtered to the selected deployment so triage stays on one screen
+
+Today's flow when something misbehaves jumps between Capacitor (for Flux state), a generic resource dashboard (cluster-wide, requires manual filtering), and Loki Explore with hand-typed label selectors. One variable-driven dashboard collapses that into a single tab.
+
 ### Hardware status dashboard (SMART + hwmon)
 
 A separate Grafana dashboard for physical-hardware metrics, mostly relevant on earendil (the only host with non-virtual disks). What goes on it:
