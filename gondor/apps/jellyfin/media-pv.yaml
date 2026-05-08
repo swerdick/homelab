@@ -1,0 +1,45 @@
+---
+# Statically-provisioned PV pointing at the existing /bulk/media NFS export
+# on the nfs LXC. The nfs-subdir-external-provisioner StorageClass is bound
+# to /scratch/k3s-pvs (a different export), so a dynamic PVC there can't reach
+# /bulk/media. Manual PV + PVC pair is the cluster-recommended pattern for
+# attaching a single, pre-existing NFS share.
+#
+# `capacity.storage` is metadata-only for NFS PVs (no quota is enforced) but
+# Kubernetes requires the field for PVC binding to succeed.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: jellyfin-media
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  # Empty storageClassName + explicit volumeName below means this PV will only
+  # bind to its claim — no dynamic provisioner gets involved.
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=4
+    - hard
+    - noatime
+    - rsize=131072
+    - wsize=131072
+  nfs:
+    server: nfs.vingilot.internal
+    path: /bulk/media
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-media
+  namespace: jellyfin
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Ti
+  storageClassName: ""
+  volumeName: jellyfin-media
