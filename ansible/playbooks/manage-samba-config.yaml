@@ -1,0 +1,33 @@
+---
+# Manages /etc/samba/smb.conf inside the smb LXC. The full file is
+# templated from ansible/host_vars/smb.yaml; running this playbook
+# replaces the on-disk config and reloads smbd whenever the rendered
+# content changes.
+#
+# Idempotent — safe to re-run. Direct edits on the LXC will be reverted
+# (which is the point: this playbook is the source of truth).
+#
+# `testparm -s` validates the rendered config before it replaces the
+# live file — if smb.conf would be malformed, the task fails atomically
+# and the running smbd keeps using the prior good config.
+
+- name: Manage Samba config on the smb LXC
+  hosts: smb
+  tasks:
+    - name: Template /etc/samba/smb.conf from samba_* vars
+      ansible.builtin.template:
+        src: ../templates/smb.conf.j2
+        dest: /etc/samba/smb.conf
+        owner: root
+        group: root
+        mode: "0644"
+        validate: "testparm -s %s"
+      notify: Reload smbd
+
+  handlers:
+    - name: Reload smbd
+      # `reload` is enough — smbd re-reads smb.conf on SIGHUP, no
+      # client connections are dropped (vs. `restart` which would).
+      ansible.builtin.systemd:
+        name: smbd
+        state: reloaded

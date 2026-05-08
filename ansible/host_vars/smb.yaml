@@ -1,0 +1,35 @@
+---
+# Samba config for the smb LXC (CT 121). Drives the entire /etc/samba/smb.conf
+# via ansible/playbooks/manage-samba-config.yaml — to add a share, change
+# permissions, or rotate the workgroup, edit this file and re-run the playbook.
+#
+# The [global] section template is hardcoded in templates/smb.conf.j2 with
+# only a couple of values pulled from these vars (workgroup + server_string),
+# since the rest of [global] rarely changes. Add new vars + template lines
+# if/when more flexibility is needed.
+
+samba_workgroup: WORKGROUP
+samba_server_string: "vingilot shares"
+
+# Defaults applied to every share. A share entry can override any of these
+# with a same-named key (e.g. set `read_only: "yes"` on a single share).
+# Note `read_only` and similar must be quoted strings — bare `no` becomes
+# a YAML boolean (false) and renders wrong in smb.conf.
+samba_share_defaults:
+  valid_users: smbuser
+  read_only: "no"
+  force_group: shares
+  create_mask: "0664"
+  directory_mask: "2775"
+
+samba_shares:
+  - name: media
+    path: /bulk/media
+  - name: games
+    path: /bulk/games
+  - name: documents
+    path: /bulk/documents
+  - name: photos
+    path: /bulk/photos
+  - name: bulk
+    path: /bulk

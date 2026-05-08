@@ -164,7 +164,4 @@ Codify the manual steps for adding a new homelab host into a single `bootstrap.y
 
 The `nfs-common` install in particular is currently buried inside `setup-k3s-pv-storage.yaml` because gondor was the only NFS client at the time. It should be lifted out into either a dedicated "ensure nfs client" playbook or this onboarding parent — pick whichever fits when a second NFS client actually appears.
 
-### Manage Samba config in ansible
-
-Same story for the smb LXC: `/etc/samba/smb.conf`, share definitions, user mappings — none of it currently in ansible. Bring under management before the next "add a share" or "tweak permissions" task. Pattern mirrors the NFS one above (template + playbook + handlers).
 

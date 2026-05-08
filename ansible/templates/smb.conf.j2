@@ -1,0 +1,35 @@
+# Managed by ansible/playbooks/manage-samba-config.yaml.
+# Edit ansible/host_vars/smb.yaml and re-run the playbook — direct edits
+# to this file will be overwritten on the next reconcile.
+
+[global]
+   workgroup = {{ samba_workgroup }}
+   server string = {{ samba_server_string }}
+   server min protocol = SMB3
+   security = user
+   map to guest = never
+   disable netbios = yes
+   smb ports = 445
+   log file = /var/log/samba/log.%m
+   max log size = 1000
+
+   # macOS niceties — makes Finder happy, no AppleDouble files
+   vfs objects = catia fruit streams_xattr
+   fruit:metadata = stream
+   fruit:model = MacSamba
+   fruit:posix_rename = yes
+   fruit:veto_appledouble = no
+   fruit:wipe_intentionally_left_blank_rfork = yes
+   fruit:delete_empty_adfiles = yes
+
+{% for share in samba_shares %}
+{% set s = samba_share_defaults | combine(share) %}
+[{{ s.name }}]
+   path = {{ s.path }}
+   valid users = {{ s.valid_users }}
+   read only = {{ s.read_only }}
+   force group = {{ s.force_group }}
+   create mask = {{ s.create_mask }}
+   directory mask = {{ s.directory_mask }}
+
+{% endfor %}
