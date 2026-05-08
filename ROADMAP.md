@@ -156,6 +156,45 @@ See [`AGENTS.md` Hardware section](AGENTS.md#hardware). Free ~40% memory bandwid
 
 Each iOS device that wants to access internal HTTPS services needs the `vingilot` root CA in its trust store. Manual procedure: AirDrop the cert, install Profile, toggle on in Certificate Trust Settings. Captured in the CA-rotation runbook; just needs doing per device.
 
+## Host-level configuration
+
+### GPU passthrough setup on earendil — `setup-gpu-passthrough.yaml`
+
+The GTX 970 is passed through to anduril for Moonlight game streaming. The host-side prerequisites (kernel cmdline, vfio modules, NVIDIA blacklist, `/etc/modprobe.d/vfio.conf` PCI bind) are currently manual on earendil and only documented in a comment block in `qemu/117.conf`. Worth lifting into a playbook:
+
+- Add `intel_iommu=on iommu=pt` to `/etc/default/grub` (`GRUB_CMDLINE_LINUX_DEFAULT`), run `update-grub`
+- Add `vfio`, `vfio_iommu_type1`, `vfio_pci` to `/etc/modules`
+- Drop `/etc/modprobe.d/blacklist-nvidia.conf` (blacklists `nouveau`, `nvidia`, `nvidia_drm` so the host doesn't grab the card)
+- Drop `/etc/modprobe.d/vfio.conf` binding the GPU's PCI IDs (detect via `lspci -nn | grep NVIDIA`, store in `host_vars/earendil.yaml` for visibility)
+- `update-initramfs -u`
+- Reports if a reboot is needed (touches `/var/run/reboot-required`)
+
+Inherently risky — a misstep in the kernel cmdline or vfio config can prevent boot. Run `--check --diff` first, then real run during a planned outage window. Probably 45-60 min for the playbook + 30 min for reboot validation.
+
+### k8s node sysctls — `setup-k8s-sysctls.yaml`
+
+Diagnosed during the Jellyfin deploy: `fs.inotify.max_user_instances` defaults to 128 on Debian, which is a 2005-era desktop default. Kubernetes nodes routinely blow past it because the limit is *per-UID* and every root-running pod (kubelet, Flux controllers, kube-prometheus-stack, Loki, etc.) draws from the same pool. .NET apps like Jellyfin make this worse since each `FileSystemWatcher` consumes a full inotify instance, not a watch.
+
+Standard k8s-node tuning for gondor (and any future cluster nodes):
+
+```
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches   = 524288
+```
+
+Pattern: `ansible.posix.sysctl` module dropping into `/etc/sysctl.d/99-k8s.conf`, idempotent, no reboot needed (sysctl applies immediately). Pair with restarting any pods that hit the old limit so they reconcile.
+
+## Cleanup
+
+### Re-document PVE guest configs after recent ansible work
+
+The embedded `# ...` comment blocks at the top of several `/etc/pve/lxc/*.conf` files document procedures that are now superseded by ansible playbooks:
+
+- **`120.conf` (nfs)** — "Adding an export" section uses `cat >> /etc/exports`. Now obsolete: `manage-nfs-exports.yaml` templates the file from `host_vars/nfs.yaml`.
+- **`121.conf` (smb)** — same shape: "Adding a share" via `cat >> /etc/samba/smb.conf`. Now obsolete: `manage-samba-config.yaml`.
+
+Recommended fix: edit the live `/etc/pve/lxc/120.conf` and `/etc/pve/lxc/121.conf` via the Proxmox UI's notes editor (or `vim` on earendil) to trim the obsolete sections and replace with one-liner pointers to the ansible playbooks. Then re-run `just dump-pve-configs` to refresh the local snapshot. Other config notes (PBS bootstrap on erebor, restic on aglarond, idmap on smb, bind-mount strategy) remain accurate.
+
 ## Generalize / refactor
 
 ### Ansible playbook for new-host onboarding
