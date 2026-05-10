@@ -1,3 +1,5 @@
 .idea
 .claude/settings.local.json
+.claude
+.DS_STORE
 *.bak
