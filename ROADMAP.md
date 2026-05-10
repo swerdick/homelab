@@ -41,6 +41,30 @@ The whole thing also forces picking a notification channel (Discord webhook, ntf
 
 Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux's perspective once retries are exhausted. Capacitor shows them but you have to look. Add Prometheus alert on `gotk_reconcile_condition{type="Ready",status="False"}` (or similar) so a wedged release pages instead of being noticed days later. Pair naturally with the cert-expiration alerting work since the Alertmanager plumbing is the same.
 
+### Dashboard query parity audit (Grafana Cloud allowlist mismatches)
+
+The recent dashboard parameterization (`$datasource` variable from commit `d71ac18`) makes one dashboard JSON work against both the in-cluster Prom (full cardinality) and Grafana Cloud Prom (curated allowlist via `templates/config.alloy.j2`'s `grafana_cloud_keep` relabel). But the same JSON can have different *behavior* per datasource if a panel's PromQL filters on labels the cloud side drops.
+
+**Known case**: `homelab-host-overview` CPU panel queries `node_cpu_seconds_total{...,mode!="idle"}` — the cloud allowlist drops every CPU mode except idle (intentional for cardinality), so the panel returns "No data" on the cloud view for every host. Fix: rewrite to the standard idle-complement formula, which works on both:
+
+```promql
+100 - avg(rate(node_cpu_seconds_total{instance="$host",job="integrations/unix",mode="idle"}[$__rate_interval])) * 100
+```
+
+**Broader audit needed**: walk every panel in `gondor/apps/observability/dashboards/*.json` against the allowlist + drop rules in `templates/config.alloy.j2` (lines 73-107). Specifically check for queries that filter `mode`, `fstype`, or `device` with regex/inequalities — those are the three labels we drop on. Other panels in `homelab-host-overview` looked OK on a quick read, but `homelab-hardware`, `homelab-flux`, and `homelab-workload` haven't been spot-checked end-to-end against the cloud view.
+
+Probably 30-60 min: open each dashboard on the Grafana Cloud side with a known-online host selected, identify any "No data" panels, fix the queries to be allowlist-compatible, re-`just dump-grafana` (or whatever the export ritual is), commit.
+
+### smartctl_exporter — exclude non-SMART-capable USB drives
+
+`install-smartctl-exporter.yaml` configures the exporter with `--smartctl.rescan=10m` and no device filter, so it tries to read SMART from *every* block device. USB-attached drives whose enclosure bridges only do minimal SAT pass-through (e.g. Seagate Expansion Portable, the SRD0NF1 family) can't return an ATA IDENTIFY structure through the bridge, so the exporter logs a `device not found` triple every scrape interval (~once per minute) into journald. Currently visible on samwise once the 2TB Seagate is attached as a USB drive — three log lines per minute, forever, ~4,300/day.
+
+Two clean fixes, pick one when convenient:
+- **Per-host exclude list**: extend `install-smartctl-exporter.yaml` to template a host-specific `--smartctl.device-exclude=<glob>` (or repeated `--smartctl.device=<allowlist>` flags) sourced from `host_vars/<host>.yaml`. Most flexible; lets earendil keep scanning everything while samwise excludes its USB drive.
+- **Auto-detect on probe failure**: smartctl_exporter has no native "auto-skip-on-failure" flag, but a wrapper script could probe each device once at startup and pass only the responsive ones via `--smartctl.device=`. More work; less config drift.
+
+Tracking-wise: prefer the per-host exclude list for now (smaller change). Surfaces from the samwise+Seagate combination but applies generally to any USB-attached drive whose bridge fails ATA IDENTIFY.
+
 ### Add CloudWatch as a Grafana datasource
 
 User's Grafana Cloud instance currently queries CloudWatch from a personal AWS account; some dashboards live there. Get the same view on the local Grafana so AWS metrics aren't trapped behind Grafana Cloud.
@@ -77,6 +101,20 @@ Server pod currently runs as `runAsUser: 0` with `supplementalGroups: [10000]` f
 ### CNPG cluster backups (barman → Backblaze)
 
 The Immich Postgres cluster is currently durability-insured only by gondor's PBS snapshots — crash-consistent at best, since PBS doesn't quiesce the database. CNPG has first-class barman-cloud support; pointing it at the Backblaze bucket aglarond already uses gives application-consistent base backups + continuous WAL archiving. Pre-flight: confirm aglarond's Backblaze creds are valid via a no-op `restic check` first, otherwise debugging happens during the wrong session. Configuration lives on the `Cluster` CR (`spec.backup.barmanObjectStore`) plus a `ScheduledBackup` CR for the cadence. Applies cluster-wide, not just to Immich — any future CNPG cluster benefits.
+
+### Auto-watering on samwise (k3s workload + GPIO)
+
+Plant watering as a Flux-reconciled k3s workload on samwise (ARM worker, nodeSelector-pinned). Hardware: relay board + solenoid valve(s) + power on the Pi side; software: small Python container (gpiozero/libgpiod) wrapped in either a Deployment-with-internal-scheduler or a CronJob — the choice depends on how the gondor-nightly-downtime constraint resolves.
+
+**Real design questions for the implementing session:**
+- **GPIO passthrough into the pod**: privileged pod or specific device mounts (`/dev/gpiochip0`, `/dev/gpiomem`, `hostPath` for `/sys/class/gpio`). Privileged is simpler; mounts are more correct.
+- **Gondor-down constraint**: CronJobs are scheduled by the k3s controller-manager on the server (gondor) — when gondor is down nightly, CronJobs don't fire. Three options to weigh:
+  1. Restrict watering to gondor's daytime uptime window only (simplest)
+  2. Deployment with internal Python scheduler that fires GPIO on its own clock — survives gondor outage as long as samwise is up (most robust)
+  3. Belt-and-suspenders native systemd timer fallback if the k8s side missed its window (overkill for v1)
+- **Image source**: ARM64 Python container — manual `docker buildx` to start, eventually built by self-hosted GHA runners (see CI/CD section).
+
+Time-pressured by growing season; lands after samwise becomes a k3s worker (USB SSD swap + k3s join sessions first).
 
 ### Deploy Vibeseeker to local k3s
 
@@ -149,19 +187,15 @@ Steps:
 
 Right now `vingilot.internal` records live on the Verizon CR1000A router. Adding any new internal hostname requires a manual A-record on the router *before* cert-manager can complete its HTTP-01 self-check (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_dns.md)).
 
-A local resolver (Pi-hole or AdGuard Home) on a dedicated LXC would unlock wildcard `*.vingilot.internal → 192.168.1.220` and remove the per-service DNS friction. Probably a 2-hour session.
-
-If the Pi-orchestrator proposal (see Proposals at the bottom) lands, the resolver lives there (natively, not in k3s) and supersedes this entry.
+A local resolver (Pi-hole or AdGuard Home) deployed as a HelmRelease on samwise (k3s ARM worker, pinned via nodeSelector) unlocks wildcard `*.vingilot.internal → 192.168.1.220` and removes the per-service DNS friction. Persistent gravity DB on local-path-provisioned PV (samwise's USB SSD) so the resolver survives gondor's nightly shutdown. Bootstrap-order mitigation: samwise's own `/etc/resolv.conf` points at CR1000A (192.168.1.1), never at itself, so a samwise reboot doesn't deadlock kubelet trying to pull images. CR1000A's DHCP DNS option points at samwise → LAN clients use Pi-hole. Probably a 1-2 hour session once samwise is a k3s worker.
 
 ### Headscale / Tailscale for remote access
 
-Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Where it runs depends on the Pi-orchestrator proposal (see Proposals): ideal home is the always-on Pi as a native daemon, with fallbacks of a HelmRelease on gondor or a PVE LXC on earendil.
+Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Deploys as a HelmRelease on samwise (k3s ARM worker, nodeSelector-pinned, persistent SQLite control DB on local-path PV); pod survives gondor's nightly shutdown as long as samwise stays up.
 
 Two related capabilities to layer in once the coordinator is up:
 - **Tailscale subnet router**: announce `192.168.1.0/24` so the whole LAN is reachable through one node — no per-LXC client install.
 - **WoL bridge**: a small HTTP service on the tailnet that wakes earendil via magic packet from anywhere (described in the Pi-orchestrator entry).
-
-If the Pi-orchestrator item slips, this becomes a different decision: Headscale-as-k3s-pod buys remote access only while gondor is up (daytime-only under the nightly-shutdown model). Cloudflare Tunnel stays the answer for "always reachable" public HTTP. Headscale only earns its place if SSH/non-HTTP access is part of the use case.
 
 ## Specific upgrades
 
@@ -255,31 +289,18 @@ Setup: Kill-A-Watt meter inline with earendil's PSU for at least a full week. Ca
 
 Outcome: a real $/yr cost figure for nightly shutdown vs always-on, and a sanity check on whether vfio-pci is keeping the GTX 970 out of deep idle (suspected, not confirmed).
 
-### Pi 5 as always-on companion node (architecture not settled)
+### Pi promoted to k3s control plane (Phase 2)
 
-Driver: earendil shuts down nightly, so anything in-cluster (DNS, Headscale, observability, scheduled jobs) disappears for ~12h every day. A Pi 5 always-on solves that whole class of problems. The shape it takes is the open question.
+Phase 1 (samwise as ARM-tagged k3s worker hosting Pi-hole, Headscale, watering as Flux-reconciled workloads) is now decided — see the concrete entries above (Pi-hole / AdGuard, Headscale, Auto-watering on samwise). The remaining open question is whether to eventually promote samwise to k3s control plane.
 
-**Two shapes under consideration:**
+Driver: earendil shuts down nightly, so the k3s server (gondor) is unreachable ~12h/day. Worker pods on samwise survive (kubelet caches state) but the **controller-manager is on the server side**, so CronJobs don't fire when gondor is down — biggest concrete pain in the worker-only model. Promoting samwise to control plane resolves "API server gone overnight" — CronJobs fire, Flux reconciles, `kubectl` works at 3am.
 
-*Phase 1 — Pi as native appliance, optionally a k3s worker:*
-- Pi-hole/AdGuard, Headscale, watering all run as native systemd services on the Pi (Ansible-managed). Always available, never depend on cluster health.
-- Pi optionally joins k3s as a worker for ARM-tagged pods (Vibeseeker, etc.) — daytime-active when gondor's API server is reachable; cached pods coast through nightly shutdown but no new scheduling.
-- ~30-min Pi join, easy backout. Sets up Phase 2 naturally if the limitations are concretely felt.
+Heavier migration: relocate gondor's local-path PVs to samwise (or to NFS), re-bootstrap flux-system at the new endpoint, switch every kubeconfig to the Pi address. ~2-4h planned outage. Trust the Pi to host etcd/SQLite writes 24/7 (USB SSD non-negotiable; Pi 5 boots from USB natively in 2026).
 
-*Phase 2 — Pi promoted to k3s control plane:*
-- Resolves "API server gone overnight" — CronJobs fire, Flux reconciles, kubectl works at 3am.
-- Heavier migration: relocate gondor's local-path PVs, re-bootstrap flux-system at the new endpoint, ~2-4h planned outage. Trust the Pi to host etcd/SQLite writes 24/7 (USB SSD non-negotiable).
-- Worth doing if/when Phase-1 limitations are concretely felt — don't preemptively pay this cost.
-
-**Things settled regardless of phase:**
-- USB-SSD boot, not SD card (k3s + Alloy WAL + Pi-hole logs would shred an SD card in months). Wired Ethernet only — WiFi causes API/kubelet flapping.
-- Pi-hole/Headscale stay native — DNS shouldn't depend on k3s health, and DNS feeds the cluster on Pi reboot before kubelet starts.
-- Watering = systemd timer + Python script natively. Doesn't need a cluster regardless of topology.
-- Bonus capability: SSH-via-Headscale-to-Pi → `wakeonlan` magic packet → wakes earendil. Lab boots in 2-5 min from anywhere on the tailnet.
+Worth doing if/when the worker-only limitations are concretely felt — don't preemptively pay this cost. Most likely trigger: a CronJob that genuinely needs to fire overnight and isn't a fit for the "Deployment with internal scheduler" workaround.
 
 **Open questions before this graduates from proposal:**
 - **Cost-justified?** Depends on the Kill-A-Watt measurement above. If earendil idles at 60W with the GTX 970 holding power, nightly shutdown saves more and the Pi pattern earns its place financially. If it idles at 35W, the savings are thin and the Pi becomes pure operational-leverage / learning play (still legitimate — over-engineering for learning is the point of the homelab).
-- **Watering deadline.** If auto-water needs to ship for *this* growing season, Phase 1 native is the only path that ships in time.
 - **One Pi or two?** Orchestrator wants "next to the switch with wired link"; watering wants "near the plants." A dedicated cheap Pi (Pi 4 / Zero 2 W) for plants is the obvious resolution if those goals conflict.
 - **CR1000A as DNS fallback.** Router can hand out a secondary DNS — useful safety net for "Pi failed at 2am," but the leak-through behavior on Windows/Linux clients (clients sometimes prefer/cache the secondary) isn't great.
 
