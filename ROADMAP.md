@@ -277,6 +277,7 @@ Driver: earendil shuts down nightly, so anything in-cluster (DNS, Headscale, obs
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **Samwise (Raspberry Pi 5) onboarded** — added to `sudo_hosts` / `physical_hosts` / `debian_guests` / `alloy`; running RPi OS Lite Trixie (aarch64) on WiFi + SD card; baseline (`setup-pseudo-user` / `setup-debian-base` / `distribute-root-ca` / `install-unattended-upgrades` / `install-alloy` / `install-smartctl-exporter`) all applied with no per-host playbook needed. Metrics + logs flowing to Grafana Cloud while gondor is down. Foundation for the Pi-as-always-on-companion proposal; SSD/Ethernet/k3s/Pi-hole/Headscale/watering still deferred under that proposal.
 - **Mirror metrics + logs to Grafana Cloud free tier** — host-alloy + k-p-s Prom dual-export with curated allowlists; ~3,100 of 10k series. Same JSON imports cleanly into both Grafanas via `$datasource` parameterization.
 - **Hardware status dashboard (SMART + hwmon)** — `smartctl_exporter` on earendil, `homelab-hardware` Grafana dashboard for disk health + CPU/PCH temps.
 - **Per-deployment workload dashboard** — `homelab-workload`, namespace + deployment-scoped utilization vs requests/limits + pod state + scoped Loki logs.

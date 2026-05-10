@@ -1,0 +1,109 @@
+---
+# Baseline configuration applied to every Debian-family host in the
+# homelab: locale, timezone, a small base package set, and ensuring
+# systemd-timesyncd is running.
+#
+# Idempotent — safe to re-run as often as you like. Re-running on an
+# already-configured host should report `changed=0`.
+#
+# What this is *not*:
+#   - unattended-upgrades   -> ansible/playbooks/install-unattended-upgrades.yaml
+#   - the pseudo user       -> ansible/playbooks/setup-pseudo-user.yaml
+#   - the homelab root CA   -> ansible/playbooks/distribute-root-ca.yaml
+#
+# Why locale is here: Proxmox LXC templates ship with $LANG=en_US.UTF-8
+# exported but no locales actually generated, so every dpkg trigger that
+# touches perl/postfix/etc during apt upgrades prints a wall of
+# "Cannot set LC_CTYPE to default locale" warnings. Generating the
+# locale once + writing /etc/default/locale silences them for good.
+
+- name: Apply Debian baseline configuration
+  hosts: debian_guests
+  vars:
+    # Locales to generate on every host. The first entry becomes the
+    # system-wide default (LANG in /etc/default/locale). Add more if you
+    # want extra locales available without changing the default.
+    debian_base_locales:
+      - en_US.UTF-8
+
+    # IANA timezone name for /etc/timezone + /etc/localtime. UTC keeps
+    # log timestamps consistent across hosts; override per-host via
+    # host_vars/<name>.yaml if a specific host needs local time.
+    debian_base_timezone: UTC
+
+    # Packages every Debian-family host should have. Deliberately small —
+    # anything host- or service-specific belongs in that host's own
+    # playbook, not here.
+    debian_base_packages:
+      - ca-certificates
+      - curl
+      - rsync
+      - htop
+      - vim-tiny
+      - tmux
+      - lsb-release
+      - bash-completion
+
+  tasks:
+    - name: Sanity-check that this is a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+        fail_msg: "Expected Debian-family host, got {{ ansible_facts.os_family }}"
+
+    - name: Refresh apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install base packages
+      ansible.builtin.apt:
+        name: "{{ debian_base_packages }}"
+        state: present
+
+    # --- Locale ----------------------------------------------------------
+
+    - name: Ensure the locales package is installed
+      ansible.builtin.apt:
+        name: locales
+        state: present
+
+    - name: Generate requested locales
+      # Edits /etc/locale.gen to uncomment the named locale and runs
+      # locale-gen. Idempotent: no-op once the locale is already built.
+      community.general.locale_gen:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ debian_base_locales }}"
+
+    - name: Set system default locale
+      # Declarative: this file is exactly what the playbook says it is.
+      # If you want per-host overrides, lift this into a host_vars value.
+      ansible.builtin.copy:
+        dest: /etc/default/locale
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible/playbooks/setup-debian-base.yaml
+          # — edit the playbook, not this file.
+          LANG={{ debian_base_locales[0] }}
+
+    # --- Timezone --------------------------------------------------------
+
+    - name: Set system timezone
+      # Uses timedatectl when dbus is available (full VMs, modern LXCs),
+      # otherwise falls back to writing /etc/timezone + /etc/localtime
+      # symlink. Either way, idempotent.
+      community.general.timezone:
+        name: "{{ debian_base_timezone }}"
+
+    # --- Time sync -------------------------------------------------------
+
+    - name: Ensure systemd-timesyncd is enabled and running
+      # Already enabled on stock Debian, but Proxmox's minimal LXC
+      # templates occasionally ship it masked. Make it explicit.
+      ansible.builtin.systemd:
+        name: systemd-timesyncd
+        enabled: true
+        state: started
