@@ -193,6 +193,18 @@ See [`AGENTS.md` Hardware section](AGENTS.md#hardware). Free ~40% memory bandwid
 
 Each iOS device that wants to access internal HTTPS services needs the `vingilot` root CA in its trust store. Manual procedure: AirDrop the cert, install Profile, toggle on in Certificate Trust Settings. Captured in the CA-rotation runbook; just needs doing per device.
 
+### Earendil TZ alignment (America/New_York → UTC)
+
+The only host in the fleet not on UTC — surfaced when `setup-debian-base.yaml` ran against `debian_guests` and earendil (in `proxmox_hosts`, untargeted) was left behind. The on-host visibility benefit of converging is small (Grafana already normalizes log display TZ in the browser), but the inconsistency is a paper-cut every time you SSH in to read `journalctl` directly. Real risk on the flip: anything scheduled in local time shifts by 4-5 hours when the TZ moves.
+
+Pre-flight before `timedatectl set-timezone UTC`:
+- `crontab -l` for root + pseudo, plus `/etc/crontab` and `/etc/cron.d/*` — convert any local-time entries to UTC equivalents
+- PVE UI → Datacenter → Backup (and `/etc/pve/jobs.cfg` for replication / HA) — convert each Schedule field
+- `systemctl list-timers --all` — audit `OnCalendar=` entries for absolute hours
+- Whatever automation powers the nightly shutdown — confirm in scope and convert
+
+Then flip and verify next-run times of each converted entry match expectation. ~30-60 min focused session; defer until a low-stakes window since earendil is the host everything else depends on.
+
 ## Host-level configuration
 
 ### GPU passthrough setup on earendil — `setup-gpu-passthrough.yaml`
