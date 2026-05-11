@@ -1,0 +1,98 @@
+---
+# Configure Sunshine (Moonlight host) on Bazzite gaming VMs.
+#
+# Currently only anduril is in `bazzite_hosts`. The Bazzite image ships
+# Sunshine pre-installed via rpm-ostree; this playbook layers on the
+# sunshine-specific host-local tweaks that make it actually stream reliably:
+#
+#   1. A systemd user dropin replacing Sunshine's fragile `sleep 5`
+#      startup with a poll for the graphical session env.
+#   2. Enabling nvidia-persistenced so CUDA stays warm and Sunshine
+#      picks NVENC instead of falling back to libx264 software.
+#
+# Bazzite-wide setup (polkit, ostree pin, auto-update disable, KDE
+# power-management disable) lives in setup-bazzite-base.yaml. Use
+# site-anduril.yaml to apply both in order.
+#
+# Structured as two plays so the become semantics are unambiguous: the
+# first runs as the SSH user (pseudo, no sudo) and only touches paths
+# in $HOME; the second runs as root for the systemd unit enable. Mixing
+# user-level and root-level tasks in a single play with task-level
+# `become:` overrides hits an ansible quirk where play-level
+# `ansible_become: false` masks task-level `become: true`, leaving
+# the supposed-to-be-root task running as the SSH user.
+
+- name: Configure Sunshine user-level systemd integration
+  hosts: bazzite_hosts
+  gather_facts: false
+  become: false
+  vars:
+    # Inventory sets `ansible_become: true` for this host; clear it here
+    # so the user-level tasks run as the SSH user (pseudo) without sudo.
+    ansible_become: false
+
+  tasks:
+    - name: Ensure sunshine systemd user dropin directory exists
+      ansible.builtin.file:
+        path: ~/.config/systemd/user/app-dev.lizardbyte.app.Sunshine.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Install sunshine env-wait dropin
+      # Background:
+      # The upstream unit ships `ExecStartPre=/bin/sleep 5` as a fragile
+      # workaround for a startup race. Sunshine relies on the graphical
+      # session env (WAYLAND_DISPLAY etc.) being present in the user systemd
+      # manager. Plasma-wayland calls `systemctl --user import-environment`
+      # *during* session bring-up, but the systemd manager can fire
+      # graphical-session.target — and therefore start sunshine — before
+      # that import has actually completed. When it loses that race,
+      # sunshine starts with an empty environ, can't reach the compositor
+      # for capture, busy-loops at ~97% CPU, and eventually wedges a thread
+      # in the nvidia kernel driver such that even SIGKILL won't reap it.
+      # Symptom: sunshine.log halts at the first config line and never
+      # reaches encoder probing; streaming ports never open.
+      #
+      # Fix: replace the timing hack with a poll that waits for the env to
+      # actually be importable before sunshine starts.
+      ansible.builtin.copy:
+        dest: ~/.config/systemd/user/app-dev.lizardbyte.app.Sunshine.service.d/wait-for-env.conf
+        content: |
+          [Service]
+          ExecStartPre=
+          ExecStartPre=/bin/bash -c 'until systemctl --user show-environment | grep -q "^WAYLAND_DISPLAY="; do sleep 0.5; done'
+        mode: "0644"
+      notify: Reload user systemd manager
+
+  handlers:
+    - name: Reload user systemd manager
+      ansible.builtin.command: systemctl --user daemon-reload
+      changed_when: false
+
+
+- name: Configure Sunshine system-level dependencies
+  hosts: bazzite_hosts
+  gather_facts: false
+  become: true
+
+  tasks:
+    # Background on the next task:
+    # nvidia-persistenced holds a non-display reference to the GPU so the
+    # kernel driver and CUDA init state stay warm between short-lived
+    # client processes. Without it, every fresh CUDA context pays a full
+    # driver reinit cost — and sunshine's encoder probe enumerates fast
+    # enough to race that cold start, failing nvenc selection with
+    # `CUDA_ERROR_NOT_INITIALIZED`. The fallback chain (vulkan, vaapi)
+    # uses the same CUDA path on this driver, so the failure cascades
+    # all the way down to libx264 software encoding — which works but
+    # burns CPU and discards the whole reason this VM has a GTX 970
+    # attached.
+    #
+    # Bazzite ships the unit with preset=enabled; this task just makes
+    # sure it's actually enabled and running on this host.
+
+    - name: Enable and start nvidia-persistenced
+      ansible.builtin.systemd:
+        name: nvidia-persistenced.service
+        enabled: true
+        state: started

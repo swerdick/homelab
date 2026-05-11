@@ -1,0 +1,24 @@
+---
+# Entry point for configuring anduril (the Bazzite gaming VM) end-to-end.
+# Imports the two anduril-relevant playbooks in dependency order:
+#
+#   1. setup-bazzite-base.yaml — Bazzite host-wide setup (KDE power
+#      management, polkit, ostree pin, auto-update disable). Must run
+#      first because setup-sunshine.yaml's persistenced enable depends
+#      on the polkit rule landed here.
+#   2. setup-sunshine.yaml — sunshine-specific (env-poll dropin,
+#      persistenced enable).
+#
+# Note: setup-pseudo-user.yaml is not part of this chain because its
+# play targets the `alloy` host group (per ansible/inventory.yaml),
+# which does not include `bazzite_hosts`. anduril's pseudo user is
+# managed differently and tracked separately on the roadmap.
+#
+# Usage:
+#   ansible-playbook playbooks/site-anduril.yaml --ask-become-pass --diff
+#
+# Both imported playbooks target the `bazzite_hosts` group (anduril only
+# today). Idempotent — safe to re-run.
+
+- import_playbook: setup-bazzite-base.yaml
+- import_playbook: setup-sunshine.yaml
