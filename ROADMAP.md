@@ -209,15 +209,14 @@ PBS 3 → 4 follows its own ritual; deferred until summer 2026 since PBS 3.x has
 
 Pending erebor's trixie upgrade — Alloy via the Grafana apt repo wants newer libc than PBS 3 ships. Once that's done, erebor joins the alloy fleet.
 
-### Anduril in PBS backups + Ansible inventory + Alloy rollout
+### Anduril Alloy + distribute-root-ca rollout
 
-Three blockers stacked:
-- **PBS backups**: anduril is excluded right now. Wants more RAM allocated before re-including (current size makes the backup quiesce window painful).
-- **Ansible inventory**: not in `inventory.yaml` yet. Needs `ansible_become` settings for Bazzite.
-- **Alloy install**: would also need OS-family branching (RPM-based, not apt). The existing `install-alloy.yaml` plays would need an `ansible.builtin.dnf` path or split.
+Two blockers, both OS-family-related (Bazzite is RPM-based + rpm-ostree-managed; the existing playbooks assume Debian + apt):
+
+- **Alloy install**: would need OS-family branching (RPM-based, not apt). The existing `install-alloy.yaml` plays would need an `ansible.builtin.dnf` path or split. anduril is also not in the `alloy:` host group in `inventory.yaml` — add when the playbook is ready.
 - **distribute-root-ca**: anduril is currently skipped because Bazzite uses different cert paths and `rpm-ostree` semantics. Same OS-family branching applies.
 
-All four naturally land in a single anduril-day session.
+Both naturally land in a single session. `setup-bazzite-base.yaml` / `setup-sunshine.yaml` (May 2026) set the precedent — rpm-ostree-aware tasks, polkit rule unblocking ansible-managed systemd, runs through `site-anduril.yaml`.
 
 ### XMP enable on RAM
 
@@ -310,6 +309,8 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **Anduril Steam Machine hardening** — `setup-bazzite-base.yaml` + `setup-sunshine.yaml` + `site-anduril.yaml` lock anduril into deliberate-upgrade mode: ostree deployment pinned, `rpm-ostreed-automatic.timer` disabled, KDE screen blanking off, sunshine env-poll dropin, `nvidia-persistenced` enabled, polkit rules for ansible-managed systemd + pseudo-managed rpm-ostree. `just patch-bazzite` is non-interactive and chains `verify-bazzite-staged` to catch critical-package removals before reboot (caught Bazzite-F44 dropping sunshine from the base image cleanly).
+- **Proxmox kernel pin** — `pin-proxmox-kernel.yaml` writes `/etc/kernel/proxmox-boot-pin` to lock earendil to a chosen kernel and refreshes the EFI System Partitions. Needed after `proxmox-kernel-7.0.0-3-pve` introduced a vfio regression that broke GTX 970 passthrough into anduril; bumping the `proxmox_kernel_pin` variable + re-run + reboot is the deliberate upgrade flow.
 - **Samwise (Raspberry Pi 5) onboarded** — added to `sudo_hosts` / `physical_hosts` / `debian_guests` / `alloy`; running RPi OS Lite Trixie (aarch64) on WiFi + SD card; baseline (`setup-pseudo-user` / `setup-debian-base` / `distribute-root-ca` / `install-unattended-upgrades` / `install-alloy` / `install-smartctl-exporter`) all applied with no per-host playbook needed. Metrics + logs flowing to Grafana Cloud while gondor is down. Foundation for the Pi-as-always-on-companion proposal; SSD/Ethernet/k3s/Pi-hole/Headscale/watering still deferred under that proposal.
 - **Mirror metrics + logs to Grafana Cloud free tier** — host-alloy + k-p-s Prom dual-export with curated allowlists; ~3,100 of 10k series. Same JSON imports cleanly into both Grafanas via `$datasource` parameterization.
 - **Hardware status dashboard (SMART + hwmon)** — `smartctl_exporter` on earendil, `homelab-hardware` Grafana dashboard for disk health + CPU/PCH temps.
