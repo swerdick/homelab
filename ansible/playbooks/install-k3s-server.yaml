@@ -1,0 +1,159 @@
+---
+# Installs k3s as a single-server (control plane + workloads) node on gondor.
+# Idempotent — re-runs short-circuit once the k3s service is already active.
+# Targets gondor explicitly so untargeted runs are no-ops on every other host.
+#
+# Design choices (mirror install-k3s-agent.yaml where they overlap):
+#   - --disable=traefik / --disable=servicelb: Flux installs Traefik as a
+#     HelmRelease (with MetalLB-backed LoadBalancers) for full control over
+#     gateway-api config; the bundled flavors would conflict.
+#   - --write-kubeconfig-mode=0644: lets pseudo read /etc/rancher/k3s/k3s.yaml
+#     without sudo for `scp` to thorondor (kubectl-on-thorondor pattern).
+#   - --tls-san=gondor.vingilot.internal: matches the SAN workers connect to
+#     in install-k3s-agent.yaml (k3s_url).
+#   - --cluster-cidr / --service-cidr: pinned to the default k3s ranges so a
+#     future re-install can't surprise existing IP-aware config.
+#
+# Idempotency is layered (most-to-least confident):
+#   1. `systemctl is-active k3s` short-circuits download + install when the
+#      service is already running — protects the live cluster from a
+#      destructive curl|sh re-run.
+#   2. `creates: /usr/local/bin/k3s` is a second-line guard on the install
+#      command for the rare case where the service is stopped but the
+#      binary exists.
+#   3. Version assertion fails loud rather than silently re-installing — k3s
+#      upgrades on a live single-node cluster (etcd state, workload
+#      disruption) deserve a dedicated procedure, not an unintentional
+#      side-effect of an ansible run.
+
+- name: Install k3s server on gondor
+  hosts: gondor
+  vars:
+    k3s_node_name: gondor
+    k3s_tls_san: gondor.vingilot.internal
+    k3s_cluster_cidr: 10.42.0.0/16
+    k3s_service_cidr: 10.43.0.0/16
+
+  pre_tasks:
+    - name: Sanity-check that this is gondor
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "gondor"
+          - ansible_facts.hostname == "gondor"
+        fail_msg: >-
+          install-k3s-server is gondor-only; refusing to run against
+          {{ inventory_hostname }} (live hostname {{ ansible_facts.hostname }}).
+
+    - name: Assert k3s_version is set (from host_vars/gondor.yaml)
+      ansible.builtin.assert:
+        that:
+          - k3s_version is defined
+          - k3s_version | length > 0
+        fail_msg: >-
+          k3s_version must be defined in host_vars/gondor.yaml
+          (e.g. k3s_version: v1.34.6+k3s1).
+
+  tasks:
+    - name: Check if k3s service is already active
+      # Top-level idempotency gate. If active, every installer task below
+      # is skipped — protects the live cluster from a destructive re-run
+      # of curl|sh which could rewrite the systemd unit underneath running
+      # pods (Flux, Immich, cnpg, Jellyfin, Traefik all live here).
+      ansible.builtin.command: systemctl is-active k3s
+      register: k3s_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Read currently-installed k3s version (if any)
+      # check_mode: false so --check sees real values for the version assert.
+      # failed_when: false to handle the fresh-install case (binary absent).
+      ansible.builtin.command: k3s --version
+      register: installed_k3s_version
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Assert installed version matches desired (no auto-upgrade)
+      # `k3s --version` prints "k3s version v1.34.6+k3s1 (abc1234)...".
+      # If the service is active and the version differs, fail loud — k3s
+      # upgrades on a live single-node cluster deserve a deliberate flow,
+      # not a side-effect of re-running this playbook.
+      ansible.builtin.assert:
+        that:
+          - k3s_version in installed_k3s_version.stdout
+        fail_msg: >-
+          gondor reports '{{ installed_k3s_version.stdout }}', but
+          host_vars/gondor.yaml pins {{ k3s_version }}. Refusing to re-install
+          across versions on a live cluster — bump host_vars/gondor.yaml to
+          match the running version, or run a deliberate upgrade procedure.
+      when: k3s_active.stdout == "active"
+
+    - name: Download the official k3s installer
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s-install.sh
+        mode: "0755"
+      when: k3s_active.stdout != "active"
+
+    - name: Install and start k3s server
+      # `creates: /usr/local/bin/k3s` is a second safety net under the
+      # service-active short-circuit — even if `is-active` somehow misreads,
+      # this still no-ops once the binary exists.
+      ansible.builtin.command:
+        cmd: sh /tmp/k3s-install.sh
+        creates: /usr/local/bin/k3s
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+        INSTALL_K3S_EXEC: >-
+          server
+          --disable=traefik
+          --disable=servicelb
+          --write-kubeconfig-mode=0644
+          --node-name={{ k3s_node_name }}
+          --tls-san={{ k3s_tls_san }}
+          --cluster-cidr={{ k3s_cluster_cidr }}
+          --service-cidr={{ k3s_service_cidr }}
+      when: k3s_active.stdout != "active"
+
+    - name: Ensure k3s service is started and enabled
+      ansible.builtin.service:
+        name: k3s
+        state: started
+        enabled: true
+      # In --check the install step is skipped; the unit may not exist yet,
+      # so `service` would error. Real first-runs hit this normally.
+      when: not ansible_check_mode
+
+  post_tasks:
+    - name: Wait for the gondor node to report Ready
+      # argv: form bypasses shlex parsing, which would otherwise strip the
+      # double-quotes around "Ready" inside the jsonpath filter and produce
+      # an "unrecognized identifier" error from kubectl. Same pattern as
+      # install-k3s-agent.yaml lines 178-191.
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - node
+          - "{{ k3s_node_name }}"
+          - -o
+          - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+      register: node_ready
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: node_ready.stdout == "True"
+      when: not ansible_check_mode
+
+    - name: Show the cluster as it stands now
+      ansible.builtin.command: k3s kubectl get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Cluster state
+      ansible.builtin.debug:
+        var: cluster_nodes.stdout_lines
+      when: not ansible_check_mode
