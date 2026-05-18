@@ -104,7 +104,7 @@ The Immich Postgres cluster is currently durability-insured only by gondor's PBS
 
 ### Auto-watering on samwise (k3s workload + GPIO)
 
-Plant watering as a Flux-reconciled k3s workload on samwise (ARM worker, nodeSelector-pinned). Hardware: relay board + solenoid valve(s) + power on the Pi side; software: small Python container (gpiozero/libgpiod) wrapped in either a Deployment-with-internal-scheduler or a CronJob — the choice depends on how the gondor-nightly-downtime constraint resolves.
+Plant watering as a Flux-reconciled k3s workload on samwise (ARM worker — joined, tainted `NoSchedule`; Deployment will need a toleration + nodeSelector). Hardware: relay board + solenoid valve(s) + power on the Pi side; software: small Python container (gpiozero/libgpiod) wrapped in either a Deployment-with-internal-scheduler or a CronJob — the choice depends on how the gondor-nightly-downtime constraint resolves.
 
 **Real design questions for the implementing session:**
 - **GPIO passthrough into the pod**: privileged pod or specific device mounts (`/dev/gpiochip0`, `/dev/gpiomem`, `hostPath` for `/sys/class/gpio`). Privileged is simpler; mounts are more correct.
@@ -114,7 +114,7 @@ Plant watering as a Flux-reconciled k3s workload on samwise (ARM worker, nodeSel
   3. Belt-and-suspenders native systemd timer fallback if the k8s side missed its window (overkill for v1)
 - **Image source**: ARM64 Python container — manual `docker buildx` to start, eventually built by self-hosted GHA runners (see CI/CD section).
 
-Time-pressured by growing season; lands after samwise becomes a k3s worker (USB SSD swap + k3s join sessions first).
+Time-pressured by growing season. Samwise is a k3s worker now; the remaining gate is the USB SSD swap (needed before any local-path PV gets written to SD-card flash) + relay/solenoid hardware on the Pi side.
 
 ### Deploy Vibeseeker to local k3s
 
@@ -187,11 +187,11 @@ Steps:
 
 Right now `vingilot.internal` records live on the Verizon CR1000A router. Adding any new internal hostname requires a manual A-record on the router *before* cert-manager can complete its HTTP-01 self-check (see [project memory](../.claude/projects/-Users-pseudo-repositories-homelab/memory/project_dns.md)).
 
-A local resolver (Pi-hole or AdGuard Home) deployed as a HelmRelease on samwise (k3s ARM worker, pinned via nodeSelector) unlocks wildcard `*.vingilot.internal → 192.168.1.220` and removes the per-service DNS friction. Persistent gravity DB on local-path-provisioned PV (samwise's USB SSD) so the resolver survives gondor's nightly shutdown. Bootstrap-order mitigation: samwise's own `/etc/resolv.conf` points at CR1000A (192.168.1.1), never at itself, so a samwise reboot doesn't deadlock kubelet trying to pull images. CR1000A's DHCP DNS option points at samwise → LAN clients use Pi-hole. Probably a 1-2 hour session once samwise is a k3s worker.
+A local resolver (Pi-hole or AdGuard Home) deployed as a HelmRelease on samwise (k3s ARM worker — joined, tainted `NoSchedule`; HelmRelease will need a matching toleration + nodeSelector) unlocks wildcard `*.vingilot.internal → 192.168.1.220` and removes the per-service DNS friction. Persistent gravity DB on local-path-provisioned PV (samwise's USB SSD) so the resolver survives gondor's nightly shutdown. Bootstrap-order mitigation: samwise's own `/etc/resolv.conf` points at CR1000A (192.168.1.1), never at itself, so a samwise reboot doesn't deadlock kubelet trying to pull images. CR1000A's DHCP DNS option points at samwise → LAN clients use Pi-hole. Probably a 1-2 hour session — gated on the SSD swap so we have a non-SD PV target.
 
 ### Headscale / Tailscale for remote access
 
-Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Deploys as a HelmRelease on samwise (k3s ARM worker, nodeSelector-pinned, persistent SQLite control DB on local-path PV); pod survives gondor's nightly shutdown as long as samwise stays up.
+Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — every device on the tailnet gets a stable address regardless of where it physically is, and homelab services that don't need public exposure can stay tailnet-only. Deploys as a HelmRelease on samwise (k3s ARM worker — joined; HelmRelease will need a toleration for the `NoSchedule` taint + nodeSelector + persistent SQLite control DB on local-path PV); pod survives gondor's nightly shutdown as long as samwise stays up. Gated on the SSD swap for the PV.
 
 Two related capabilities to layer in once the coordinator is up:
 - **Tailscale subnet router**: announce `192.168.1.0/24` so the whole LAN is reachable through one node — no per-LXC client install.
@@ -272,6 +272,12 @@ Codify the manual steps for adding a new homelab host into a single `bootstrap.y
 
 The `nfs-common` install in particular is currently buried inside `setup-k3s-pv-storage.yaml` because gondor was the only NFS client at the time. It should be lifted out into either a dedicated "ensure nfs client" playbook or this onboarding parent — pick whichever fits when a second NFS client actually appears.
 
+### Refactor `install-k3s.sh` to an ansible playbook
+
+`gondor/bootstrap/install-k3s.sh` is the last shell-script-shaped permanent host change in the repo. Worker joins now go through `ansible/playbooks/install-k3s-agent.yaml` — pulling the server install into a sibling `install-k3s-server.yaml` would (1) align with the ansible-over-shell preference for permanent host changes, (2) collapse the three-way version lockstep currently tracked across `install-k3s.sh`, `justfile`'s `k3s_version`, and `host_vars/samwise.yaml` into a single ansible var, and (3) give us pre-flight / verification idioms (DNS, version assertion, post-install `kubectl get nodes`) that the shell script can't express cleanly today.
+
+Not urgent — the existing script works and the server is installed once per disaster recovery, not regularly. Right time is whenever the next k3s version bump comes up: refactor as part of doing the bump.
+
 ## Proposals
 
 Items above are "decided, just need time." Items in this section are speculative — captured so the thinking doesn't rot, but not committed to. Graduation to a section above means a decision was made.
@@ -309,9 +315,11 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **Longer-lived ACME certs + on-boot renewal** — `install-step-ca.yaml` bumps tirion's `acme` provisioner to a 90d default/max cert lifetime (`step ca provisioner update --x509-default-dur 2160h --x509-max-dur 2160h`) with idempotent drift detection; `setup-acme-renewal.yaml` drops `RandomizedDelaySec=0` + `OnBootSec=2min` overrides onto earendil's `pve-daily-update.timer` and erebor's `proxmox-backup-daily-update.timer` so a host returning from days-of-power-off renews promptly rather than waiting for the next jittered daily window.
+- **samwise joined gondor's k3s cluster as ARM worker** — `install-k3s-agent.yaml` fetches gondor's node token, appends `cgroup_memory=1 cgroup_enable=memory` to `/boot/firmware/cmdline.txt` (RPi-only, idempotent), reboots once if needed, then installs k3s-agent pinned via `host_vars/samwise.yaml`'s `k3s_version`. Worker carries `homelab.vingilot.internal/{host=samwise,role=worker}` labels and a `role=pi:NoSchedule` taint so existing amd64-only HelmReleases (Immich, Jellyfin, cnpg, Traefik, MetalLB, ...) can't be rescheduled there. Phase 1 only — SD card + WiFi; SSD/Ethernet migration + Pi-hole/Headscale/watering still queued behind it.
 - **Anduril Steam Machine hardening** — `setup-bazzite-base.yaml` + `setup-sunshine.yaml` + `site-anduril.yaml` lock anduril into deliberate-upgrade mode: ostree deployment pinned, `rpm-ostreed-automatic.timer` disabled, KDE screen blanking off, sunshine env-poll dropin, `nvidia-persistenced` enabled, polkit rules for ansible-managed systemd + pseudo-managed rpm-ostree. `just patch-bazzite` is non-interactive and chains `verify-bazzite-staged` to catch critical-package removals before reboot (caught Bazzite-F44 dropping sunshine from the base image cleanly).
 - **Proxmox kernel pin** — `pin-proxmox-kernel.yaml` writes `/etc/kernel/proxmox-boot-pin` to lock earendil to a chosen kernel and refreshes the EFI System Partitions. Needed after `proxmox-kernel-7.0.0-3-pve` introduced a vfio regression that broke GTX 970 passthrough into anduril; bumping the `proxmox_kernel_pin` variable + re-run + reboot is the deliberate upgrade flow.
-- **Samwise (Raspberry Pi 5) onboarded** — added to `sudo_hosts` / `physical_hosts` / `debian_guests` / `alloy`; running RPi OS Lite Trixie (aarch64) on WiFi + SD card; baseline (`setup-pseudo-user` / `setup-debian-base` / `distribute-root-ca` / `install-unattended-upgrades` / `install-alloy` / `install-smartctl-exporter`) all applied with no per-host playbook needed. Metrics + logs flowing to Grafana Cloud while gondor is down. Foundation for the Pi-as-always-on-companion proposal; SSD/Ethernet/k3s/Pi-hole/Headscale/watering still deferred under that proposal.
+- **Samwise (Raspberry Pi 5) onboarded** — added to `sudo_hosts` / `physical_hosts` / `debian_guests` / `alloy`; running RPi OS Lite Trixie (aarch64) on WiFi + SD card; baseline (`setup-pseudo-user` / `setup-debian-base` / `distribute-root-ca` / `install-unattended-upgrades` / `install-alloy` / `install-smartctl-exporter`) all applied with no per-host playbook needed. Metrics + logs flowing to Grafana Cloud while gondor is down. Foundation for the Pi-as-always-on-companion proposal; SSD/Ethernet/Pi-hole/Headscale/watering still deferred under that proposal (k3s join itself landed separately — see entry above).
 - **Mirror metrics + logs to Grafana Cloud free tier** — host-alloy + k-p-s Prom dual-export with curated allowlists; ~3,100 of 10k series. Same JSON imports cleanly into both Grafanas via `$datasource` parameterization.
 - **Hardware status dashboard (SMART + hwmon)** — `smartctl_exporter` on earendil, `homelab-hardware` Grafana dashboard for disk health + CPU/PCH temps.
 - **Per-deployment workload dashboard** — `homelab-workload`, namespace + deployment-scoped utilization vs requests/limits + pod state + scoped Loki logs.
