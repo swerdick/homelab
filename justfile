@@ -1,3 +1,6 @@
+# Lockstep with gondor/bootstrap/install-k3s.sh and
+# ansible/host_vars/samwise.yaml — bump all three together until the
+# "refactor install-k3s.sh to ansible" ROADMAP item collapses them.
 k3s_version := "v1.34.6+k3s1"
 
 # All Debian-based LXCs on earendil
@@ -260,18 +263,6 @@ trust-ca-mac:
     @echo "Firefox uses its own NSS trust store. To make it follow the system trust:"
     @echo "  about:config -> security.enterprise_roots.enabled = true"
     @echo "  Restart Firefox afterward."
-
-# --- Setup tasks ---
-
-# Configure unattended-upgrades on all Debian guests via ansible
-# (idempotent; safe to re-run)
-setup-unattended-upgrades:
-    ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-unattended-upgrades.yaml
-
-# Install/bootstrap step-ca on tirion via ansible. Idempotent — once the CA
-# is initialized this is a no-op. Targets only tirion.
-setup-step-ca:
-    ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-step-ca.yaml
 
 # --- PVE config snapshot ---
 
