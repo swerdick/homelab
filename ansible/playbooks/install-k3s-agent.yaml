@@ -1,0 +1,231 @@
+---
+# Joins k3s_workers hosts to gondor's existing single-node k3s cluster as
+# agents. Idempotent — re-runs short-circuit once the k3s-agent service is
+# already active. Targets the `k3s_workers` group, so untargeted runs are
+# no-ops on every host outside that group.
+#
+# Worker design choices (see also: plan file + ROADMAP Phase 1 entries):
+#   - NoSchedule taint on the worker prevents existing amd64-only
+#     HelmReleases (Immich, Jellyfin, cnpg, Traefik, MetalLB, ...) from
+#     getting rescheduled onto an arm64 node and ImagePullBackOff'ing.
+#     Future arm64 workloads (Pi-hole, Headscale, watering) will add a
+#     matching toleration.
+#   - kubelet image-gc thresholds are lowered (70/50 vs default 85/80) to
+#     reduce SD-card wear while we're still on SD + WiFi; revisit on
+#     USB SSD migration.
+#   - k3s_version is sourced from ansible/host_vars/<host>.yaml and
+#     verified against the running server before any state changes.
+
+- name: Fetch k3s node token from the server
+  hosts: gondor
+  tasks:
+    - name: Read /var/lib/rancher/k3s/server/node-token
+      # The token is root-readable only; this play runs as pseudo + become.
+      # Stored in-memory only — not persisted. The token is regenerable, so
+      # SOPS round-trip isn't worth the complexity, and the playbook needs
+      # gondor reachable anyway (pre-flight in Play 2 enforces it).
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: k3s_node_token_b64
+      no_log: true
+
+    - name: Decode the token into a hostvars fact
+      ansible.builtin.set_fact:
+        k3s_node_token: "{{ k3s_node_token_b64.content | b64decode | trim }}"
+      no_log: true
+
+- name: Install and join k3s agent on workers
+  hosts: k3s_workers
+  vars:
+    k3s_url: "https://gondor.vingilot.internal:6443"
+    k3s_token: "{{ hostvars['gondor'].k3s_node_token }}"
+    # Labels and the taint are intentionally in the homelab.vingilot.internal/
+    # namespace rather than node-role.kubernetes.io/* (which is conventionally
+    # cluster-controller-managed). kubernetes.io/arch=arm64 is auto-applied
+    # by the kubelet.
+    k3s_node_labels:
+      - "homelab.vingilot.internal/host={{ inventory_hostname }}"
+      - "homelab.vingilot.internal/role=worker"
+    k3s_node_taints:
+      - "homelab.vingilot.internal/role=pi:NoSchedule"
+
+  pre_tasks:
+    # Raspberry Pi OS ships with the memory cgroup controller disabled on
+    # the kernel cmdline; k3s-agent dies with "failed to find memory
+    # cgroup (v2)" on first start without this. Modify /boot/firmware/
+    # cmdline.txt in place and reboot. Guarded on the file existing so
+    # this is a no-op on non-RPi hosts (e.g. a future arm Debian VM
+    # added to k3s_workers).
+    - name: Pre-flight — stat /boot/firmware/cmdline.txt (RPi-only fix)
+      ansible.builtin.stat:
+        path: /boot/firmware/cmdline.txt
+      register: rpi_cmdline_stat
+      check_mode: false
+
+    - name: Read current kernel cmdline
+      ansible.builtin.slurp:
+        src: /boot/firmware/cmdline.txt
+      register: rpi_cmdline_raw
+      when: rpi_cmdline_stat.stat.exists
+      check_mode: false
+
+    - name: Append cgroup_memory args to kernel cmdline if missing
+      ansible.builtin.copy:
+        dest: /boot/firmware/cmdline.txt
+        content: "{{ (rpi_cmdline_raw.content | b64decode | trim) }} cgroup_memory=1 cgroup_enable=memory\n"
+        owner: root
+        group: root
+        mode: "0755"
+      when:
+        - rpi_cmdline_stat.stat.exists
+        - "'cgroup_memory=1' not in (rpi_cmdline_raw.content | b64decode)"
+      register: rpi_cmdline_change
+
+    - name: Reboot to apply kernel cmdline change
+      ansible.builtin.reboot:
+        msg: "Applying cgroup_memory kernel cmdline change for k3s"
+        reboot_timeout: 600
+      when: rpi_cmdline_change is defined and rpi_cmdline_change.changed
+
+    # All remaining pre-flight probes are read-only — `check_mode: false`
+    # makes them run even under `--check`, so the version assertion has
+    # real data rather than an empty stdout to compare against.
+    - name: Pre-flight — DNS resolves for the k3s server
+      ansible.builtin.command: getent hosts gondor.vingilot.internal
+      register: dns_check
+      changed_when: false
+      check_mode: false
+
+    - name: Pre-flight — k3s apiserver reachable on 6443/tcp
+      ansible.builtin.wait_for:
+        host: gondor.vingilot.internal
+        port: 6443
+        timeout: 5
+      check_mode: false
+
+    - name: Pre-flight — read k3s version from the server
+      ansible.builtin.command: k3s --version
+      register: server_k3s_version
+      changed_when: false
+      delegate_to: gondor
+      check_mode: false
+
+    - name: Pre-flight — assert server version matches host_vars k3s_version
+      # `k3s --version` prints e.g. "k3s version v1.34.6+k3s1 (abc1234)".
+      # Match on the version token so the assertion is unambiguous.
+      ansible.builtin.assert:
+        that:
+          - k3s_version in server_k3s_version.stdout
+        fail_msg: >-
+          gondor reports '{{ server_k3s_version.stdout }}', but host_vars
+          pins {{ k3s_version }}. Bump host_vars/{{ inventory_hostname }}.yaml
+          (or upgrade gondor) before joining a worker on a mismatched version.
+
+  tasks:
+    - name: Check if k3s-agent is already active
+      ansible.builtin.command: systemctl is-active k3s-agent
+      register: k3s_agent_active
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Download the official k3s installer
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s-install.sh
+        mode: "0755"
+      when: k3s_agent_active.stdout != "active"
+
+    - name: Install and start k3s-agent (joins the cluster)
+      # The official installer is essentially idempotent — it writes the
+      # systemd unit, enables it, and starts it. We additionally guard with
+      # `creates: /usr/local/bin/k3s` so re-runs after a successful join
+      # short-circuit without invoking the curl|sh installer at all.
+      ansible.builtin.command:
+        cmd: sh /tmp/k3s-install.sh
+        creates: /usr/local/bin/k3s
+      environment:
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+        K3S_URL: "{{ k3s_url }}"
+        K3S_TOKEN: "{{ k3s_token }}"
+        INSTALL_K3S_EXEC: >-
+          agent
+          --node-name={{ inventory_hostname }}
+          {% for label in k3s_node_labels %}--node-label={{ label }} {% endfor %}
+          {% for taint in k3s_node_taints %}--node-taint={{ taint }} {% endfor %}
+          --kubelet-arg=image-gc-high-threshold=70
+          --kubelet-arg=image-gc-low-threshold=50
+      no_log: true  # K3S_TOKEN is in the environment
+
+    - name: Ensure k3s-agent is started and enabled
+      ansible.builtin.service:
+        name: k3s-agent
+        state: started
+        enabled: true
+      # In --check mode the install step is skipped, so the unit doesn't
+      # exist yet and `service` errors. Real runs hit this normally.
+      when: not ansible_check_mode
+
+- name: Verify the join from the server
+  hosts: gondor
+  # Skip post-install verification in --check mode — workers haven't
+  # actually joined yet, so `kubectl get node` would loop-fail.
+  tasks:
+    - name: Wait for the worker node to report Ready
+      # `argv:` form bypasses shlex parsing, which would otherwise strip the
+      # double-quotes around "Ready" inside the jsonpath filter and produce
+      # an "unrecognized identifier" error from kubectl.
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - node
+          - "{{ item }}"
+          - -o
+          - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+      register: node_ready
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: node_ready.stdout == "True"
+      loop: "{{ groups['k3s_workers'] }}"
+      when: not ansible_check_mode
+
+    - name: Read the worker node's labels for assertion
+      ansible.builtin.command:
+        argv:
+          - k3s
+          - kubectl
+          - get
+          - node
+          - "{{ item }}"
+          - -o
+          - jsonpath={.metadata.labels}
+      register: node_labels
+      changed_when: false
+      loop: "{{ groups['k3s_workers'] }}"
+      when: not ansible_check_mode
+
+    - name: Assert expected labels are present on each worker
+      ansible.builtin.assert:
+        that:
+          - "'kubernetes.io/arch' in item.stdout"
+          - "'homelab.vingilot.internal/host' in item.stdout"
+          - "'homelab.vingilot.internal/role' in item.stdout"
+        fail_msg: "Worker {{ item.item }} is missing one of the expected labels: {{ item.stdout }}"
+      loop: "{{ node_labels.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: not ansible_check_mode
+
+    - name: Show the cluster as it stands now
+      ansible.builtin.command: k3s kubectl get nodes -o wide
+      register: cluster_nodes
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Cluster state
+      ansible.builtin.debug:
+        var: cluster_nodes.stdout_lines
+      when: not ansible_check_mode

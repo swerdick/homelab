@@ -58,3 +58,9 @@ all:
         aglarond: {}
         tirion: {}
         samwise: {}
+    # Hosts that join gondor's k3s cluster as workers via the
+    # install-k3s-agent.yaml playbook. gondor itself is the single-node
+    # server and is intentionally NOT in this group.
+    k3s_workers:
+      hosts:
+        samwise: {}

@@ -6,6 +6,12 @@ set -euo pipefail
 
 # Pin to a specific stable channel rather than `latest` so reinstalls are reproducible.
 # Check https://github.com/k3s-io/k3s/releases for current stable.
+#
+# Version lockstep: workers join from ansible/playbooks/install-k3s-agent.yaml
+# which reads ansible/host_vars/<worker>.yaml `k3s_version`. justfile's top-line
+# `k3s_version :=` overrides this fallback for `just bootstrap-gondor`. Bump all
+# three together (or land the ROADMAP "refactor install-k3s.sh to ansible" item
+# to collapse them).
 K3S_VERSION="${K3S_VERSION:-v1.34.6+k3s1}"
 
 curl -sfL https://get.k3s.io | \
