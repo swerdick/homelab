@@ -11,6 +11,14 @@
     ca_listen_address: ":443"
     acme_provisioner_name: acme
     jwk_provisioner_name: admin
+    # Default ACME provisioner cert lifetime: 90d, matching the Let's
+    # Encrypt anchor. The 24h step-ca default is workload-identity-shaped
+    # and too aggressive for host UIs (Proxmox, PBS) that sit powered-off
+    # for days — a long power-off straight past expiry forces a manual
+    # re-issue. The `admin` JWK provisioner is intentionally left at
+    # defaults; nothing currently issues against it.
+    acme_default_dur: "2160h"
+    acme_max_dur: "2160h"
 
   tasks:
     - name: Sanity-check that this is tirion
@@ -145,6 +153,78 @@
         - provisioner_list is not skipped
         - acme_provisioner_name not in (provisioner_list.stdout | default('[]') | from_json | map(attribute='name') | list)
 
+    - name: Re-list provisioners after potential add (to read current claims)
+      # Repeat of the earlier list — needed because the previous capture
+      # predates the optional "add ACME provisioner" task, so its claims
+      # block wouldn't be visible there on first init.
+      ansible.builtin.command:
+        cmd: runuser -u step -- env STEPPATH={{ steppath }} step ca provisioner list
+      register: provisioner_list_post
+      changed_when: false
+      check_mode: false
+      when: ca_config_post.stat.exists
+
+    - name: Extract current ACME provisioner record
+      ansible.builtin.set_fact:
+        acme_provisioner_current: >-
+          {{ (provisioner_list_post.stdout | default('[]') | from_json
+              | selectattr('name', 'equalto', acme_provisioner_name)
+              | list | first | default({})) }}
+      when:
+        - ca_config_post.stat.exists
+        - provisioner_list_post is not skipped
+
+    - name: Extract current ACME cert duration claims (empty string when unset)
+      # Pulled into their own facts (rather than inlined in the `when:`) so
+      # (a) the comparison logic is dead-simple string equality and
+      # (b) the debug task below can surface the exact extracted values
+      # without re-evaluating fragile nested attribute access.
+      ansible.builtin.set_fact:
+        acme_current_default_dur: "{{ (acme_provisioner_current.claims | default({})).get('defaultTLSCertDuration', '') }}"
+        acme_current_max_dur: "{{ (acme_provisioner_current.claims | default({})).get('maxTLSCertDuration', '') }}"
+      when:
+        - ca_config_post.stat.exists
+        - acme_provisioner_current is defined
+
+    - name: Compute whether ACME cert durations have drifted from desired
+      # Pulled out of the update task's `when:` because nesting a Jinja
+      # `or` inside a YAML list-of-conditions kept evaluating incorrectly.
+      # Computing the bool here in `{{ }}` and coercing via `| bool`
+      # makes the comparison straightforward and visible via the debug
+      # task below. An empty string (= the claim isn't set per-provisioner
+      # and step-ca's compiled-in 24h default is in use) counts as drift.
+      ansible.builtin.set_fact:
+        acme_durations_drifted: >-
+          {{ acme_current_default_dur not in [acme_default_dur, acme_default_dur ~ '0m0s']
+             or acme_current_max_dur not in [acme_max_dur, acme_max_dur ~ '0m0s'] }}
+      when:
+        - acme_current_default_dur is defined
+        - acme_current_max_dur is defined
+
+    - name: Show ACME provisioner cert lifetime state
+      ansible.builtin.debug:
+        msg: >-
+          acme provisioner durations — current: default={{ acme_current_default_dur | default('UNSET') }}
+          max={{ acme_current_max_dur | default('UNSET') }}
+          | desired: default={{ acme_default_dur }} max={{ acme_max_dur }}
+          | drifted={{ acme_durations_drifted | default('?') }}
+      when: acme_current_default_dur is defined
+
+    - name: Update ACME provisioner cert lifetime if drifted from desired
+      # step-ca returns durations in Go's canonical form ("2160h0m0s"); the
+      # drift fact accepts the bare form too so re-runs after this lands
+      # are clean no-ops.
+      ansible.builtin.command:
+        cmd: >-
+          runuser -u step -- env STEPPATH={{ steppath }}
+          step ca provisioner update {{ acme_provisioner_name }}
+          --x509-default-dur {{ acme_default_dur }}
+          --x509-max-dur {{ acme_max_dur }}
+      when:
+        - acme_durations_drifted is defined
+        - acme_durations_drifted | bool
+      notify: Reload step-ca
+
     - name: Install step-ca systemd unit (only if not already present)
       # `force: false` preserves any in-place tweaks made on the host.
       # If you want to re-template, delete the file on the host and re-run.
@@ -219,3 +299,21 @@
         name: step-ca
         enabled: true
         state: started
+
+  handlers:
+    - name: Reload step-ca
+      # Required, not optional: `step ca provisioner update` writes the
+      # new claims to ca.json but the running step-ca process keeps
+      # serving from its old in-memory copy until reloaded. Verified
+      # empirically — a run that updated ca.json but failed to reload
+      # still showed the old claims via `step ca provisioner list`.
+      #
+      # `reload-or-restart` rather than `reload`: the shipped unit
+      # template defines ExecReload=SIGHUP, but `force: false` on the
+      # unit-install task means a host with an older unit on disk (no
+      # ExecReload) errors on a plain reload. reload-or-restart falls
+      # back to restart in that case — step-ca restart is fast and
+      # safe for the homelab traffic profile.
+      ansible.builtin.command:
+        cmd: systemctl reload-or-restart step-ca
+      changed_when: true

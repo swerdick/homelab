@@ -1,0 +1,72 @@
+---
+- name: Configure prompt on-boot ACME cert renewal on PVE/PBS hosts
+  # earendil (PVE) and erebor (PBS) renew their ACME-issued host certs
+  # against tirion via the upstream `*-daily-update.timer` units. Both
+  # ship with a large RandomizedDelaySec and no OnBootSec, so a host
+  # that's powered off for several days and back on may not refresh
+  # until the next randomized window — long enough that, with the old
+  # 24h cert lifetime, the cert is already expired by the time the UI
+  # is reachable. The Proxmox docs explicitly call this out for custom
+  # CAs that issue short-lived certs.
+  #
+  # This play drops a systemd timer override that:
+  #   - zeros the randomized delay (so renewal fires immediately when
+  #     the timer is due)
+  #   - adds OnBootSec=2min (so renewal also fires shortly after every
+  #     boot, regardless of where the daily window falls)
+  #
+  # Pairs with the longer cert lifetime configured in
+  # install-step-ca.yaml — together, the "powered off for days" scenario
+  # stops producing TLS warnings.
+  hosts:
+    - earendil
+    - erebor
+  vars:
+    # Per-host mapping: which upstream timer renews this host's ACME cert.
+    # Adding a third PVE/PBS host means adding both an inventory entry
+    # AND an entry here — the assert below catches a missing mapping.
+    acme_renewal_timer:
+      earendil: pve-daily-update.timer
+      erebor: proxmox-backup-daily-update.timer
+
+  tasks:
+    - name: Sanity-check that this host has a timer mapping
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in acme_renewal_timer
+        fail_msg: >-
+          setup-acme-renewal.yaml has no timer mapping for
+          {{ inventory_hostname }}. Add it to `acme_renewal_timer` or
+          remove the host from the play's `hosts:` list.
+
+    - name: Ensure timer drop-in directory exists
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ acme_renewal_timer[inventory_hostname] }}.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Drop in OnBootSec + zero randomized delay
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ acme_renewal_timer[inventory_hostname] }}.d/boot-renewal.conf"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible/playbooks/setup-acme-renewal.yaml.
+          # Ensures ACME cert renewal fires promptly after long power-off
+          # rather than waiting for the next randomized daily window.
+          [Timer]
+          RandomizedDelaySec=0
+          OnBootSec=2min
+      notify: Reload systemd
+
+  handlers:
+    - name: Reload systemd
+      # daemon-reload picks up the drop-in. The next OnCalendar firing
+      # already happens; OnBootSec only matters at next boot, so no
+      # immediate-restart of the timer is needed.
+      ansible.builtin.systemd:
+        daemon_reload: true
+
