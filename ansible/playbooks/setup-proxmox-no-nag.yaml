@@ -1,0 +1,275 @@
+---
+- name: Disable the Proxmox "No valid subscription" nag dialog
+  # PVE (earendil) and PBS (erebor) both ship the same
+  # `proxmox-widget-toolkit` JS bundle, which pops a "No valid
+  # subscription" warning on every login. This homelab will never
+  # carry an enterprise subscription, so the dialog is pure noise.
+  #
+  # The patch flips the subscription-status check
+  #     res.data.status.toLowerCase() !== 'active'
+  # to the literal `false` inside `checked_command`. The surrounding
+  #     if (res === null || res === undefined || !res || false) { ... }
+  # only fires when the API genuinely failed to return a status object
+  # — which is a real error worth seeing — but never on the normal
+  # "status: notfound" path.
+  #
+  # The regex is intentionally anchored on the preceding `!res ||` so
+  # it ONLY rewrites the popup gate, not the structurally-similar
+  # `vm.set('subscriptionActive', ...)` check further down the file
+  # (whose predecessor is `!res.data ||`). That keeps the "Community"
+  # subscription badge in the UI honest — only the dialog goes away.
+  #
+  # Pairs with a `DPkg::Post-Invoke` apt hook that re-runs an idempotent
+  # patch script, so a `proxmox-widget-toolkit` upgrade can't silently
+  # restore the popup. The script is a no-op on an already-patched file
+  # and only restarts the web proxy when the JS actually changed.
+  #
+  # `ansible.builtin.replace` is naturally idempotent: a host already
+  # patched by a hand-rolled helper script (e.g. flipped to
+  # `== 'NoMoreNagging'`) shows no match and the play is a no-op on
+  # that host's JS file.
+  #
+  # PVE-only mobile UI patch: `/usr/share/pve-yew-mobile-gui/index.html.tpl`
+  # gets a MutationObserver block appended that strips subscription
+  # dialogs/cards from the mobile interface at runtime. PBS doesn't ship
+  # that template, so those tasks self-skip via `mobile_tpl.stat.exists`.
+  hosts:
+    - earendil
+    - erebor
+  vars:
+    proxmox_widget_js: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+    proxmox_mobile_tpl: /usr/share/pve-yew-mobile-gui/index.html.tpl
+    # Which web-proxy daemon serves the patched JS for each host.
+    # Adding a third PVE/PBS host means adding both an inventory entry
+    # AND an entry here — the assert below catches a missing mapping.
+    proxmox_proxy_service:
+      earendil: pveproxy
+      erebor: proxmox-backup-proxy
+
+  tasks:
+    - name: Sanity-check that this host has a proxy mapping
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in proxmox_proxy_service
+        fail_msg: >-
+          setup-proxmox-no-nag.yaml has no proxy mapping for
+          {{ inventory_hostname }}. Add it to `proxmox_proxy_service`
+          or remove the host from the play's `hosts:` list.
+
+    - name: Stat proxmox-widget-toolkit JS bundle
+      ansible.builtin.stat:
+        path: "{{ proxmox_widget_js }}"
+      register: pwt_js
+
+    - name: End play on hosts where proxmox-widget-toolkit is absent
+      # Defensive — every host in `hosts:` above is expected to have it,
+      # but skipping cleanly beats erroring if the package is ever
+      # removed during a major upgrade.
+      ansible.builtin.meta: end_host
+      when: not pwt_js.stat.exists
+
+    - name: Patch out the "No valid subscription" check
+      ansible.builtin.replace:
+        path: "{{ proxmox_widget_js }}"
+        # Anchored on the preceding `!res ||` to target only the popup
+        # gate, leaving the subscription-badge check alone (see header
+        # comment). `\s+` between `||` and `res.data` spans the newline
+        # + indentation in the multi-line `if (...)` form; `\s*` between
+        # `!res` and `||` tolerates both `!res ||` and `!res||` styles.
+        # Backreference preserves the original whitespace.
+        regexp: "(!res\\s*\\|\\|\\s+)res\\.data\\.status\\.toLowerCase\\(\\) !== 'active'"
+        replace: "\\1false"
+      notify: Restart proxmox proxy
+
+    - name: Stat PVE mobile UI template
+      # PVE-only. Skips cleanly on PBS where the package isn't installed.
+      ansible.builtin.stat:
+        path: "{{ proxmox_mobile_tpl }}"
+      register: mobile_tpl
+
+    - name: Check whether the ansible-managed mobile nag block is present
+      # Used by the strip task below to avoid chopping off our own block
+      # on a re-run — the legacy single-marker substring `MANAGED BLOCK
+      # FOR MOBILE NAG` is also a substring of the ansible BEGIN/END
+      # markers, so without this gate the regex could match itself.
+      ansible.builtin.command: grep -qF "<!-- BEGIN ANSIBLE MANAGED BLOCK FOR MOBILE NAG -->" {{ proxmox_mobile_tpl | quote }}
+      register: ansible_mobile_block_present
+      changed_when: false
+      failed_when: false
+      check_mode: false  # read-only grep — must run in --check so the strip task can gate on it
+      when: mobile_tpl.stat.exists
+
+    - name: Strip legacy single-marker mobile nag block
+      # One-time cleanup: hand-rolled helper script appended a block
+      # marked only by `<!-- MANAGED BLOCK FOR MOBILE NAG -->` running
+      # to EOF. blockinfile uses BEGIN/END markers so it can't recognize
+      # the legacy block — we remove it first, then blockinfile adds
+      # the ansible-managed equivalent. Skipped once the ansible block
+      # exists (so this task isn't destructive on re-runs).
+      ansible.builtin.replace:
+        path: "{{ proxmox_mobile_tpl }}"
+        # Start-of-line anchored so the trailing newline after `</html>`
+        # (which precedes the legacy marker) is preserved. blockinfile
+        # then appends cleanly on a fresh line.
+        regexp: '(?ms)^<!-- MANAGED BLOCK FOR MOBILE NAG -->.*\Z'
+        replace: ''
+      when:
+        - mobile_tpl.stat.exists
+        - ansible_mobile_block_present.rc != 0
+
+    - name: Patch mobile UI to strip subscription dialogs and cards
+      # Appends a MutationObserver that removes subscription dialogs +
+      # the "No valid subscription" card on the mobile dashboard.
+      # blockinfile makes the block self-managed via the BEGIN/END
+      # markers, so future edits to the block content propagate cleanly.
+      ansible.builtin.blockinfile:
+        path: "{{ proxmox_mobile_tpl }}"
+        marker: "<!-- {mark} ANSIBLE MANAGED BLOCK FOR MOBILE NAG -->"
+        block: |
+          <script>
+            function removeSubscriptionElements() {
+              // --- Remove subscription dialogs ---
+              const dialogs = document.querySelectorAll('dialog.pwt-outer-dialog');
+              dialogs.forEach(dialog => {
+                const text = (dialog.textContent || '').toLowerCase();
+                if (text.includes('subscription')) {
+                  dialog.remove();
+                  console.log('Removed subscription dialog');
+                }
+              });
+
+              // --- Remove subscription cards, but keep Reboot/Shutdown/Console ---
+              const cards = document.querySelectorAll('.pwt-card.pwt-p-2.pwt-d-flex.pwt-interactive.pwt-justify-content-center');
+              cards.forEach(card => {
+                const text = (card.textContent || '').toLowerCase();
+                const hasButton = card.querySelector('button');
+                if (!hasButton && text.includes('subscription')) {
+                  card.remove();
+                  console.log('Removed subscription card');
+                }
+              });
+            }
+
+            const observer = new MutationObserver(removeSubscriptionElements);
+            observer.observe(document.body, { childList: true, subtree: true });
+            removeSubscriptionElements();
+            setInterval(removeSubscriptionElements, 300);
+            setTimeout(() => {observer.disconnect();}, 10000);
+          </script>
+        create: false
+      when: mobile_tpl.stat.exists
+      notify: Restart proxmox proxy
+
+    - name: Install patch script for apt post-invoke
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/proxmox-no-nag-patch
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # Managed by ansible/playbooks/setup-proxmox-no-nag.yaml.
+          # Re-applies the desktop + (PVE-only) mobile no-subscription
+          # nag patches after any apt operation. Self-guarded — only
+          # restarts the web proxy when something actually changed.
+          # Keep the patch logic in sync with the equivalent ansible
+          # tasks in setup-proxmox-no-nag.yaml.
+          JS={{ proxmox_widget_js }}
+          MOBILE_TPL={{ proxmox_mobile_tpl }}
+          SERVICE={{ proxmox_proxy_service[inventory_hostname] }}
+          CHANGED=0
+
+          # Desktop: flip the popup gate's status check to `false`.
+          # Anchored on `!res ||` so the badge check elsewhere is left
+          # alone. sed `-z` treats the file as a single record so the
+          # whitespace class spans the newline between `||` and `res.data`.
+          if [ -f "$JS" ]; then
+              BEFORE=$(sha256sum "$JS" | cut -d' ' -f1)
+              sed -zi "s/\(!res[[:space:]]*||[[:space:]]\+\)res\.data\.status\.toLowerCase() !== 'active'/\1false/g" "$JS" || true
+              AFTER=$(sha256sum "$JS" | cut -d' ' -f1)
+              [ "$BEFORE" != "$AFTER" ] && CHANGED=1
+          fi
+
+          # Mobile UI (PVE only): append the subscription-stripping
+          # MutationObserver if our managed block isn't already there.
+          # No legacy-strip here — by the time this fires post-apt, the
+          # template was just reinstalled from the package and has no
+          # legacy block to strip (ansible handles that one-time cleanup).
+          if [ -f "$MOBILE_TPL" ] && ! grep -qF "<!-- BEGIN ANSIBLE MANAGED BLOCK FOR MOBILE NAG -->" "$MOBILE_TPL"; then
+              cat >> "$MOBILE_TPL" <<'EOF'
+          <!-- BEGIN ANSIBLE MANAGED BLOCK FOR MOBILE NAG -->
+          <script>
+            function removeSubscriptionElements() {
+              // --- Remove subscription dialogs ---
+              const dialogs = document.querySelectorAll('dialog.pwt-outer-dialog');
+              dialogs.forEach(dialog => {
+                const text = (dialog.textContent || '').toLowerCase();
+                if (text.includes('subscription')) {
+                  dialog.remove();
+                  console.log('Removed subscription dialog');
+                }
+              });
+
+              // --- Remove subscription cards, but keep Reboot/Shutdown/Console ---
+              const cards = document.querySelectorAll('.pwt-card.pwt-p-2.pwt-d-flex.pwt-interactive.pwt-justify-content-center');
+              cards.forEach(card => {
+                const text = (card.textContent || '').toLowerCase();
+                const hasButton = card.querySelector('button');
+                if (!hasButton && text.includes('subscription')) {
+                  card.remove();
+                  console.log('Removed subscription card');
+                }
+              });
+            }
+
+            const observer = new MutationObserver(removeSubscriptionElements);
+            observer.observe(document.body, { childList: true, subtree: true });
+            removeSubscriptionElements();
+            setInterval(removeSubscriptionElements, 300);
+            setTimeout(() => {observer.disconnect();}, 10000);
+          </script>
+          <!-- END ANSIBLE MANAGED BLOCK FOR MOBILE NAG -->
+          EOF
+              CHANGED=1
+          fi
+
+          if [ "$CHANGED" -eq 1 ]; then
+              systemctl try-restart "$SERVICE" 2>/dev/null || true
+          fi
+          exit 0
+
+    - name: Install apt DPkg::Post-Invoke hook
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/99-proxmox-no-nag
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          // Managed by ansible/playbooks/setup-proxmox-no-nag.yaml.
+          // Re-applies the no-subscription nag patch after apt operations
+          // so a `proxmox-widget-toolkit` upgrade can't quietly restore
+          // the popup. The script self-guards on a content diff and a
+          // marker check, so firing on every apt invocation is harmless.
+          DPkg::Post-Invoke { "/usr/local/sbin/proxmox-no-nag-patch || true"; };
+
+    - name: Remove pre-ansible legacy nag-patch helpers
+      # One-time cleanup of the hand-rolled helpers this playbook
+      # subsumes — the legacy script's desktop patch is duplicated by
+      # the ansible regex above, and its mobile patch is now managed
+      # by the blockinfile task. Skipped silently on hosts that never
+      # had them (e.g. erebor).
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/apt/apt.conf.d/no-nag-script
+        - /usr/local/bin/pve-remove-nag.sh
+
+  handlers:
+    - name: Restart proxmox proxy
+      # Reload would technically suffice (the proxies sendfile() the JS
+      # fresh per request), but restart is the well-trodden path and
+      # avoids surprises if either daemon ever starts caching.
+      ansible.builtin.systemd:
+        name: "{{ proxmox_proxy_service[inventory_hostname] }}"
+        state: restarted
