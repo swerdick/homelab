@@ -1,0 +1,192 @@
+---
+# Provision the PVE user/role/ACL that the Terraform `bpg/proxmox` provider
+# uses to manage LXCs and VMs on earendil. Idempotent on user, role, and ACL.
+#
+# The API token itself is NOT created by this play. `pveum user token add`
+# returns the secret exactly once and the playbook cannot safely persist it
+# without leaking it through ansible's log/stdout pipeline. Instead, on hosts
+# where the token is missing, the play prints the exact `pveum` command for
+# the operator to run by hand, capture the secret, and write into SOPS.
+# Subsequent runs detect the token exists and skip the prompt.
+#
+# Role + privilege list is lifted verbatim from the bpg provider's published
+# example (terraform-provider-proxmox docs/index.md, v0.106.0). bpg themselves
+# caveat the list as "likely too permissive for most use cases" — fine for
+# Phase 1 (we want enough headroom to import everything without permission
+# whack-a-mole); revisit and tighten once the resource graph is settled.
+
+- name: Provision Terraform PVE user, role, and ACL
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    tf_user: terraform@pve
+    tf_role_name: Terraform
+    tf_token_id: provider
+    tf_acl_path: /
+    # Privilege list from bpg/terraform-provider-proxmox docs/index.md (v0.106.0).
+    # Kept as a YAML list for readability + diff-friendliness; joined with
+    # commas when fed to `pveum`. Sorted alphabetically so the drift check
+    # below has a stable comparison basis.
+    tf_role_privs:
+      - Datastore.Allocate
+      - Datastore.AllocateSpace
+      - Datastore.AllocateTemplate
+      - Datastore.Audit
+      - Group.Allocate
+      - Mapping.Audit
+      - Mapping.Modify
+      - Mapping.Use
+      - Permissions.Modify
+      - Pool.Allocate
+      - Pool.Audit
+      - Realm.Allocate
+      - Realm.AllocateUser
+      - SDN.Allocate
+      - SDN.Audit
+      - SDN.Use
+      - Sys.AccessNetwork
+      - Sys.Audit
+      - Sys.Console
+      - Sys.Incoming
+      - Sys.Modify
+      - Sys.PowerMgmt
+      - Sys.Syslog
+      - User.Modify
+      - VM.Allocate
+      - VM.Audit
+      - VM.Backup
+      - VM.Clone
+      - VM.Config.CDROM
+      - VM.Config.CPU
+      - VM.Config.Cloudinit
+      - VM.Config.Disk
+      - VM.Config.HWType
+      - VM.Config.Memory
+      - VM.Config.Network
+      - VM.Config.Options
+      - VM.Console
+      - VM.GuestAgent.Audit
+      - VM.GuestAgent.FileRead
+      - VM.GuestAgent.FileSystemMgmt
+      - VM.GuestAgent.FileWrite
+      - VM.GuestAgent.Unrestricted
+      - VM.Migrate
+      - VM.PowerMgmt
+      - VM.Replicate
+      - VM.Snapshot
+      - VM.Snapshot.Rollback
+
+  tasks:
+    - name: List PVE roles
+      ansible.builtin.command: pveum role list --output-format=json
+      register: pve_roles_raw
+      changed_when: false
+      check_mode: false  # read-only; must run in --check so downstream gates work
+
+    - name: Compute current role state
+      ansible.builtin.set_fact:
+        tf_role_exists: "{{ (pve_roles_raw.stdout | from_json) | selectattr('roleid', 'equalto', tf_role_name) | list | length > 0 }}"
+        tf_role_current_privs: >-
+          {{
+            ((pve_roles_raw.stdout | from_json)
+              | selectattr('roleid', 'equalto', tf_role_name)
+              | map(attribute='privs')
+              | first
+              | default(''))
+            .split(',') | reject('equalto', '') | list | sort
+          }}
+
+    - name: Create Terraform role
+      ansible.builtin.command: "pveum role add {{ tf_role_name }} -privs {{ tf_role_privs | join(',') | quote }}"
+      when: not tf_role_exists
+
+    - name: Update Terraform role privileges (drift)
+      # `role modify` replaces the priv set wholesale, so drift in either
+      # direction (privs added or removed in PVE) converges back to the
+      # canonical list above. Sorted-list comparison ignores PVE's
+      # internal ordering.
+      ansible.builtin.command: "pveum role modify {{ tf_role_name }} -privs {{ tf_role_privs | join(',') | quote }}"
+      when:
+        - tf_role_exists
+        - tf_role_current_privs != (tf_role_privs | sort)
+
+    - name: List PVE users
+      ansible.builtin.command: pveum user list --output-format=json
+      register: pve_users_raw
+      changed_when: false
+      check_mode: false
+
+    - name: Create terraform@pve user
+      ansible.builtin.command: "pveum user add {{ tf_user }} --comment 'Terraform bpg/proxmox provider (managed by ansible)'"
+      when: tf_user not in (pve_users_raw.stdout | from_json | map(attribute='userid') | list)
+
+    - name: List PVE ACLs
+      ansible.builtin.command: pveum acl list --output-format=json
+      register: pve_acls_raw
+      changed_when: false
+      check_mode: false
+
+    - name: Bind Terraform role to terraform@pve on / (if missing)
+      # bpg's docs scope the ACL to `/` for simplicity. Tighter scopes
+      # (e.g. /vms, /storage/local-zfs) are possible but require knowing
+      # the full resource graph up front — defer that tightening until
+      # after Phase 1 imports complete.
+      ansible.builtin.command: "pveum aclmod {{ tf_acl_path }} -user {{ tf_user }} -role {{ tf_role_name }}"
+      when: >-
+        (pve_acls_raw.stdout | from_json
+          | selectattr('type', 'equalto', 'user')
+          | selectattr('ugid', 'equalto', tf_user)
+          | selectattr('roleid', 'equalto', tf_role_name)
+          | selectattr('path', 'equalto', tf_acl_path)
+          | list | length) == 0
+
+    - name: List API tokens for terraform@pve
+      # `failed_when: false` because on a fresh run (or in --check mode when
+      # user creation hasn't actually applied), the user may not exist yet
+      # and pveum exits non-zero with "no such user". The set_fact below
+      # gates on rc so a missing user is treated as "no token exists."
+      ansible.builtin.command: "pveum user token list {{ tf_user }} --output-format=json"
+      register: pve_tokens_raw
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Determine whether the provider token already exists
+      ansible.builtin.set_fact:
+        tf_token_exists: >-
+          {{
+            pve_tokens_raw.rc == 0 and
+            (tf_token_id in (pve_tokens_raw.stdout | from_json | map(attribute='tokenid') | list))
+          }}
+
+    - name: Print one-time token creation instructions
+      # The token secret is revealed exactly once by `pveum`. Letting
+      # ansible execute the command would leak the secret through the
+      # play's stdout / log pipeline. Print instructions instead so the
+      # operator runs it interactively and captures the secret directly
+      # into SOPS. This task is a debug print only — it does not fail
+      # or skip downstream work, and disappears on re-runs once the
+      # token exists.
+      ansible.builtin.debug:
+        msg: |
+          ─────────────────────────────────────────────────────────────────
+          Token '{{ tf_token_id }}' for {{ tf_user }} does not exist yet.
+
+          Run this on earendil as root (interactively — do NOT paste into
+          ansible or any log-capturing wrapper):
+
+              pveum user token add {{ tf_user }} {{ tf_token_id }} --privsep=0
+
+          The output shows the secret value EXACTLY ONCE. Capture the
+          full token string in the form:
+
+              {{ tf_user }}!{{ tf_token_id }}=<secret-uuid>
+
+          Then add it to the SOPS-encrypted secrets file (e.g.
+          ansible/group_vars/all/secrets.sops.yaml) under a key like
+          `pve_api_token`. Re-runs of this play will detect the token
+          and skip this notice.
+          ─────────────────────────────────────────────────────────────────
+      when: not tf_token_exists

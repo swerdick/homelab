@@ -286,6 +286,25 @@ dump-pve-configs:
     echo "✓ Snapshotted PVE configs to earendil/pve-configs/"
     echo "Review changes: git diff earendil/pve-configs/"
 
+# --- OpenTofu / Terraform ---
+
+# Wrapper that decrypts the PVE API token from SOPS, exports it as
+# PROXMOX_VE_API_TOKEN (bpg provider's native env var), and invokes
+# `tofu` from the terraform/ subdir so backend.hcl + .tf files resolve.
+#
+#   just tf plan
+#   just tf apply
+#   just tf import proxmox_virtual_environment_container.aglarond earendil/131
+#
+# Token export is per-process — secret never lands in the parent shell env.
+tf +args:
+    @cd terraform && PROXMOX_VE_API_TOKEN=$(sops --decrypt ../ansible/group_vars/all/secrets.sops.yaml | awk -F': ' '/^pve_api_token:/ {gsub(/^"|"$/, "", $2); print $2}') tofu {{args}}
+
+# One-shot init with the partial backend config. Re-run with -reconfigure
+# if backend.hcl ever changes.
+tf-init:
+    cd terraform && tofu init -backend-config=backend.hcl
+
 # --- Grafana ---
 
 # Export every Grafana dashboard tagged 'homelab' to grafana-dashboards/.

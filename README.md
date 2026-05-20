@@ -36,22 +36,18 @@ ansible-playbook playbooks/<playbook>.yaml --check --diff
 
 Inventory groups (`alloy`, `debian_guests`, `root_hosts`, `sudo_hosts`, etc.) are defined in [`ansible/inventory.yaml`](ansible/inventory.yaml). Some playbooks have `just` recipe wrappers (`just setup-unattended-upgrades`, `just setup-step-ca`) where it adds value; see `just --list`.
 
-## Where's the Terraform?
+## Terraform (OpenTofu)
 
-Deliberately not used. The choice between *managing-Proxmox-from-code* and *clicking through the UI* is a real one, and this repo currently chooses the UI:
+The Proxmox-level topology — LXC/VM definitions, bind mounts, network — is managed under [`terraform/`](terraform/) using OpenTofu + the `bpg/proxmox` provider. Phase 1 covers the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`); VMs and the cloudinit template land in a later phase.
 
-- **Proxmox UI** for guest topology — creating/destroying LXCs and VMs, assigning hardware, networking, storage. Day-to-day changes happen there.
-- **Ansible** ([`ansible/`](ansible/)) for in-guest configuration — package installs, service config, TLS trust, log shipping.
-- **Flux** ([`gondor/`](gondor/)) for everything inside the k3s cluster.
-- **Snapshots** of PVE guest config files (committed under [`earendil/pve-configs/`](earendil/pve-configs/), produced by `just dump-pve-configs`) as a documentation + audit trail. Re-run after a UI change to capture it.
+```sh
+just tf plan      # preview against live PVE
+just tf apply
+```
 
-The case for Terraform is real (drift detection, reproducibility, hardware-as-code), but the cost at this scale is also real:
+`just tf` decrypts the PVE API token from SOPS per-invocation and runs `tofu` inside `terraform/`. State lives in the `vingilot-homelab-tfstate` S3 bucket (hardened — see `terraform/README.md`). The fresh-rebuild flow is `terraform apply` → `ansible-playbook ...` → data restore from PBS/restic.
 
-- A single-host fleet of ~8 guests is below the scale where Terraform's fleet-management value really pays off.
-- Terraform conflicts with continuing to use the UI: every UI change creates state drift, and you have to either commit to "no more UI" or accept that your `.tf` lags reality.
-- The Proxmox provider ecosystem is OK but historically rocky. `bpg/proxmox` is the actively-maintained one to use if/when the migration happens.
-
-Revisit when: a second PVE host gets added (where fleet-management value compounds), or when UI clicks become a real pain point.
+The PVE config snapshots under [`earendil/pve-configs/`](earendil/pve-configs/) remain as a documentation + audit reference for the resources TF now owns; revisit them after a full DR drill.
 
 ## See also
 
