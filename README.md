@@ -38,7 +38,7 @@ Inventory groups (`alloy`, `debian_guests`, `root_hosts`, `sudo_hosts`, etc.) ar
 
 ## Terraform (OpenTofu)
 
-The Proxmox-level topology — LXC/VM definitions, bind mounts, network — is managed under [`terraform/`](terraform/) using OpenTofu + the `bpg/proxmox` provider. Phase 1 covers the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`); VMs and the cloudinit template land in a later phase.
+The Proxmox-level topology — LXC/VM definitions, bind mounts, network — is managed under [`terraform/`](terraform/) using OpenTofu + the `bpg/proxmox` provider. Currently covers the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`) and the `gondor` k3s VM. `anduril` is queued for a follow-up that depends on a host-side ansible playbook for GPU passthrough prereqs.
 
 ```sh
 just tf plan      # preview against live PVE

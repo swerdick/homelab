@@ -2,7 +2,7 @@
 
 Manages the Proxmox-level topology — LXC and VM definitions — on `earendil`. Pairs with `ansible/` for in-guest config and `gondor/` for cluster workloads.
 
-Currently in scope (Phase 1): the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`). Deferred to later phases: `gondor`/`anduril` VMs, the Debian cloudinit template, and datacenter-level config (backup jobs, storage registration).
+Currently in scope: the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`) and the `gondor` k3s VM. Deferred: `anduril` (queued behind a host-side ansible playbook codifying GPU/USB passthrough prereqs) and datacenter-level config (backup jobs, storage registration). The Debian cloudinit template (VM 9000) was discarded — gondor's DR path is PBS restore, and new Debian VMs are unlikely given the k3s/Flux trend.
 
 ## Day-to-day
 
