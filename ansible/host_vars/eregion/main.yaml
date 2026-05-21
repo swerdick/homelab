@@ -1,0 +1,50 @@
+---
+# PaperMC server pinning (v3 / Paper-native versioning).
+# Bump these to upgrade; re-run install-paper-mc.yaml; the handler restarts
+# the service via mcrcon (clean save+stop). See runbooks/paper-upgrade.md.
+#
+# Browse versions: https://fill.papermc.io/v3/projects/paper
+# Build metadata:  https://fill.papermc.io/v3/projects/paper/versions/<ver>/builds/<build>
+#
+# Note: Paper's v3 API uses Paper-native versioning (26.1.x) decoupled from
+# the Minecraft version string. The MC-version-based 1.21.x track on the
+# legacy v2 API still exists but is on a slower release cadence; v3 is
+# the canonical track going forward.
+paper_version: "26.1.2"
+paper_build: 64
+
+# JVM heap. Set Xms == Xmx (Aikar's recommendation: eliminates heap-resize
+# pauses that read as TPS drops to players). Sized to ~75% of LXC RAM,
+# leaving ~1 GiB for OS + JVM non-heap (metaspace, code cache, direct
+# buffers).
+paper_heap: "3G"
+
+# Recommended JVM flags. Matches what `fill.papermc.io/v3/projects/paper/
+# versions/<ver>` publishes under `version.java.flags.recommended` — these
+# are Aikar's G1GC flags, originally collected at docs.papermc.io and now
+# maintained as part of Paper's per-version metadata. The trailing
+# `-Daikars.*` markers are for monitoring tools that detect the tuning;
+# they're not in the API's list but are harmless and aid identification.
+paper_flags: >-
+  -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200
+  -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch
+  -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M
+  -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4
+  -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90
+  -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32
+  -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1
+  -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true
+
+# RCON port for `mcrcon` from thorondor. Paper always listens on 0.0.0.0
+# (vanilla MC's `rcon.bind` is silently ignored); LAN-only positioning +
+# the strong password in secrets.sops.yaml handles the threat model.
+paper_rcon_port: 25575
+
+# server.properties overrides — Paper auto-generates everything else.
+paper_motd: "Vingilot Minecraft - eregion"
+paper_max_players: 10
+paper_view_distance: 10
+paper_difficulty: "normal"
+
+# paper_rcon_password lives in host_vars/eregion/secrets.sops.yaml
+# (SOPS-encrypted; community.sops.sops vars plugin auto-decrypts at runtime).

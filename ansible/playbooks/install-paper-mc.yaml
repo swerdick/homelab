@@ -2,8 +2,9 @@
 # Install + manage a PaperMC server on eregion. Modelled on install-step-ca.yaml.
 #
 # - Idempotent: a re-run with no host_vars changes should report changed=0.
-# - Bumping `paper_mc_version` or `paper_build` in host_vars/eregion.yaml
-#   downloads the new JAR, repoints the /opt/minecraft/paper.jar symlink, and
+# - Bumping `paper_version` or `paper_build` in host_vars/eregion/main.yaml
+#   refetches build metadata from Paper's v3 API, downloads the new JAR
+#   (SHA256-verified against the API response), repoints the symlink, and
 #   restarts the service via handler. See runbooks/paper-upgrade.md.
 # - server.properties is managed key-by-key with community.general.ini_file
 #   so Paper can keep its own auto-generated defaults for everything we
@@ -19,10 +20,11 @@
     paper_home: /opt/minecraft
     paper_user: minecraft
     paper_group: minecraft
-    paper_jar_filename: "paper-{{ paper_mc_version }}-{{ paper_build }}.jar"
-    paper_jar_path: "{{ paper_home }}/{{ paper_jar_filename }}"
     paper_jar_symlink: "{{ paper_home }}/paper.jar"
-    paper_jar_url: "https://api.papermc.io/v2/projects/paper/versions/{{ paper_mc_version }}/builds/{{ paper_build }}/downloads/{{ paper_jar_filename }}"
+    # Paper's v3 build-metadata endpoint. Returns the JAR's content-addressed
+    # download URL + SHA256 — we use both, so a JAR substitution upstream
+    # would be caught on download.
+    paper_v3_build_url: "https://fill.papermc.io/v3/projects/paper/versions/{{ paper_version }}/builds/{{ paper_build }}"
 
     mcrcon_version: "0.7.2"
     mcrcon_zip_url: "https://github.com/Tiiffi/mcrcon/releases/download/v{{ mcrcon_version }}/mcrcon-{{ mcrcon_version }}-linux-x86-64-static.zip"
@@ -38,16 +40,23 @@
           install-paper-mc playbook is eregion-only; refusing to run against
           {{ inventory_hostname }} (live hostname {{ ansible_facts.hostname }}).
 
-    - name: Install Java 21 and helpers
+    - name: Install Java 25 and helpers
+      # Paper 26.x requires JRE 25+. Trixie main has openjdk-25-jre-headless.
       ansible.builtin.apt:
         name:
-          - openjdk-21-jre-headless
+          - openjdk-25-jre-headless
           - curl
           - jq
           - unzip
         state: present
         update_cache: true
         cache_valid_time: 3600
+
+    - name: Remove old Java 21 if Java 25 is installed (cleanup)
+      ansible.builtin.apt:
+        name: openjdk-21-jre-headless
+        state: absent
+        purge: true
 
     - name: Create '{{ paper_user }}' system user
       ansible.builtin.user:
@@ -65,15 +74,38 @@
         group: "{{ paper_group }}"
         mode: "0750"
 
-    - name: Download Paper JAR (idempotent — filename encodes version+build)
+    # --- Paper JAR fetch via v3 API --------------------------------------
+
+    - name: Fetch Paper v3 build metadata (URL + SHA256)
+      # Two-step download: API returns a content-addressed URL at
+      # fill-data.papermc.io plus the SHA256, both of which we then pass to
+      # get_url. Cheaper than baking the SHA into host_vars by hand on every
+      # bump and gives us automatic tamper detection. check_mode: false so
+      # this read-only API call runs during --check previews too.
+      ansible.builtin.uri:
+        url: "{{ paper_v3_build_url }}"
+        return_content: true
+      register: paper_v3_build
+      check_mode: false
+
+    - name: Set Paper JAR facts from v3 metadata
+      ansible.builtin.set_fact:
+        paper_jar_filename: "{{ paper_v3_build.json.downloads['server:default'].name }}"
+        paper_jar_url: "{{ paper_v3_build.json.downloads['server:default'].url }}"
+        paper_jar_sha256: "{{ paper_v3_build.json.downloads['server:default'].checksums.sha256 }}"
+
+    - name: Download Paper JAR (SHA256-verified)
+      # `force: false` + the version+build-encoding filename keeps this
+      # idempotent: same paper_version/paper_build → same filename → no-op
+      # after first download.
       ansible.builtin.get_url:
         url: "{{ paper_jar_url }}"
-        dest: "{{ paper_jar_path }}"
+        dest: "{{ paper_home }}/{{ paper_jar_filename }}"
+        checksum: "sha256:{{ paper_jar_sha256 }}"
         owner: "{{ paper_user }}"
         group: "{{ paper_group }}"
         mode: "0644"
         force: false
-      register: paper_jar_download
 
     - name: Point /opt/minecraft/paper.jar at the active JAR
       ansible.builtin.file:
@@ -206,7 +238,7 @@
           User={{ paper_user }}
           Group={{ paper_group }}
           WorkingDirectory={{ paper_home }}
-          ExecStart=/usr/bin/java -Xms{{ paper_heap }} -Xmx{{ paper_heap }} {{ paper_aikar_flags }} -jar {{ paper_jar_symlink }} --nogui
+          ExecStart=/usr/bin/java -Xms{{ paper_heap }} -Xmx{{ paper_heap }} {{ paper_flags }} -jar {{ paper_jar_symlink }} --nogui
           # Clean shutdown: RCON `stop` triggers save-all + orderly exit
           # rather than a SIGTERM mid-tick. The `-` prefix tells systemd to
           # ignore mcrcon failures — if Paper is still booting (RCON not up

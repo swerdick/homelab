@@ -2,57 +2,64 @@
 
 When and how to upgrade the PaperMC server on eregion without corrupting the world or losing player data.
 
-PaperMC ships frequent builds — sometimes weekly — for the same Minecraft version, and occasional Minecraft version bumps that may migrate the world format. The two cases need different procedures.
+PaperMC versions on the **v3 / Paper-native track** (e.g. `26.1.x`) ship frequent builds and occasionally cross MC-protocol boundaries. The two cases below cover both.
+
+> **Run ansible-playbook from `ansible/` (not the repo root).** `ansible.cfg` only loads from the working directory; running from elsewhere silently bypasses the `community.sops.sops` vars plugin, which would write encrypted SOPS blobs into Paper's `server.properties` (and break RCON). All commands below assume `cd ansible/` first.
 
 ## Where state lives
 
 - **World data**: `/opt/minecraft/world/`, `/opt/minecraft/world_nether/`, `/opt/minecraft/world_the_end/` on eregion (local-zfs rootfs). Backed up via PBS `guests-to-pbs` job.
-- **Active JAR**: `/opt/minecraft/paper.jar` is a symlink. The real file is `/opt/minecraft/paper-<mc_version>-<build>.jar`. Old JARs stay on disk after upgrades; clean them up manually if `/opt/minecraft` ever needs reclaiming.
-- **Version pinning**: `ansible/host_vars/eregion.yaml` — `paper_mc_version` + `paper_build`.
+- **Active JAR**: `/opt/minecraft/paper.jar` is a symlink. The real file is `/opt/minecraft/paper-<version>-<build>.jar`. Old JARs stay on disk after upgrades; clean them up manually if `/opt/minecraft` ever needs reclaiming.
+- **Version pinning**: `ansible/host_vars/eregion/main.yaml` — `paper_version` + `paper_build`.
+- **RCON password**: `ansible/host_vars/eregion/secrets.sops.yaml` — SOPS-encrypted. Edit with `sops <path>`.
 
-## Case A: Minor build bump (same Minecraft version)
+## Case A: Minor build bump (same Paper version line)
 
-Example: `1.21.11` build 69 → build 75. Same MC version, security/perf patches only. Safe and routine.
+Example: `26.1.2` build 64 → build 75. Same version line, security/perf patches only. Safe and routine.
 
-1. Check the latest build for the current MC version:
+1. Check the latest build for the current version line:
    ```sh
-   curl -s "https://api.papermc.io/v2/projects/paper/versions/$(grep '^paper_mc_version:' ansible/host_vars/eregion.yaml | awk '{print $2}' | tr -d '"')" | jq '.builds[-5:]'
+   curl -s "https://fill.papermc.io/v3/projects/paper/versions/$(grep '^paper_version:' ansible/host_vars/eregion/main.yaml | awk '{print $2}' | tr -d '"')" \
+     | jq '.builds[-5:]'
    ```
    Confirm the channel is `STABLE`:
    ```sh
-   curl -s "https://api.papermc.io/v2/projects/paper/versions/<ver>/builds/<build>" | jq '.channel'
+   curl -s "https://fill.papermc.io/v3/projects/paper/versions/<ver>/builds/<build>" | jq '.channel'
    ```
-2. Bump `paper_build` in `ansible/host_vars/eregion.yaml`. Commit.
+2. Bump `paper_build` in `ansible/host_vars/eregion/main.yaml`. Commit.
 3. (Optional, but cheap) Trigger an out-of-band PBS backup of eregion: PVE UI → Datacenter → Backup → `guests-to-pbs` job → Run now.
 4. Preview:
    ```sh
-   ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-paper-mc.yaml --check --diff
+   cd ansible/
+   ansible-playbook playbooks/install-paper-mc.yaml --check --diff
    ```
-   Should show: the new JAR fetched, the symlink repointed. No other tasks change.
+   Should show: the new JAR fetched (SHA256-verified against the v3 API response), the symlink repointed. No other tasks change.
 5. Real run:
    ```sh
-   ansible-playbook -i ansible/inventory.yaml ansible/playbooks/install-paper-mc.yaml
+   ansible-playbook playbooks/install-paper-mc.yaml
    ```
    The handler runs `systemctl restart paper-server`. `ExecStop` calls `mcrcon stop` first → clean save → minimal corruption risk.
 6. Smoke test: connect from the Minecraft client to `eregion.vingilot.internal:25565`, look around spawn for 30 seconds, run a couple of commands.
 
 If something goes wrong: pin `paper_build` back to the previous value, re-run, restart. The old JAR is still on disk so the rollback doesn't need to re-download.
 
-## Case B: Major Minecraft version bump (world format may migrate)
+## Case B: Major version-line bump (world format / Java may change)
 
-Examples: `1.21.4` → `1.21.5` (point release that may touch world format), `1.21` → `1.22` (definitely touches world format). World migrations are one-way without a backup restore.
+Examples: `26.1.x` → `26.2.x`, or jumping across Paper's MC-protocol boundary (e.g. when 1.22 lands). World migrations are one-way without a backup restore.
 
-1. **Read the upstream changelog**: https://www.minecraft.net/en-us/article/ — look specifically for:
+1. **Read Paper's release notes**: https://papermc.io/downloads/paper and https://github.com/PaperMC/Paper/releases — look specifically for:
    - World format / chunk format changes
-   - Removed or renamed blocks/items (your existing world may contain them)
+   - Java version requirements (Paper 26.1.x requires Java 25; future lines may bump again)
+   - Removed or renamed blocks/items
    - Command syntax changes
-   - Default gamerule changes
-2. **Check plugin compatibility** for anything in `/opt/minecraft/plugins/`. Each plugin's release notes/page should declare which MC versions it supports. Major MC bumps frequently break plugins until the maintainer updates. *Do not proceed* if a plugin you rely on hasn't been updated for the target version yet — drop the plugin, wait for an update, or stay on the current MC version.
-3. **Mandatory PBS backup** before the bump. World format migrations are not reversible without restoring this snapshot. PVE UI → Datacenter → Backup → `guests-to-pbs` → Run now → wait for it to complete.
-4. Bump *both* `paper_mc_version` and `paper_build` in `ansible/host_vars/eregion.yaml`. Commit.
-5. Preview with `--check --diff`. The diff should show only the JAR download + symlink + restart.
-6. Real run.
-7. **Watch the first boot closely**:
+2. **Cross-check Minecraft client compatibility**. Paper's v3 version IDs (e.g. `26.1.2`) don't trivially map to the Mojang Minecraft client versions. Connect from a current client first or check Paper's changelog for the MC protocol version range the release supports.
+3. **Check plugin compatibility** for anything in `/opt/minecraft/plugins/`. *Do not proceed* if a plugin you rely on hasn't been updated for the target Paper version yet.
+4. **Mandatory PBS backup** before the bump. World format migrations are not reversible without restoring this snapshot. PVE UI → Datacenter → Backup → `guests-to-pbs` → Run now → wait for it to complete.
+5. **Bump Java in the playbook if required.** Paper publishes `java.version.minimum` per release at `fill.papermc.io/v3/projects/paper/versions/<ver>`. If it's higher than what `install-paper-mc.yaml` installs (currently `openjdk-25-jre-headless`), update the apt package list + the "Remove old Java" cleanup task before bumping `paper_version`.
+6. Bump *both* `paper_version` and `paper_build` in `ansible/host_vars/eregion/main.yaml`. Commit.
+7. Preview with `--check --diff` from `cd ansible/`. The diff should show JAR download + symlink + restart (+ Java package change, if applicable).
+8. Real run.
+9. **Watch the first boot closely**:
    ```sh
    ssh eregion -- 'sudo journalctl -u paper-server -f'
    ```
@@ -60,7 +67,7 @@ Examples: `1.21.4` → `1.21.5` (point release that may touch world format), `1.
    - `Done (Xs)! For help, type "help"` — normal startup, world OK.
    - `WARN` / `ERROR` lines about chunk format, unknown blocks, or migration failures — investigate before letting players on.
    - Long pauses (> 60s) at "Preparing spawn area" — Paper may be eagerly converting spawn chunks; usually fine, just slow on first boot.
-8. Smoke test from the client: connect, walk into chunks you haven't visited recently to trigger lazy migration, verify they load cleanly.
+10. Smoke test from the client: connect, walk into chunks you haven't visited recently to trigger lazy migration, verify they load cleanly.
 
 ### If the world breaks
 
@@ -68,7 +75,7 @@ Restore-not-debug, per `project_anduril_recovery_pattern.md`'s principle:
 
 1. `systemctl stop paper-server` on eregion (or via `mcrcon stop`).
 2. From PVE UI → eregion → Backup → select the pre-bump snapshot → Restore. This rolls the entire LXC back, including the world data.
-3. Pin `paper_mc_version` and `paper_build` back to the previous values in `host_vars/eregion.yaml`. Commit.
+3. Pin `paper_version` and `paper_build` back to the previous values in `host_vars/eregion/main.yaml`. Commit.
 4. `qm start 142` (or PVE UI → Start). The previous Paper version comes back up with the restored world.
 5. File an issue against yourself: which plugin/feature blocked the bump, what to wait for before retrying.
 
