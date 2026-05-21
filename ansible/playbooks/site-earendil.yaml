@@ -1,0 +1,41 @@
+---
+# Entry point for configuring earendil (the Proxmox VE host) end-to-end.
+# Mirrors site-anduril.yaml's role for the gaming guest.
+#
+# Imports the three earendil-specific playbooks in dependency order:
+#
+#   1. pin-proxmox-kernel.yaml — pins the host kernel to a known-good
+#      version. Runs first so the vfio config below lands on the kernel
+#      we mean to keep.
+#   2. setup-vfio-passthrough.yaml — IOMMU cmdline, vfio modules,
+#      NVIDIA blacklist, vfio-pci ID binding. Anduril's GPU passthrough
+#      depends on this; pin must already be in place so we don't
+#      configure for one kernel and reboot into another.
+#   3. setup-terraform-pve-access.yaml — provisions the Terraform PVE
+#      user/role/ACL. Orthogonal to the other two; placed last because
+#      its operator-driven token step is a natural end of session.
+#
+# Plays NOT imported here, and why:
+#
+#   - setup-proxmox-no-nag.yaml — targets earendil + erebor together
+#     (both serve the same proxmox-widget-toolkit JS). Cross-host
+#     concern, runs standalone.
+#   - install-alloy.yaml, install-smartctl-exporter.yaml,
+#     install-unattended-upgrades.yaml — group-wide (`alloy`,
+#     `physical_hosts`, `debian_guests`); earendil is in scope as a
+#     member, but the plays aren't earendil-specific.
+#   - distribute-root-ca.yaml — fleet-wide, with intentional skips
+#     (nfs, smb). Stays standalone.
+#
+# Usage:
+#   ansible-playbook playbooks/site-earendil.yaml --check --diff
+#   ansible-playbook playbooks/site-earendil.yaml
+#
+# All imported playbooks target `proxmox_hosts` (= earendil today).
+# Idempotent — safe to re-run. setup-vfio-passthrough may print a
+# reboot reminder; rebooting earendil drops every guest, so timing
+# is a deliberate operator decision.
+
+- import_playbook: pin-proxmox-kernel.yaml
+- import_playbook: setup-vfio-passthrough.yaml
+- import_playbook: setup-terraform-pve-access.yaml

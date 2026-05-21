@@ -1,0 +1,181 @@
+---
+# Codifies the host-side prerequisites for full-GPU passthrough on the
+# Proxmox host. Previously these only lived in operator notes (per
+# anduril's CT 117 description). Failing to apply any of them means the
+# host's nvidia/nouveau drivers grab the GPU at boot before vfio-pci can
+# bind it, and the VM hangs on `RmInitAdapter failed!` when it tries to
+# start.
+#
+# Four things need to be true on the host:
+#   1. IOMMU enabled in the kernel cmdline (intel_iommu=on iommu=pt)
+#   2. vfio modules loaded at boot (/etc/modules)
+#   3. nouveau + nvidia* blacklisted at modprobe time
+#   4. vfio-pci configured to claim the specific PCI IDs (vfio.conf)
+#
+# Changes here require:
+#   - update-initramfs -u -k all  (so the modprobe.d + /etc/modules
+#     changes land in the initrd that's loaded before userspace)
+#   - proxmox-boot-tool refresh   (PVE uses systemd-boot — this syncs
+#     the new kernel + initrd + cmdline to every ESP)
+# Both run as handlers, deduped per playbook invocation.
+#
+# This playbook does NOT reboot earendil. Rebooting drops every guest;
+# that's a deliberate human decision. Final task prints a reminder.
+#
+# Companion to pin-proxmox-kernel.yaml: that one pins WHICH kernel runs,
+# this one configures HOW that kernel handles the GPU. Both are anduril
+# DR prerequisites and live in site-earendil.yaml.
+
+- name: Configure vfio passthrough on the Proxmox host
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    # Kernel params required for IOMMU. Intel-specific today; for an AMD
+    # host swap intel_iommu for amd_iommu. Token-merged into the existing
+    # cmdline so ZFS-root and other params are preserved.
+    vfio_kernel_params:
+      - intel_iommu=on
+      - iommu=pt
+
+    # vfio-pci binds these PCI device IDs at module load. Default is the
+    # GTX 970 (10de:13c2) and its HDMI audio function (10de:0fbb) — the
+    # GPU currently passed through to anduril. Override per-host or per-run
+    # if the GPU changes:
+    #   ansible-playbook ... -e vfio_passthrough_ids=10de:xxxx,10de:yyyy
+    # Find IDs with `lspci -nn | grep -i nvidia` on the host.
+    vfio_passthrough_ids: "10de:13c2,10de:0fbb"
+
+    # Modules that need to load at boot for vfio to be available before
+    # KVM tries to start the VM. NB: vfio_virqfd was merged into vfio_pci
+    # in kernel 6.2+, so it's no longer a separate module — don't add it.
+    vfio_modules:
+      - vfio
+      - vfio_iommu_type1
+      - vfio_pci
+
+  tasks:
+    # --- Kernel cmdline (PVE: /etc/kernel/cmdline, NOT /etc/default/grub) ---
+
+    - name: Read current /etc/kernel/cmdline
+      ansible.builtin.slurp:
+        src: /etc/kernel/cmdline
+      register: cmdline_raw
+
+    - name: Parse cmdline into tokens + compute the merged set
+      # Splitting on whitespace gives us the current params; the merged
+      # set appends our required params only if they're not already there.
+      # Preserves existing param order (important — kernel evaluates some
+      # params positionally).
+      ansible.builtin.set_fact:
+        cmdline_current: "{{ (cmdline_raw.content | b64decode | trim).split() }}"
+        cmdline_merged: >-
+          {{
+            ((cmdline_raw.content | b64decode | trim).split()) +
+            (vfio_kernel_params | difference((cmdline_raw.content | b64decode | trim).split()))
+          }}
+
+    - name: Update /etc/kernel/cmdline if vfio params missing
+      ansible.builtin.copy:
+        dest: /etc/kernel/cmdline
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ cmdline_merged | join(' ') }}\n"
+      when: cmdline_merged != cmdline_current
+      notify: Refresh proxmox boot ESPs
+
+    # --- vfio modules autoload (/etc/modules) ---
+
+    - name: Ensure vfio modules autoload at boot
+      ansible.builtin.lineinfile:
+        path: /etc/modules
+        line: "{{ item }}"
+        state: present
+      loop: "{{ vfio_modules }}"
+      notify:
+        - Refresh initramfs
+        - Refresh proxmox boot ESPs
+
+    # --- nouveau / nvidia blacklist ---
+
+    - name: Blacklist host-side GPU drivers
+      # Whole-file ownership: if any line drifts or the file disappears,
+      # ansible re-establishes the exact content. Both nvidia and nouveau
+      # must be blacklisted — nouveau is the open-source driver and will
+      # grab the GPU just as effectively as the proprietary one.
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/blacklist-nvidia.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-vfio-passthrough.yaml).
+          # Keep the host's NVIDIA-family drivers off the passthrough GPU.
+          # Without these, the host kernel binds the GPU at boot and
+          # vfio-pci has nothing to claim by the time KVM starts the VM.
+          blacklist nouveau
+          blacklist nvidia
+          blacklist nvidiafb
+          blacklist nvidia_drm
+      notify:
+        - Refresh initramfs
+        - Refresh proxmox boot ESPs
+
+    # --- vfio-pci PCI ID binding ---
+
+    - name: Configure vfio-pci to claim passthrough PCI IDs
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/vfio.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-vfio-passthrough.yaml).
+          # vfio-pci claims these device IDs at module-load time so the
+          # GPU stays free for KVM passthrough. disable_vga=1 turns off
+          # VGA arbitration for the device so the host framebuffer
+          # doesn't compete for legacy VGA resources. IDs default to the
+          # GTX 970 + its HDMI audio function; override via
+          # vfio_passthrough_ids if the host GPU changes.
+          options vfio-pci ids={{ vfio_passthrough_ids }} disable_vga=1
+      notify:
+        - Refresh initramfs
+        - Refresh proxmox boot ESPs
+
+    # --- Reboot reminder ---
+
+    - name: Reboot reminder
+      # Prints every run. Operator decides based on whether any tasks
+      # above showed `changed=` whether to actually reboot. This is
+      # deliberately not gated on a `changed` fact because rebooting
+      # earendil drops every guest in the homelab; the decision belongs
+      # to a human, not the play.
+      ansible.builtin.debug:
+        msg: |
+          ─────────────────────────────────────────────────────────────────
+          vfio passthrough setup task complete.
+
+          If any tasks above reported `changed=`, the kernel cmdline,
+          initramfs, or modprobe config was updated. The new values take
+          effect on the NEXT boot only — reboot earendil to activate.
+
+          NB: rebooting earendil drops every guest in the homelab. Do
+          this during a planned maintenance window.
+
+          Verify post-reboot:
+              ssh earendil "lsmod | grep vfio"
+              ssh earendil "dmesg | grep -i 'vfio-pci'"
+              ssh earendil "cat /proc/cmdline"
+          ─────────────────────────────────────────────────────────────────
+
+  handlers:
+    # Handler definition order = execution order at the end of the play.
+    # initramfs must regenerate BEFORE proxmox-boot-tool copies it to
+    # the ESPs, otherwise the ESPs get the stale initrd.
+    - name: Refresh initramfs
+      ansible.builtin.command: update-initramfs -u -k all
+
+    - name: Refresh proxmox boot ESPs
+      ansible.builtin.command: proxmox-boot-tool refresh
