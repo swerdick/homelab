@@ -17,6 +17,7 @@ all:
         gondor: {}
         erebor: {}
         samwise: {}
+        eregion: {}
     bazzite_hosts:
       # anduril is a Bazzite (Fedora-based atomic) gaming VM, off most of the
       # time. Plays should treat it as opportunistically reachable. SSH is
@@ -46,6 +47,7 @@ all:
         gondor: {}
         erebor: {}
         samwise: {}
+        eregion: {}
     # Debian-family hosts that should receive automated security updates.
     # Excludes earendil (Proxmox host — kernel upgrades need manual care)
     # and anduril (Bazzite/Fedora atomic — uses rpm-ostree).
@@ -58,6 +60,7 @@ all:
         aglarond: {}
         tirion: {}
         samwise: {}
+        eregion: {}
     # Hosts that join gondor's k3s cluster as workers via the
     # install-k3s-agent.yaml playbook. gondor itself is the single-node
     # server and is intentionally NOT in this group.
