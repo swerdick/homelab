@@ -238,21 +238,6 @@ Pre-flight before `timedatectl set-timezone UTC`:
 
 Then flip and verify next-run times of each converted entry match expectation. ~30-60 min focused session; defer until a low-stakes window since earendil is the host everything else depends on.
 
-## Host-level configuration
-
-### GPU passthrough setup on earendil — `setup-gpu-passthrough.yaml`
-
-The GTX 970 is passed through to anduril for Moonlight game streaming. The host-side prerequisites (kernel cmdline, vfio modules, NVIDIA blacklist, `/etc/modprobe.d/vfio.conf` PCI bind) are currently manual on earendil and only documented in a comment block in `qemu/117.conf`. Worth lifting into a playbook:
-
-- Add `intel_iommu=on iommu=pt` to `/etc/default/grub` (`GRUB_CMDLINE_LINUX_DEFAULT`), run `update-grub`
-- Add `vfio`, `vfio_iommu_type1`, `vfio_pci` to `/etc/modules`
-- Drop `/etc/modprobe.d/blacklist-nvidia.conf` (blacklists `nouveau`, `nvidia`, `nvidia_drm` so the host doesn't grab the card)
-- Drop `/etc/modprobe.d/vfio.conf` binding the GPU's PCI IDs (detect via `lspci -nn | grep NVIDIA`, store in `host_vars/earendil.yaml` for visibility)
-- `update-initramfs -u`
-- Reports if a reboot is needed (touches `/var/run/reboot-required`)
-
-Inherently risky — a misstep in the kernel cmdline or vfio config can prevent boot. Run `--check --diff` first, then real run during a planned outage window. Probably 45-60 min for the playbook + 30 min for reboot validation.
-
 ## Cleanup
 
 ### Converge ansible drift surfaced during eregion onboarding
@@ -272,6 +257,37 @@ The embedded `# ...` comment blocks at the top of several `/etc/pve/lxc/*.conf` 
 - **`121.conf` (smb)** — same shape: "Adding a share" via `cat >> /etc/samba/smb.conf`. Now obsolete: `manage-samba-config.yaml`.
 
 Recommended fix: edit the live `/etc/pve/lxc/120.conf` and `/etc/pve/lxc/121.conf` via the Proxmox UI's notes editor (or `vim` on earendil) to trim the obsolete sections and replace with one-liner pointers to the ansible playbooks. Then re-run `just dump-pve-configs` to refresh the local snapshot. Other config notes (PBS bootstrap on erebor, restic on aglarond, idmap on smb, bind-mount strategy) remain accurate.
+
+### Migrate bpg resource names from `proxmox_virtual_environment_*` to `proxmox_*`
+
+The bpg/proxmox provider is renaming its resources to drop the `virtual_environment_` prefix — flatter names, and the old names are slated for removal in bpg v1.0. Phase 2.5 used the new names for the storage/cluster_options resources it added. The existing guest resources still need migration:
+
+- **2 VMs (`gondor`, `anduril`)** — *unblocked*: `proxmox_vm` exists. Procedure per resource: `tofu state mv proxmox_virtual_environment_vm.<name> proxmox_vm.<name>`, then update the resource type in the corresponding `.tf` file, then `just tf plan` to confirm no-op.
+- **5 LXCs + eregion** (`aglarond`, `erebor`, `nfs`, `smb`, `tirion`, `eregion`) — *blocked*: bpg hasn't published `proxmox_container` yet. Watch bpg release notes; when it lands, same `state mv` procedure as the VMs.
+
+After all migrations land, `just tf plan` stops emitting the "Deprecated — use ... instead" warnings. No functional change either way.
+
+### Add PVE Notes-tab descriptions for tirion, eregion, gondor
+
+Three guests have empty descriptions in PVE's Notes tab:
+
+- `tirion` (CT 141) — step-ca / internal CA
+- `eregion` (CT 142) — PaperMC Minecraft server
+- `gondor` (VM 140) — k3s + Flux cluster
+
+The other guests (aglarond, erebor, nfs, smb, anduril) all have substantive Notes blocks visible in the PVE sidebar and now mirrored as `terraform/descriptions/*.md` sidecar files loaded via `description = file(...)`. Filling in the missing three brings the fleet to parity. Write the descriptions directly in PVE's Notes editor (markdown), then `just dump-pve-configs` to refresh the snapshot, then save them as `terraform/descriptions/{tirion,eregion,gondor}.md` and reference from each resource — same pattern as the existing five.
+
+### Clarify earendil storage location naming
+
+Five storage entries appear in PVE's sidebar — `local`, `local-zfs`, `main`, `backups`, `scratch-zfs` — and from the names alone it's hard to remember which is which:
+
+- **`local`** (dir on `/var/lib/vz`) — auto-created by PVE installer. Holds ISOs, templates, CT root volumes only if non-ZFS. Largely unused on this host.
+- **`local-zfs`** (zfspool on `rpool/data`) — auto-created by PVE installer. Default VM/CT disk storage.
+- **`main`** (PBS storage on `erebor.vingilot.internal`) — chunk-level backup target. Name doesn't reflect that it's PBS or that it lives on a remote host.
+- **`backups`** (dir on `/scratch/backups`) — local vzdump target on the scratch ZFS pool. Coexists confusingly with `main` which is also backup-targeted.
+- **`scratch-zfs`** (zfspool on `scratch`) — image/rootdir storage on the scratch pool, for things that don't need rpool durability.
+
+Better names would make the purpose obvious from the sidebar — e.g. `local-iso` for the dir, `pbs-erebor` for the PBS storage, `vzdump-local` for the local backup target. Renaming is non-trivial: storage IDs are referenced by every guest disk (`local-zfs:vm-140-disk-1` etc.), and changing them means updating every disk pointer + restarting guests. Worth scoping the blast radius before doing it; a documentation-only pass (e.g. README table mapping name → purpose) is the lower-effort alternative if renaming proves too disruptive.
 
 ## Generalize / refactor
 
@@ -327,6 +343,7 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **GPU passthrough host-side prereqs codified** — `setup-vfio-passthrough.yaml` lifts the IOMMU cmdline, vfio modules in `/etc/modules`, NVIDIA blacklist, and vfio-pci PCI ID binding (parameterized via `vfio_passthrough_ids`, default `10de:13c2,10de:0fbb` for the GTX 970 + HDMI audio) out of operator notes. Token-merge for the kernel cmdline preserves ZFS-root + other tokens; handlers chain `update-initramfs` + `proxmox-boot-tool refresh` only on change. `site-earendil.yaml` introduced alongside, mirroring `site-anduril.yaml`'s wrapper pattern (imports pin-kernel + vfio + terraform-pve-access). Reboot left to a human decision since it drops every guest.
 - **PaperMC server on `eregion` (CT 142)** — new unprivileged Debian 13 Trixie LXC on earendil, provisioned via `terraform/eregion.tf` (the first TF resource born static-IP'd at .42 rather than DHCP+reservation), running Paper 1.21.11 build 69 under a hardened `paper-server.service` unit with Aikar's flags + clean `mcrcon stop` shutdown. Pinning via `host_vars/eregion.yaml`; upgrade procedure in `runbooks/paper-upgrade.md`. LAN-only at `eregion.vingilot.internal:25565`; RCON localhost-only via the host's network position + strong password (vanilla MC's `rcon.bind` is silently ignored by Paper).
 - **Suppress Proxmox no-subscription nag** — `setup-proxmox-no-nag.yaml` patches the `proxmox-widget-toolkit` JS on earendil (PVE) + erebor (PBS) to flip the popup gate to `false` (regex anchored on `!res ||` so the subscription-badge check elsewhere in the file is left alone), plus a `blockinfile`-managed MutationObserver block on PVE's mobile UI template that strips subscription dialogs and cards at runtime. A `DPkg::Post-Invoke` apt hook re-runs an idempotent patch script so a future `proxmox-widget-toolkit` upgrade can't silently restore the popup; the play also cleans up pre-ansible hand-rolled nag-patch helpers.
 - **`install-k3s.sh` refactored to ansible** — `install-k3s-server.yaml` is the new source of truth for gondor's k3s server install, version pinned via `host_vars/gondor.yaml`. Idempotency is layered: `systemctl is-active k3s` short-circuits the whole installer block on a live cluster, `creates: /usr/local/bin/k3s` is a second-line guard, and a version mismatch fails loud rather than silently re-installing (Flux + Immich + cnpg + Jellyfin + Traefik live on this single-node etcd, so silent re-runs are not acceptable). Worker version-lockstep with gondor stays enforced by `install-k3s-agent.yaml`'s pre-flight assert. `gondor/bootstrap/install-k3s.sh` + `just bootstrap-gondor` + the top-line `k3s_version :=` retire in a follow-up commit once the user lands the broader justfile cleanup.

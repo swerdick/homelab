@@ -288,17 +288,29 @@ dump-pve-configs:
 
 # --- OpenTofu / Terraform ---
 
-# Wrapper that decrypts the PVE API token from SOPS, exports it as
-# PROXMOX_VE_API_TOKEN (bpg provider's native env var), and invokes
-# `tofu` from the terraform/ subdir so backend.hcl + .tf files resolve.
+# Wrapper that decrypts the secrets needed by Terraform from SOPS, exports
+# them as env vars per-invocation, and runs `tofu` from terraform/ so
+# backend.hcl + .tf files resolve.
 #
 #   just tf plan
 #   just tf apply
 #   just tf import proxmox_virtual_environment_container.aglarond earendil/131
 #
-# Token export is per-process — secret never lands in the parent shell env.
+# Two secrets exported:
+#   - PROXMOX_VE_API_TOKEN: bpg provider's native env var (used by the
+#     provider block to talk to PVE).
+#   - TF_VAR_pbs_main_password: the API token secret for the `main` PBS
+#     storage entry. PVE keeps this in /etc/pve/priv/storage/main.pw,
+#     separate from /etc/pve/storage.cfg, and bpg's storage_pbs resource
+#     requires it.
+#
+# Secrets live in the parent shell's process env only for the duration of
+# the tofu invocation; sops --extract avoids YAML parsing fragility.
 tf +args:
-    @cd terraform && PROXMOX_VE_API_TOKEN=$(sops --decrypt ../ansible/group_vars/all/secrets.sops.yaml | awk -F': ' '/^pve_api_token:/ {gsub(/^"|"$/, "", $2); print $2}') tofu {{args}}
+    @cd terraform && \
+      PROXMOX_VE_API_TOKEN="$(sops --decrypt --extract '["pve_api_token"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
+      TF_VAR_pbs_main_password="$(sops --decrypt --extract '["pbs_main_password"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
+      tofu {{args}}
 
 # One-shot init with the partial backend config. Re-run with -reconfigure
 # if backend.hcl ever changes.

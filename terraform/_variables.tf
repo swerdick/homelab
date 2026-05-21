@@ -10,3 +10,13 @@ variable "pve_endpoint" {
 # recipe decrypts ansible/group_vars/all/secrets.sops.yaml and exports it
 # per-invocation, so the secret never lands in the shell's persistent env.
 # No Terraform variable needed for the token.
+
+# PBS API token secret for the `main` storage entry. PVE keeps this in
+# /etc/pve/priv/storage/main.pw, separate from /etc/pve/storage.cfg, and
+# bpg's storage_pbs resource requires it as a field on the resource.
+# Sourced via TF_VAR_pbs_main_password from the justfile `tf` recipe.
+variable "pbs_main_password" {
+  description = "PBS API token secret for the `main` PBS storage entry (root@pam!earendil-host). Provide via TF_VAR_pbs_main_password env var."
+  type        = string
+  sensitive   = true
+}

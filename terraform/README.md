@@ -1,8 +1,15 @@
 # Terraform (OpenTofu)
 
-Manages the Proxmox-level topology — LXC and VM definitions — on `earendil`. Pairs with `ansible/` for in-guest config and `gondor/` for cluster workloads.
+Manages the Proxmox-level topology — guest definitions, storage, backup jobs, datacenter options — on `earendil`. Pairs with `ansible/` for in-guest + host-side config and `gondor/` for cluster workloads.
 
-Currently in scope: the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`) and the `gondor` k3s VM. Deferred: `anduril` (queued behind a host-side ansible playbook codifying GPU/USB passthrough prereqs) and datacenter-level config (backup jobs, storage registration). The Debian cloudinit template (VM 9000) was discarded — gondor's DR path is PBS restore, and new Debian VMs are unlikely given the k3s/Flux trend.
+Currently in scope:
+
+- **Guests:** the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`), the `gondor` k3s VM, the `anduril` Bazzite VM (with GPU passthrough). Plus `eregion` added separately.
+- **Storage:** `backups` (local vzdump dir), `main` (PBS storage on erebor), `scratch-zfs` (zfspool). Not managed: `local` and `local-zfs` — auto-created by the PVE installer.
+- **Backup jobs:** all four entries in `/etc/pve/jobs.cfg`, two enabled (nightly guests + weekly erebor config) and two disabled legacy jobs.
+- **Datacenter options:** `keyboard` + `mac_prefix`.
+
+Out of scope: the Debian cloudinit template (VM 9000) was discarded — gondor's DR path is PBS restore, and new Debian VMs are unlikely given the k3s/Flux trend. Network bridges (`vmbr0`) stay with the PVE installer.
 
 ## Day-to-day
 
