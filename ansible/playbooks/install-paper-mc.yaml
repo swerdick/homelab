@@ -207,6 +207,13 @@
         - { key: "rcon.password", value: "{{ paper_rcon_password }}" }
         - { key: "broadcast-rcon-to-ops", value: "false" }
         - { key: "online-mode", value: "true" }
+      loop_control:
+        # label keeps the per-iteration output readable ("item=rcon.password")
+        # instead of printing the full dict (which would leak the value).
+        label: "{{ item.key }}"
+      # no_log per-iteration: only suppress output when the key looks
+      # password-shaped. Other keys stay visible in --diff for debugging.
+      no_log: "{{ 'password' in item.key | lower }}"
       # Note on RCON exposure: vanilla Minecraft (which Paper inherits)
       # has no `rcon.bind` key — RCON always listens on 0.0.0.0. The PVE
       # firewall + LAN-only choice + strong rcon.password is adequate
@@ -218,6 +225,10 @@
     # --- systemd unit ----------------------------------------------------
 
     - name: Install paper-server systemd unit
+      # no_log: the ExecStop line embeds paper_rcon_password — without this,
+      # `--diff` would print the whole unit content (including the secret)
+      # whenever the unit changes.
+      no_log: true
       ansible.builtin.copy:
         dest: /etc/systemd/system/paper-server.service
         owner: root
