@@ -255,6 +255,15 @@ Inherently risky — a misstep in the kernel cmdline or vfio config can prevent 
 
 ## Cleanup
 
+### Converge ansible drift surfaced during eregion onboarding
+
+Running `--check --diff` unrestricted previews of the baseline plays before adding eregion turned up real drift on the existing fleet — `-l eregion` had to be used because of it. Two specific items:
+
+- **`install-alloy.yaml` config template drift**: the in-repo `templates/config.alloy.j2` differs from what's deployed on `aglarond`, `earendil`, `erebor`, `nfs`, `smb`, `tirion`. Each shows `changed=2` (template task + handler restart) on a preview. Means the template was edited at some point and the play hasn't been re-run unrestricted since. Fix: just run `ansible-playbook ansible/playbooks/install-alloy.yaml` unrestricted. Quick.
+- **`setup-debian-base.yaml` drift**: `Set system default locale` shows `changed` on 4 hosts (locale file content differs), and `Set system timezone` shows `changed: [erebor]` (community.general.timezone normalizing `Etc/UTC` → `UTC` — cosmetic but listed for completeness). Same fix: run `setup-debian-base.yaml` unrestricted.
+
+Per `feedback_playbook_unrestricted_safety.md`, untargeted hosts should always show `changed=0` on a preview. Drift is the cost of not re-running unrestricted plays between edits; a periodic convergence pass keeps the rule honest.
+
 ### Re-document PVE guest configs after recent ansible work
 
 The embedded `# ...` comment blocks at the top of several `/etc/pve/lxc/*.conf` files document procedures that are now superseded by ansible playbooks:
@@ -265,6 +274,15 @@ The embedded `# ...` comment blocks at the top of several `/etc/pve/lxc/*.conf` 
 Recommended fix: edit the live `/etc/pve/lxc/120.conf` and `/etc/pve/lxc/121.conf` via the Proxmox UI's notes editor (or `vim` on earendil) to trim the obsolete sections and replace with one-liner pointers to the ansible playbooks. Then re-run `just dump-pve-configs` to refresh the local snapshot. Other config notes (PBS bootstrap on erebor, restic on aglarond, idmap on smb, bind-mount strategy) remain accurate.
 
 ## Generalize / refactor
+
+### Terraform-side improvements for fresh LXC bootstrap
+
+Two paper-cuts surfaced when standing up `eregion` (CT 142) — both fixable in the TF layer so the next fresh LXC is friction-free:
+
+- **SSH-key injection at create**: a freshly-Terraformed LXC has no `pseudo` user and no SSH key on root, so `setup-pseudo-user.yaml` (which wants to SSH as `pseudo`) can't run against it until someone manually `pct exec`'s a key into `/root/.ssh/authorized_keys` from earendil. bpg's `initialization.user_account.keys` block (`keys = [chomp(file(pathexpand("~/.ssh/id_ed25519.pub")))]`) sets `root`'s authorized_keys at container creation — eliminates the manual bootstrap step. Add to every LXC resource in `terraform/*.tf` (one-liner each).
+- **Static IPs fleet-wide**: `eregion.tf` was migrated to `address = "192.168.1.42/24"` + `gateway = "192.168.1.1"` after we hit DHCP-reservation drift (IP-pinned in router DNS but the LXC pulled a different lease). The other 5 LXCs (`nfs` .200ish, `smb`, `erebor`, `aglarond`, `tirion`) still use `address = "dhcp"` and rely on router-side MAC reservations. Backport their actual current IPs into TF and drop the router-side reservation — keeps the IP source of truth in one place (and dovetails with the eventual pihole/adguard TF, where DNS records will reference the same numbers).
+
+Both are mechanical edits to existing `.tf` files; ~15 min once. `just tf plan` should be no-op after each backfilled-IP change since the IP doesn't actually move.
 
 ### Ansible playbook for new-host onboarding
 
@@ -309,6 +327,7 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **PaperMC server on `eregion` (CT 142)** — new unprivileged Debian 13 Trixie LXC on earendil, provisioned via `terraform/eregion.tf` (the first TF resource born static-IP'd at .42 rather than DHCP+reservation), running Paper 1.21.11 build 69 under a hardened `paper-server.service` unit with Aikar's flags + clean `mcrcon stop` shutdown. Pinning via `host_vars/eregion.yaml`; upgrade procedure in `runbooks/paper-upgrade.md`. LAN-only at `eregion.vingilot.internal:25565`; RCON localhost-only via the host's network position + strong password (vanilla MC's `rcon.bind` is silently ignored by Paper).
 - **Suppress Proxmox no-subscription nag** — `setup-proxmox-no-nag.yaml` patches the `proxmox-widget-toolkit` JS on earendil (PVE) + erebor (PBS) to flip the popup gate to `false` (regex anchored on `!res ||` so the subscription-badge check elsewhere in the file is left alone), plus a `blockinfile`-managed MutationObserver block on PVE's mobile UI template that strips subscription dialogs and cards at runtime. A `DPkg::Post-Invoke` apt hook re-runs an idempotent patch script so a future `proxmox-widget-toolkit` upgrade can't silently restore the popup; the play also cleans up pre-ansible hand-rolled nag-patch helpers.
 - **`install-k3s.sh` refactored to ansible** — `install-k3s-server.yaml` is the new source of truth for gondor's k3s server install, version pinned via `host_vars/gondor.yaml`. Idempotency is layered: `systemctl is-active k3s` short-circuits the whole installer block on a live cluster, `creates: /usr/local/bin/k3s` is a second-line guard, and a version mismatch fails loud rather than silently re-installing (Flux + Immich + cnpg + Jellyfin + Traefik live on this single-node etcd, so silent re-runs are not acceptable). Worker version-lockstep with gondor stays enforced by `install-k3s-agent.yaml`'s pre-flight assert. `gondor/bootstrap/install-k3s.sh` + `just bootstrap-gondor` + the top-line `k3s_version :=` retire in a follow-up commit once the user lands the broader justfile cleanup.
 - **Longer-lived ACME certs + on-boot renewal** — `install-step-ca.yaml` bumps tirion's `acme` provisioner to a 90d default/max cert lifetime (`step ca provisioner update --x509-default-dur 2160h --x509-max-dur 2160h`) with idempotent drift detection; `setup-acme-renewal.yaml` drops `RandomizedDelaySec=0` + `OnBootSec=2min` overrides onto earendil's `pve-daily-update.timer` and erebor's `proxmox-backup-daily-update.timer` so a host returning from days-of-power-off renews promptly rather than waiting for the next jittered daily window.
