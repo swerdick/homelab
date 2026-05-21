@@ -90,6 +90,12 @@ Probably a Phase-2-of-Loki-style session: ~60-90 min for the chart + ingress + d
 
 ## Apps & data services
 
+### Re-add EssentialsX to eregion when Paper-26 compat lands
+
+EssentialsX 2.21.2 (latest stable as of May 2026) crashes on enable against Paper 26.1.2 — `NullPointerException` from its `ServerStateProvider` lookup, which is a Paper-26 API change. The `2.22.0-dev` snapshots on `ci.ender.zone` predate Paper 26.1.2's release by a few days so they don't have the fix either. Dropped from `host_vars/eregion/main.yaml`'s `paper_plugins:` for now; Multiverse-Core covers the multi-world need and vanilla `/gamemode`, `/tp`, `/give`, `/time set`, `/weather`, etc. cover the basic admin needs on a 1-2 player server.
+
+Watch [EssentialsX/Essentials releases](https://github.com/EssentialsX/Essentials/releases) for a 2.22.0 (or later) stable release marked as Paper-26-compatible, then add it back via the standard `paper_plugins` shape with the new release's SHA512. If nothing lands within a couple of months and `/home`/`/spawn`/`/kit`/`/msg` start to feel missing, the alternatives are smaller-scoped plugins (e.g. `HuskHomes`, `CMI` — both have Paper-26 builds) or just continued use of vanilla equivalents.
+
 ### Immich machine-learning enable
 
 Immich currently runs with `machine-learning.enabled: false` to keep memory predictable while the rest of the pipeline gets validated. Flipping it on adds ~1-2 GiB of RAM (the ML container holds CLIP + face-detection models in memory) and unlocks face grouping, smart search, and content-aware tagging. Wait until the capacity rebalance below frees up the budget on gondor; the deploy itself is a one-line values change.

@@ -168,6 +168,87 @@
             - "{{ mcrcon_zip_path }}"
             - "/tmp/mcrcon-{{ mcrcon_version }}-linux-x86-64-static"
 
+    # --- Plugins ---------------------------------------------------------
+
+    - name: Ensure {{ paper_home }}/plugins exists
+      ansible.builtin.file:
+        path: "{{ paper_home }}/plugins"
+        state: directory
+        owner: "{{ paper_user }}"
+        group: "{{ paper_group }}"
+        mode: "0750"
+
+    - name: Install Paper plugins from paper_plugins
+      # filename is the on-disk name (static, overwritten on version bump);
+      # url + sha512 come from host_vars. `force: true` + checksum means
+      # ansible recomputes the local checksum first, downloads only when
+      # it differs — so a bump triggers re-download, an unchanged config
+      # is a clean no-op.
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ paper_home }}/plugins/{{ item.filename }}"
+        checksum: "sha512:{{ item.sha512 }}"
+        force: true
+        owner: "{{ paper_user }}"
+        group: "{{ paper_group }}"
+        mode: "0644"
+      loop: "{{ paper_plugins | default([]) }}"
+      loop_control:
+        label: "{{ item.filename }}"
+      notify: Restart paper-server
+
+    - name: Find existing plugin JARs (for unmanaged-cleanup)
+      ansible.builtin.find:
+        paths: "{{ paper_home }}/plugins"
+        patterns: "*.jar"
+        file_type: file
+      register: paper_existing_plugin_jars
+
+    - name: Remove plugin JARs not in paper_plugins
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ paper_existing_plugin_jars.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      when:
+        - (item.path | basename) not in (paper_plugins | default([]) | map(attribute='filename') | list)
+      notify: Restart paper-server
+
+    # --- Per-world datapacks ---------------------------------------------
+
+    - name: Ensure per-world datapack directories exist
+      ansible.builtin.file:
+        path: "{{ paper_home }}/{{ item.name }}/datapacks"
+        state: directory
+        owner: "{{ paper_user }}"
+        group: "{{ paper_group }}"
+        mode: "0750"
+      loop: "{{ paper_worlds | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}/datapacks"
+
+    - name: Install datapacks per world
+      ansible.builtin.get_url:
+        url: "{{ item.1.url }}"
+        dest: "{{ paper_home }}/{{ item.0.name }}/datapacks/{{ item.1.filename }}"
+        checksum: "sha512:{{ item.1.sha512 }}"
+        force: true
+        owner: "{{ paper_user }}"
+        group: "{{ paper_group }}"
+        mode: "0644"
+      loop: "{{ paper_worlds | default([]) | subelements('datapacks', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+      notify: Restart paper-server
+
+    # Note: no auto-cleanup of obsolete datapacks. Removing a datapack from
+    # host_vars leaves the zip on disk (still loaded by Minecraft until the
+    # world's level.dat disables it). If you remove a datapack entry, also
+    # `rm /opt/minecraft/<world>/datapacks/<file>.zip` on eregion and
+    # restart paper-server. Could be automated later; left manual because
+    # datapack removal is rare and the cross-world cleanup logic is gnarly.
+
     # --- Paper config ----------------------------------------------------
 
     - name: Write eula.txt (you are accepting Mojang's EULA)
@@ -180,6 +261,21 @@
           # Accepted via ansible/playbooks/install-paper-mc.yaml.
           # https://www.minecraft.net/en-us/eula
           eula=true
+      notify: Restart paper-server
+
+    - name: Write ops.json from paper_ops
+      # ops.json is a JSON array of {uuid, name, level, bypassesPlayerLimit}
+      # entries. Paper reads it at start; restart needed to apply changes.
+      # Owned by minecraft so the server can manage it via in-game /op
+      # commands without permission errors, but anyone added at runtime
+      # would be overwritten on next ansible run — host_vars is source of
+      # truth.
+      ansible.builtin.copy:
+        dest: "{{ paper_home }}/ops.json"
+        content: "{{ paper_ops | default([]) | to_nice_json }}\n"
+        owner: "{{ paper_user }}"
+        group: "{{ paper_group }}"
+        mode: "0640"
       notify: Restart paper-server
 
     - name: Manage server.properties keys we care about

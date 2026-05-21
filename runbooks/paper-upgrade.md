@@ -81,6 +81,29 @@ Restore-not-debug, per `project_anduril_recovery_pattern.md`'s principle:
 
 Avoid trying to surgically fix a partially-migrated world — that path is full of subtle corruption.
 
+## Adding a new datapack-driven world
+
+For terrain-overhaul worlds like the Tectonic + Terralith ones already declared in `host_vars/eregion/main.yaml`:
+
+1. **Add the world to `paper_worlds`** in `ansible/host_vars/eregion/main.yaml`:
+   ```yaml
+   paper_worlds:
+     - name: <your-world-name>
+       datapacks:
+         - filename: <Pack>.zip
+           url: https://...
+           sha512: ...
+   ```
+2. **Re-run the playbook** (`cd ansible && ansible-playbook playbooks/install-paper-mc.yaml`). It creates `/opt/minecraft/<world>/datapacks/<Pack>.zip` ahead of any chunks existing. Paper restarts via handler.
+3. **Connect as op and `/mv create <world> normal`**. Multiverse-Core generates the world directory's level.dat + spawn chunks. Because the datapack file is already in `<world>/datapacks/`, Paper picks it up at world-creation time → terrain uses the datapack from the very first chunk.
+4. `/mv tp <world>` to visit.
+
+If the spawn area looks vanilla (rare, but possible if Paper's first-chunk-gen runs before scanning datapacks): `/mv unload <world>`, then `/mv load <world>`, then walk to a fresh chunk — the datapack applies to any chunks generated after the reload. The pre-generated spawn area stays vanilla in that case; either accept it or `/mv setspawn` somewhere new after exploring.
+
+To *replace* a datapack version: bump the SHA + URL in host_vars and re-run the playbook. The on-disk zip filename stays the same (managed by `filename:`) so it overwrites in place. Existing chunks keep whatever terrain they were generated with; only new chunks pick up the new datapack version.
+
+To *remove* a datapack: drop the entry from `host_vars`, then manually `rm /opt/minecraft/<world>/datapacks/<file>.zip` on eregion and restart. Datapack auto-cleanup isn't in the playbook (the cross-world cleanup loop is gnarly enough to not be worth it for a rare operation).
+
 ## What's deliberately not in this runbook
 
 - **"Test on a copy of the world first"**: for a LAN play server the operational cost of maintaining a parallel staging world (or running through PBS clone-to-test cycles) is higher than the cost of a rare bad bump. PBS restore is the safety net.

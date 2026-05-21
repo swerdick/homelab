@@ -48,3 +48,59 @@ paper_difficulty: "normal"
 
 # paper_rcon_password lives in host_vars/eregion/secrets.sops.yaml
 # (SOPS-encrypted; community.sops.sops vars plugin auto-decrypts at runtime).
+
+# --- Server operators (ops.json) ------------------------------------------
+# Paper reads ops.json at start; the playbook templates it from this list.
+# `level` is the op level: 4 = full ops (default), lower values restrict
+# command access. UUIDs come from Mojang's API:
+#   curl -s https://api.mojang.com/users/profiles/minecraft/<name>
+# Insert dashes in the 8-4-4-4-12 format that ops.json expects.
+paper_ops:
+  - uuid: 77eec660-11a0-4afc-bab5-a902250e639b
+    name: sudoNebula
+    level: 4
+    bypassesPlayerLimit: false
+
+# --- Plugins ---------------------------------------------------------------
+# Server-side .jar plugins installed under /opt/minecraft/plugins/. The
+# `filename` is the on-disk name (overwritten on version bump, so a bump
+# just replaces the file); the URL points at the upstream artifact for
+# that version. SHA512 is verified on download (Modrinth/GitHub publish
+# either sha512 or sha1; we prefer sha512).
+#
+# Any .jar in /opt/minecraft/plugins/ not listed here gets removed on
+# re-run — so dropping a plugin is just deleting the entry + replay.
+paper_plugins:
+  - filename: Multiverse-Core.jar
+    url: https://cdn.modrinth.com/data/3wmN97b8/versions/g7LecP9j/multiverse-core-5.6.2.jar
+    sha512: 364df3e244c6344b00a3da1820262c1c62720ddac911d1de4eea7a3ce0e6f219442c1c1cd51746b78551c19f7fcbc934cd177516091e4d3d21f3a6c90cf84808
+  # EssentialsX intentionally absent — EssentialsX 2.21.2 (latest stable as
+  # of 2026-05) NPEs on enable against Paper 26.1.2 (its provider lookup
+  # tries to resolve a class that's moved/changed in Paper 26.x). The
+  # 2.22.0-dev snapshot on ci.ender.zone (#1799) predates Paper 26.1.2's
+  # release by 4 days, so it can't have the fix either. Re-add when a
+  # Paper-26-compat EssentialsX stable lands. See ROADMAP.
+
+# --- Worlds + datapacks ----------------------------------------------------
+# `world` is the default Paper world (auto-generated on first boot; no
+# datapack — vanilla terrain). `tectonic` and `terralith` are managed by
+# Multiverse-Core; the playbook pre-stages their datapack files in
+# /opt/minecraft/<world>/datapacks/ so that when an op runs
+# `/mv create <world> normal` in-game, the datapack is already in place
+# and Minecraft picks it up at world-generation time.
+#
+# See runbooks/paper-upgrade.md ("Adding a datapack-driven world") for
+# the full procedure including the chicken-and-egg around chunk
+# generation vs datapack-load order.
+paper_worlds:
+  - name: world  # vanilla, current survival world; datapacks intentionally empty
+  - name: tectonic
+    datapacks:
+      - filename: Tectonic.zip
+        url: https://cdn.modrinth.com/data/lWDHr9jE/versions/VfuqmXvF/tectonic-datapack-3.0.18.zip
+        sha512: 3de178cc019f481d86511d66c579317a1277167685d7886707ae591f25cc910cb2d5550ef77d69c2d35b0acdb2c67b05f7ef014c45a9feda2867281227d85e81
+  - name: terralith
+    datapacks:
+      - filename: Terralith.zip
+        url: https://cdn.modrinth.com/data/8oi3bsk5/versions/xDS6ehq8/Terralith_1.21.11_v2.6.0.zip
+        sha512: e583b854fd86c930be399e414a45d63a261ed7b971a97ba409b9b79e25239af397a87cb9b38eecfc0ae83253c1d9cef558107ac4037aece6eca9cfcc02a760b8
