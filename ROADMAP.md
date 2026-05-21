@@ -175,7 +175,7 @@ Some guests are over-provisioned. Per the host-overview dashboard:
 Steps:
 1. Sample memory usage on each guest over a representative window (include a backup run for erebor, streaming activity for media-using guests, an Immich library scan)
 2. Identify safe shrinks (`allocated 1 GiB → peak 250 MiB → shrink to 512 MiB` style)
-3. Apply via PVE UI (or via the eventual Terraform pivot — see README's "Where's the Terraform?")
+3. Apply via Terraform — bump `memory.dedicated` (and `cpu.cores` if relevant) in the guest's `terraform/*.tf`, then `just tf apply`. PVE UI works too but TF is the source of truth now.
 4. Re-run `just dump-pve-configs` to capture the new shape
 5. Reallocate the freed RAM to gondor — gives ML headroom on Immich and breathing room for future apps
 
