@@ -54,6 +54,10 @@
       notify: Restart alloy
 
     - name: Template /etc/alloy/config.alloy
+      # no_log: the rendered config embeds gc_token, alloy_remote_write_password,
+      # and loki_basic_auth_password — without this, `--diff` would print the
+      # full file content (secrets included) on any change.
+      no_log: true
       ansible.builtin.template:
         src: ../templates/config.alloy.j2
         dest: /etc/alloy/config.alloy
