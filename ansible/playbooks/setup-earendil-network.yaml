@@ -1,0 +1,89 @@
+---
+# Codifies earendil's management uplink + Wake-on-LAN.
+#
+# Background: earendil's onboard NIC is a Qualcomm/Atheros Killer E2400
+# (alx driver), whose Wake-on-LAN support is unreliable. A TP-Link TG-3468
+# (Realtek RTL8168, r8169 driver, enp4s0) was added specifically to get
+# dependable magic-packet cold-start (the operator's `wake-nas` alias).
+# vmbr0 was repointed from the onboard NIC (nic0) to enp4s0.
+#
+# Two things this play keeps true on the host:
+#   1. vmbr0's uplink is enp4s0 (asserted, not auto-applied — see caution).
+#   2. Magic-packet WoL is armed on enp4s0, and re-armed on every boot.
+#      r8169 does NOT persist WoL across boots, so a udev rule (matched by
+#      MAC, so it's rename-proof) re-applies it whenever the NIC appears.
+#      The play also arms it live so protection doesn't wait for a reboot.
+#
+# CAUTION — the bridge-ports assertion is intentionally NOT auto-applied.
+# Changing vmbr0's uplink on a live host and running `ifreload -a` can strand
+# the host (the management IP rides this bridge). In steady state the replace
+# is a no-op; if it ever reports `changed`, apply with the self-healing
+# procedure (systemd-run + ifreload + timed auto-revert), ideally on console
+# — never a bare `ifreload -a` over SSH. The handler only prints a reminder.
+#
+# Idempotent — safe to re-run. Lives in site-earendil.yaml.
+
+- name: Configure earendil's uplink NIC + Wake-on-LAN
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    # The management uplink NIC and its MAC. WoL is matched by MAC (not name)
+    # in udev so it survives any future predictable-name change.
+    wol_nic: enp4s0
+    wol_nic_mac: "b8:fb:b3:cb:ef:50"
+
+  tasks:
+    - name: Ensure vmbr0 uplinks the Realtek TG-3468 (enp4s0), not the onboard Killer (nic0)
+      # Surgical: only rewrites the uplink if it has drifted back to nic0.
+      # No-op once enp4s0 is in place. Preserves the line's leading indent.
+      ansible.builtin.replace:
+        path: /etc/network/interfaces
+        regexp: '^(\s*bridge-ports\s+)nic0\s*$'
+        replace: '\g<1>{{ wol_nic }}'
+      notify: Warn interfaces changed
+
+    - name: Persist magic-packet WoL via udev (matched by MAC, rename-proof)
+      ansible.builtin.copy:
+        dest: "/etc/udev/rules.d/70-wol-{{ wol_nic }}.rules"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-earendil-network.yaml).
+          # r8169 does not persist Wake-on-LAN across boots, so re-arm
+          # magic-packet wake whenever this NIC appears. Matched by MAC so
+          # it survives an interface rename. Without this, the NIC boots
+          # with WoL disabled and `wake-nas` can't cold-start earendil.
+          ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="{{ wol_nic_mac }}", RUN+="/usr/sbin/ethtool -s %k wol g"
+      notify: Reload udev rules
+
+    - name: Read current WoL state
+      # Read-only; runs even under --check so the arm task below has real data.
+      ansible.builtin.command: "ethtool {{ wol_nic }}"
+      register: wol_state
+      changed_when: false
+      check_mode: false
+
+    - name: Arm magic-packet WoL now (don't wait for a reboot)
+      ansible.builtin.command: "ethtool -s {{ wol_nic }} wol g"
+      when: "'Wake-on: g' not in wol_state.stdout"
+
+  handlers:
+    - name: Reload udev rules
+      # Reloads rules into udevd; they apply on the next NIC add (next boot).
+      # We don't `udevadm trigger` the live NIC — re-adding a bridged uplink
+      # mid-flight is disruptive, and the task above already armed it now.
+      ansible.builtin.command: udevadm control --reload
+
+    - name: Warn interfaces changed
+      ansible.builtin.debug:
+        msg: |
+          ─────────────────────────────────────────────────────────────
+          /etc/network/interfaces changed: vmbr0 uplink reset to enp4s0.
+          This is NOT yet applied. Applying an uplink change remotely can
+          strand the host — use the self-healing procedure (systemd-run +
+          ifreload + timed auto-revert), ideally on console. Do NOT run a
+          bare `ifreload -a` over SSH.
+          ─────────────────────────────────────────────────────────────

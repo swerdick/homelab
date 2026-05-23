@@ -11,8 +11,11 @@
 #      NVIDIA blacklist, vfio-pci ID binding. Anduril's GPU passthrough
 #      depends on this; pin must already be in place so we don't
 #      configure for one kernel and reboot into another.
-#   3. setup-terraform-pve-access.yaml — provisions the Terraform PVE
-#      user/role/ACL. Orthogonal to the other two; placed last because
+#   3. setup-earendil-network.yaml — pins vmbr0's uplink to the added
+#      Realtek NIC (enp4s0) and persists magic-packet Wake-on-LAN. Self
+#      contained; order vs. the others doesn't matter.
+#   4. setup-terraform-pve-access.yaml — provisions the Terraform PVE
+#      user/role/ACL. Orthogonal to the others; placed last because
 #      its operator-driven token step is a natural end of session.
 #
 # Plays NOT imported here, and why:
@@ -38,4 +41,5 @@
 
 - import_playbook: pin-proxmox-kernel.yaml
 - import_playbook: setup-vfio-passthrough.yaml
+- import_playbook: setup-earendil-network.yaml
 - import_playbook: setup-terraform-pve-access.yaml
