@@ -176,7 +176,7 @@ GitHub Actions integration via `sonarsource/sonarqube-scan-action` — works cle
 Some guests are over-provisioned. Per the host-overview dashboard:
 - gondor has 10 GiB allocated; usage will climb when Immich's ML container is enabled (see "Immich machine-learning enable" above)
 - LXCs allocate 1 GiB each, peak usage in the 150-300 MiB range
-- Total host RAM is 16 GiB — the budget is real
+- Total host RAM is now 48 GiB (upgraded from 16 — see Completed); the hard ceiling is gone, so this is right-sizing hygiene rather than relieving real pressure
 
 Steps:
 1. Sample memory usage on each guest over a representative window (include a backup run for erebor, streaming activity for media-using guests, an Immich library scan)
@@ -201,7 +201,7 @@ Mesh VPN replaces per-service Cloudflare Tunnels for SSH and admin access — ev
 
 Two related capabilities to layer in once the coordinator is up:
 - **Tailscale subnet router**: announce `192.168.1.0/24` so the whole LAN is reachable through one node — no per-LXC client install.
-- **WoL bridge**: a small HTTP service on the tailnet that wakes earendil via magic packet from anywhere (described in the Pi-orchestrator entry).
+- **WoL bridge**: a small HTTP service on the tailnet that wakes earendil via magic packet from anywhere (described in the Pi-orchestrator entry). *(Host-side WoL is now in place — see Completed; what's left here is just the remote HTTP trigger.)*
 
 ## Specific upgrades
 
@@ -349,6 +349,8 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **earendil Wake-on-LAN via add-in NIC** — the onboard Killer E2400 (`alx`) has unreliable WoL, so a TP-Link TG-3468 (Realtek RTL8168, `r8169`) was added and `vmbr0`'s uplink repointed from the onboard `nic0` to `enp4s0`. Live cutover done over SSH with a `systemd-run` + `ifreload` + timed auto-revert net (the management IP rides that bridge, so a bad apply would otherwise strand the headless host). `setup-earendil-network.yaml` (wired into `site-earendil.yaml`) asserts the enp4s0 uplink and arms magic-packet WoL via a MAC-matched udev rule — `r8169` doesn't persist WoL across boots, so it re-arms whenever the NIC appears. Verified end-to-end with a real power-cycle; `wake-earendil` cold-starts the box. Host-side prerequisite for the still-open WoL-bridge item under Headscale/Tailscale.
+- **earendil RAM upgrade 16 → 48 GiB** — new kit installed; 46.9 GiB seen by the host. Retires the long-standing constraint that two fixed-allocation 10 GiB VMs (gondor VM 140 + anduril VM 117, both `balloon: 0` for GPU passthrough) plus eregion couldn't coexist on 16 GiB — anduril no longer needs gondor/eregion stopped first to boot, and the "Audit guest CPU/memory + rebalance" item loses its hard ceiling. XMP profile still pending (see Specific upgrades).
 - **Anduril replatformed to Kubuntu 26.04 LTS** — retired Bazzite (which dropped Sunshine from its base image — an unfixable atomic-distro mismatch). anduril now joins the standard Debian fleet bootstrap via `site-anduril.yaml` (pseudo user, base, **distribute-root-ca**, unattended-upgrades, **Alloy**, Sunshine) — closing the "Anduril Alloy + distribute-root-ca rollout" item, whose only blockers were the OS-family branching that vanished with apt. `setup-sunshine.yaml` rewritten Debian-side: GTX 970 NVENC via the **580.95.05 `.run` driver on a mainline 6.12.90 kernel** (apt 580.159 + stock 7.0 both hang the display engine — manual bring-up, captured in the PBS snapshot), `nvidia-drm.modeset=1`/simpledrm-blacklist cmdline, the proper `nvidia-persistenced` unit, and a **`kde-inhibit` keep-awake service** (a DPMS-off/wake cycle corrupts KMS capture until a host reboot; powerdevil's config proved unreliable on Plasma 6.6). cores bumped 4→6. Hard-won lesson: never hot-change the display mode on a live session — a `kscreen-doctor` modeset wedges the card, and with no PCI reset only a host reboot recovers it.
 - **GPU passthrough host-side prereqs codified** — `setup-vfio-passthrough.yaml` lifts the IOMMU cmdline, vfio modules in `/etc/modules`, NVIDIA blacklist, and vfio-pci PCI ID binding (parameterized via `vfio_passthrough_ids`, default `10de:13c2,10de:0fbb` for the GTX 970 + HDMI audio) out of operator notes. Token-merge for the kernel cmdline preserves ZFS-root + other tokens; handlers chain `update-initramfs` + `proxmox-boot-tool refresh` only on change. `site-earendil.yaml` introduced alongside, mirroring `site-anduril.yaml`'s wrapper pattern (imports pin-kernel + vfio + terraform-pve-access). Reboot left to a human decision since it drops every guest.
 - **PaperMC server on `eregion` (CT 142)** — new unprivileged Debian 13 Trixie LXC on earendil, provisioned via `terraform/eregion.tf` (the first TF resource born static-IP'd at .42 rather than DHCP+reservation), running Paper 1.21.11 build 69 under a hardened `paper-server.service` unit with Aikar's flags + clean `mcrcon stop` shutdown. Pinning via `host_vars/eregion.yaml`; upgrade procedure in `runbooks/paper-upgrade.md`. LAN-only at `eregion.vingilot.internal:25565`; RCON localhost-only via the host's network position + strong password (vanilla MC's `rcon.bind` is silently ignored by Paper).
