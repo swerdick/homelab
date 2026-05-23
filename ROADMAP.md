@@ -215,6 +215,15 @@ PBS 3 → 4 follows its own ritual; deferred until summer 2026 since PBS 3.x has
 
 Pending erebor's trixie upgrade — Alloy via the Grafana apt repo wants newer libc than PBS 3 ships. Once that's done, erebor joins the alloy fleet.
 
+### Anduril → direct HDMI to the living-room TV
+
+The Samsung CU7000 + moonlight-tizen client is the ceiling for couch streaming — entry-level SoC + a community web-app port. The Mac (native client) is flawless from the identical host even with the TV on wired Ethernet, so it's purely client-side. Plan: run a **fiber-optic HDMI cable** (~50 ft AOC, directional) from earendil's GTX 970 straight to the TV so it becomes a real display — zero encode/decode, no Tizen. Coexists with Sunshine (the TV replaces the dummy plug; Sunshine still captures it for the Mac). Open pieces: (1) **input** — earendil has NO Bluetooth, so a controller dongle (PS5 DualSense over BT, or the Steam Controller 2 2.4 GHz dongle) needs a **USB extender** to sit at the couch end, passed through best-effort `host=VID:PID`; (2) **EDID** — connect before boot (a live modeset wedges the card), and keep the dummy plug / an EDID retainer so anduril always has a display target when the TV is off. Pays off fully once the Steam Controller arrives.
+
+### Anduril cleanups: qemu-guest-agent + 32-bit NVIDIA libs
+
+- **qemu-guest-agent** isn't installed/running in the Kubuntu guest (the vzdump log shows `agent configured but not running`; it's why graceful `qm shutdown`/`qmreboot` time out and we fall back to hard `qm stop`). `apt install qemu-guest-agent` + enable → graceful shutdown + fs-frozen (consistent) backups. The TF already has `agent { enabled = true }`, so this just closes the host/guest mismatch.
+- **32-bit NVIDIA lib mismatch**: `libnvidia-*-580:i386` at **580.159.03** (apt) is installed alongside the `.run` **580.95.05** 64-bit driver — a version skew that can break 32-bit GL apps (old Proton games / some emulators). Fix: remove the apt i386 nvidia libs and re-run the `.run` with `--install-compat32-libs` so the 32-bit libs match.
+
 ### XMP enable on RAM
 
 See [`AGENTS.md` Hardware section](AGENTS.md#hardware). Free ~40% memory bandwidth; requires a full earendil reboot (homelab-wide outage) and a memtest86 pass. Pair with a planned maintenance window.
