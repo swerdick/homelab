@@ -25,7 +25,7 @@ resource "proxmox_virtual_environment_vm" "gondor" {
   }
 
   memory {
-    dedicated = 10240
+    dedicated = 20480
     # `balloon: 0` in PVE config translates to floating = 0 (no ballooning).
     floating = 0
   }

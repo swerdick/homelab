@@ -23,8 +23,8 @@ resource "proxmox_virtual_environment_vm" "anduril" {
   machine       = "q35"
   scsi_hardware = "virtio-scsi-single"
   boot_order    = ["scsi0", "net0"]
-  on_boot       = false
-  started       = false
+  on_boot       = true
+  started       = true
 
   agent {
     enabled = true
@@ -42,7 +42,7 @@ resource "proxmox_virtual_environment_vm" "anduril" {
   }
 
   memory {
-    dedicated = 10240
+    dedicated = 12288
     # `balloon: 0` in PVE config → no ballooning, fixed 10 GiB.
     floating = 0
   }
