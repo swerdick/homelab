@@ -24,7 +24,7 @@ resource "proxmox_backup_job" "nightly_guests" {
   id             = "backup-12b42abc-89fd"
   schedule       = "21:00"
   storage        = "backups"
-  vmid           = ["120", "121", "140", "131", "141"]
+  vmid           = ["117", "120", "121", "131", "140", "141", "142"]
   enabled        = true
   compress       = "zstd"
   mode           = "snapshot"

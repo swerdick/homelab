@@ -1,4 +1,4 @@
-# anduril — VM 117, Bazzite gaming VM with full GPU passthrough.
+# anduril — VM 117, Kubuntu 26.04 LTS gaming VM with full GPU passthrough.
 #
 # Host-side passthrough prereqs (IOMMU cmdline, vfio modules, NVIDIA
 # blacklist, vfio-pci ID binding) are codified in
@@ -31,7 +31,12 @@ resource "proxmox_virtual_environment_vm" "anduril" {
   }
 
   cpu {
-    cores   = 4
+    # 6 vCPUs on earendil's i7-6700K (4 cores / 8 threads): leaves 2 threads
+    # for the host so the QEMU vhost-net + vfio backends that carry the
+    # Moonlight stream aren't starved while the guest is busy (game + Sunshine
+    # NVENC). Deliberately NOT all 8 — over-subscribing the host is where a
+    # latency-sensitive stream goes choppy. Requires a VM stop/start to apply.
+    cores   = 6
     sockets = 1
     type    = "host"
   }

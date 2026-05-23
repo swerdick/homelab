@@ -127,111 +127,27 @@ patch-earendil:
     @echo "Patching earendil (Proxmox host)..."
     ssh root@earendil 'apt update && apt -y dist-upgrade && apt -y autoremove'
 
-# Patch everything that takes apt: Proxmox host, all LXCs, gondor VM
-# Bazzite (anduril) is handled separately via rpm-ostree
+# Patch everything always-on that takes apt: Proxmox host, all LXCs, gondor VM.
+# anduril (Kubuntu gaming VM) is off most of the time and patched on demand.
 patch-all: patch-earendil patch-lxcs patch-gondor
     @echo
-    @echo "All apt-based hosts patched."
-    @echo "Reminder: anduril (Bazzite) updates via rpm-ostree — use 'just patch-bazzite' when it's running."
+    @echo "All always-on apt hosts patched."
+    @echo "Reminder: anduril is off most of the time — run 'just patch-anduril' while it's running (stop eregion first)."
 
-# Patch Bazzite (anduril) — only works while the VM is running.
-# Bazzite uses rpm-ostree for atomic, transactional updates.
+# Patch the Kubuntu gaming VM (anduril) — only works while the VM is running.
+# anduril is off most of the time and shares earendil's RAM with eregion until
+# the RAM upgrade, so stop eregion (pct stop 142) before booting it.
 #
-# We call `rpm-ostree upgrade` directly rather than `ujust update`
-# because anduril is a headless gaming VM: the "extras" ujust orchestrates
-# (firmware, flatpak system/user, brew, gnome themes) are all no-ops here
-# (no firmware in a VM, no flatpaks installed, brew is empty), and ujust's
-# topgrade wrapper interactively prompts (R)eboot/(S)hell/(Q)uit at the
-# end of every run — reading from /dev/tty directly, so even `ssh -n`
-# can't suppress it. rpm-ostree upgrade is fully non-interactive.
-#
-# Pseudo can talk to rpmostreed directly thanks to the polkit rule we
-# manage in setup-bazzite-base.yaml. No sudo / TTY needed.
-#
-# After staging, `verify-bazzite-staged` runs to confirm the new image
-# hasn't removed anything we depend on (sunshine being the canonical
-# example — Bazzite removed it from F44+; see project memory).
-patch-bazzite:
-    @echo "Patching anduril (Bazzite)..."
-    @echo "Note: this stages an update; reboot anduril to apply."
-    ssh anduril 'rpm-ostree upgrade'
-    @echo
-    @just verify-bazzite-staged
-
-# Verify the currently-staged Bazzite deployment hasn't removed anything
-# we critically depend on, and print version bumps for packages worth a
-# glance. Run automatically by `patch-bazzite`; can also be invoked
-# standalone any time there's a staged deployment to inspect.
-#
-# Exits non-zero if any package in CRITICAL is in the staged image's
-# "Removed" set — making chained invocations fail loudly so we don't
-# accidentally activate a broken upgrade.
-verify-bazzite-staged:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    # Critical packages — removed from staged image == do not reboot.
-    CRITICAL=(Sunshine)
-
-    # Watch packages — print version changes for awareness, not gating.
-    # Mix of fc43 ("kernel-nvidia-closed-lts") and fc44 ("kmod-nvidia")
-    # package names so this works across Bazzite's packaging changes.
-    WATCH=(
-      Sunshine
-      nvidia-driver
-      kmod-nvidia
-      kernel-nvidia-closed-lts
-      kernel-core
-      kernel
-      sddm
-      plasma-workspace
-    )
-
-    # Bail early if there's no staged deployment to verify.
-    STAGED=$(ssh anduril 'rpm-ostree status --json' \
-        | jq -r '.deployments[] | select(.staged==true) | .checksum // empty')
-    if [ -z "$STAGED" ]; then
-        echo "ℹ no staged Bazzite deployment — nothing to verify"
-        exit 0
-    fi
-
-    DIFF=$(ssh anduril 'rpm-ostree db diff')
-    REMOVED=$(echo "$DIFF"  | awk '/^Removed:$/{p=1;next}  /^[A-Z][a-z]+:$/{p=0} p')
-    UPGRADED=$(echo "$DIFF" | awk '/^Upgraded:$/{p=1;next} /^[A-Z][a-z]+:$/{p=0} p')
-
-    echo "Verifying staged Bazzite deployment ($STAGED)..."
-    failed=0
-    for pkg in "${CRITICAL[@]}"; do
-        if echo "$REMOVED" | grep -qE "^  ${pkg}-"; then
-            echo "  ✗ CRITICAL: '$pkg' is REMOVED in the staged upgrade"
-            failed=1
-        fi
-    done
-    [ "$failed" -eq 0 ] && echo "  ✓ all critical packages present"
-
-    echo
-    echo "Watch package version changes:"
-    any=0
-    for pkg in "${WATCH[@]}"; do
-        line=$(echo "$UPGRADED" | grep -E "^  ${pkg} " || true)
-        if [ -n "$line" ]; then
-            echo "$line"
-            any=1
-        fi
-    done
-    [ "$any" -eq 0 ] && echo "  (no watched packages have version changes)"
-
-    if [ "$failed" -eq 1 ]; then
-        echo
-        echo "✗ Staged upgrade is UNSAFE — DO NOT REBOOT."
-        echo "  Discard the staged image with:"
-        echo "    ssh anduril 'rpm-ostree cleanup --pending'"
-        exit 1
-    fi
-
-    echo
-    echo "✓ Staged upgrade looks safe."
-    echo "  When ready to activate: ssh -t anduril 'sudo systemctl reboot'"
+# Security updates already land unattended; this is the deliberate full
+# `apt upgrade`. NVIDIA is `apt-mark hold`ed (so 595 — which drops the GTX
+# 970's Maxwell arch — can never be pulled) and Sunshine isn't in any apt
+# repo, so neither moves here. The kernel is only held from *unattended*
+# upgrades (host_vars/anduril), so this WILL bump it — take a fresh PBS
+# snapshot first if a passthrough-breaking kernel regression would hurt, and
+# reboot deliberately afterward (GPU cold-start is the reliability bar).
+patch-anduril:
+    @echo "Patching anduril (Kubuntu)..."
+    ssh anduril 'sudo bash -c "export DEBIAN_FRONTEND=noninteractive && apt update && apt -y upgrade && apt -y autoremove && apt clean"'
 
 # Check pending reboots across all apt-based hosts
 # (Returns nothing if no reboot is pending)

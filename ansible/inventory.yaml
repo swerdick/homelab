@@ -18,15 +18,12 @@ all:
         erebor: {}
         samwise: {}
         eregion: {}
-    bazzite_hosts:
-      # anduril is a Bazzite (Fedora-based atomic) gaming VM, off most of the
-      # time. Plays should treat it as opportunistically reachable. SSH is
-      # configured externally via ~/.ssh/config; if/when ansible runs against
-      # it we'll likely need ansible_become details — adjust as needed.
-      hosts:
-        anduril:
-          ansible_become: true
-          ansible_become_method: sudo
+        # anduril is a Kubuntu 26.04 gaming VM (replatformed from Bazzite,
+        # 2026-05). Off most of the time, so fleet plays should treat it as
+        # opportunistically reachable — an `unreachable` recap line when it's
+        # powered down is expected, not a failure to chase. The `pseudo` user
+        # is created at OS-install time with the operator's SSH key.
+        anduril: {}
     proxmox_hosts:
       hosts:
         earendil: {}
@@ -48,9 +45,12 @@ all:
         erebor: {}
         samwise: {}
         eregion: {}
+        anduril: {}
     # Debian-family hosts that should receive automated security updates.
-    # Excludes earendil (Proxmox host — kernel upgrades need manual care)
-    # and anduril (Bazzite/Fedora atomic — uses rpm-ostree).
+    # Excludes earendil (Proxmox host — kernel upgrades need manual care).
+    # anduril (Kubuntu gaming VM) is included but holds back kernel/NVIDIA/
+    # Sunshine from unattended upgrades via host_vars/anduril (those families
+    # can break GPU passthrough / cold-start); see unattended_upgrade_blacklist.
     debian_guests:
       hosts:
         gondor: {}
@@ -61,6 +61,7 @@ all:
         tirion: {}
         samwise: {}
         eregion: {}
+        anduril: {}
     # Hosts that join gondor's k3s cluster as workers via the
     # install-k3s-agent.yaml playbook. gondor itself is the single-node
     # server and is intentionally NOT in this group.

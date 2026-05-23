@@ -1,0 +1,29 @@
+---
+# Host vars for anduril — Kubuntu 26.04 LTS gaming VM (Sunshine/Moonlight).
+# See terraform/descriptions/anduril.md and playbooks/site-anduril.yaml.
+
+# --- Sunshine ------------------------------------------------------------
+# Sunshine ships no apt repo; it's installed from LizardByte's per-release
+# .deb (playbooks/setup-sunshine.yaml). Pin the version explicitly and bump
+# deliberately — confirm the tag still carries a
+# `sunshine-ubuntu-26.04-amd64.deb` asset at
+# https://github.com/LizardByte/Sunshine/releases before bumping.
+# (Verified present in v2026.516.143833 on 2026-05-22.)
+sunshine_deb_version: "v2026.516.143833"
+sunshine_deb_url: "https://github.com/LizardByte/Sunshine/releases/download/{{ sunshine_deb_version }}/sunshine-ubuntu-26.04-amd64.deb"
+
+# --- Unattended upgrades -------------------------------------------------
+# anduril gets unattended *security* upgrades like the rest of debian_guests,
+# but these package families are held back (Unattended-Upgrade::Package-Blacklist
+# in install-unattended-upgrades.yaml): an unattended kernel/NVIDIA bump can
+# break GPU passthrough, and bumping past nvidia-driver-580 drops the GTX 970's
+# Maxwell arch entirely (590+). A Sunshine bump can change the systemd unit or
+# streaming behaviour mid-session. Bump these deliberately instead (apt + a
+# fresh PBS snapshot first). Entries are regex-matched against package names.
+# NVIDIA is additionally `apt-mark hold`ed during bring-up as belt-and-braces
+# so even a manual `apt upgrade` can't pull 595.
+unattended_upgrade_blacklist:
+  - "linux-"
+  - "nvidia-"
+  - "libnvidia-"
+  - "sunshine"

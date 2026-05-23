@@ -43,6 +43,12 @@
       - tmux
       - lsb-release
       - bash-completion
+      # sshd is the management transport for the whole fleet. Proxmox
+      # templates ship it, but a desktop image (e.g. Kubuntu on anduril)
+      # may not — declare it so it's guaranteed present. NOTE: this can
+      # only converge once ansible can already reach the host, so the
+      # very first SSH channel on a fresh host is still a manual bootstrap.
+      - openssh-server
 
   tasks:
     - name: Sanity-check that this is a Debian-family host
@@ -60,6 +66,12 @@
       ansible.builtin.apt:
         name: "{{ debian_base_packages }}"
         state: present
+
+    - name: Ensure openssh-server is enabled and running
+      ansible.builtin.systemd:
+        name: ssh
+        enabled: true
+        state: started
 
     # --- Locale ----------------------------------------------------------
 
@@ -99,6 +111,13 @@
         name: "{{ debian_base_timezone }}"
 
     # --- Time sync -------------------------------------------------------
+
+    - name: Ensure systemd-timesyncd is installed
+      # Server/LXC images ship it, but a minimal desktop install (e.g.
+      # Kubuntu on anduril) may not — install it so the enable below works.
+      ansible.builtin.apt:
+        name: systemd-timesyncd
+        state: present
 
     - name: Ensure systemd-timesyncd is enabled and running
       # Already enabled on stock Debian, but Proxmox's minimal LXC

@@ -1,60 +1,333 @@
 ---
-# Configure Sunshine (Moonlight host) on Bazzite gaming VMs.
+# Configure the GPU/NVENC boot prerequisites and Sunshine (Moonlight host)
+# on anduril, the Kubuntu 26.04 LTS gaming VM.
 #
-# Currently only anduril is in `bazzite_hosts`. The Bazzite image ships
-# Sunshine pre-installed via rpm-ostree; this playbook layers on the
-# sunshine-specific host-local tweaks that make it actually stream reliably:
+# anduril was replatformed from Bazzite to Kubuntu 26.04 LTS in May 2026
+# (see terraform/descriptions/anduril.md). This playbook owns the *config*
+# layer that makes a headless GTX 970 passthrough VM stream reliably. The
+# mainline 6.12.90 kernel and the 580.95.05 .run driver themselves are a
+# manual bring-up (documented in descriptions/anduril.md and the
+# project-anduril-kubuntu-nvenc-recipe memory) and live in the PBS snapshot,
+# NOT automated here — only the idempotent boot/runtime config below is.
 #
-#   1. A systemd user dropin replacing Sunshine's fragile `sleep 5`
-#      startup with a poll for the graphical session env.
-#   2. Enabling nvidia-persistenced so CUDA stays warm and Sunshine
-#      picks NVENC instead of falling back to libx264 software.
+#   1. GPU boot prerequisites: the `nvidia-drm.modeset=1` +
+#      simpledrm-blacklist kernel cmdline (without modeset, nvidia-drm is
+#      render-only with zero KMS connectors → no capturable display →
+#      Sunshine "Couldn't find monitor [0]" / 503) and the nouveau blacklist.
+#   2. nvidia-persistenced (a unit this playbook installs) so CUDA stays warm
+#      and Sunshine picks NVENC instead of libx264 software encoding.
+#   3. The version-pinned Sunshine .deb (pinned in host_vars/anduril; no apt
+#      repo exists). KMS-capture capability on the binary + `input` group
+#      membership for the uinput virtual gamepad/keyboard/mouse path.
+#   4. SDDM autologin + linger so a Plasma session (which Sunshine must
+#      capture) is always present on this headless host, even cold.
+#   5. A persistent kde-inhibit service so the display NEVER blanks. On this
+#      card a DPMS-off / blank-and-wake cycle corrupts the KMS capture state
+#      irrecoverably (only a HOST reboot of earendil resets it), so we hold a
+#      power + screensaver inhibit for the life of the session rather than
+#      trusting Plasma's powerdevil config — whose "never" idleTime semantics
+#      proved unreliable on Plasma 6.6. VERIFIED to hold the display On past a
+#      blank timeout.
+#   6. A systemd user dropin replacing Sunshine's fragile `sleep 5` startup
+#      with a poll for the graphical-session env, plus a csrf_allowed_origins
+#      entry so the web UI can be paired from another host.
 #
-# Bazzite-wide setup (polkit, ostree pin, auto-update disable, KDE
-# power-management disable) lives in setup-bazzite-base.yaml. Use
-# site-anduril.yaml to apply both in order.
+# Apply via site-anduril.yaml, which first runs the standard Debian bootstrap
+# (pseudo user, base, root CA, unattended-upgrades, alloy). Idempotent.
 #
-# Structured as two plays so the become semantics are unambiguous: the
-# first runs as the SSH user (pseudo, no sudo) and only touches paths
-# in $HOME; the second runs as root for the systemd unit enable. Mixing
-# user-level and root-level tasks in a single play with task-level
-# `become:` overrides hits an ansible quirk where play-level
-# `ansible_become: false` masks task-level `become: true`, leaving
-# the supposed-to-be-root task running as the SSH user.
+# WARNING: never hot-change the display mode/refresh on a live session via
+# `kscreen-doctor` — a runtime modeset wedges the nvidia display engine, hangs
+# the guest, and (because the GTX 970 has no PCI reset) needs a HOST reboot to
+# recover. Leave the mode at kwin's default. See the recipe memory.
+#
+# Note: unlike the old Bazzite base playbook, no polkit rule is needed for
+# ansible-managed systemd here — on Debian/Ubuntu, root-over-sudo manages
+# units without the Fedora "inactive polkit session" denial.
+#
+# Structured as two plays so the become semantics are unambiguous: the first
+# runs as root (boot prereqs, package install, system units, autologin); the
+# second as the SSH user (pseudo) for the $HOME-scoped systemd-user + KDE
+# config. Mixing become levels in one play hits an ansible quirk where
+# play-level `ansible_become: false` masks task-level `become: true`.
 
-- name: Configure Sunshine user-level systemd integration
-  hosts: bazzite_hosts
+- name: Install Sunshine and its GPU/system-level prerequisites
+  hosts: anduril
+  gather_facts: false
+  become: true
+
+  tasks:
+    # --- GPU passthrough boot prerequisites --------------------------------
+    # Reproduce the hand-tuned boot config on a from-scratch rebuild. On the
+    # live host these are already in place (so no-ops); the kernel + .run
+    # driver bring-up that sits underneath them is manual — see anduril.md.
+
+    - name: Set the kernel cmdline for NVIDIA KMS display + no simpledrm
+      # nvidia-drm.modeset=1 is ESSENTIAL: without it nvidia-drm is render-only
+      # with zero KMS connectors, so there is no capturable display and the
+      # dummy plug can't attach (Sunshine: "Couldn't find monitor [0]" / 503).
+      # initcall_blacklist=simpledrm_platform_driver_init kills the OVMF EFI
+      # framebuffer that otherwise becomes card0 and steals the desktop.
+      ansible.builtin.lineinfile:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX_DEFAULT='
+        line: "GRUB_CMDLINE_LINUX_DEFAULT='quiet splash initcall_blacklist=simpledrm_platform_driver_init nvidia-drm.modeset=1'"
+      register: anduril_grub_cmdline
+
+    - name: Regenerate the grub config when the cmdline changed
+      # Takes effect on next boot only, and the reboot is deliberately left
+      # manual (a reboot cycles the GPU). No-op on the already-configured host.
+      ansible.builtin.command: update-grub
+      when: anduril_grub_cmdline.changed
+
+    - name: Blacklist nouveau so the NVIDIA driver owns the GPU
+      # The .run installer writes this; declare it so a rebuild has it even
+      # before the driver is reinstalled.
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/nvidia-installer-disable-nouveau.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-sunshine.yaml) — edit the playbook.
+          blacklist nouveau
+          options nouveau modeset=0
+
+    # --- Sunshine install --------------------------------------------------
+
+    - name: Download the pinned Sunshine .deb
+      ansible.builtin.get_url:
+        url: "{{ sunshine_deb_url }}"
+        dest: "/var/cache/sunshine-{{ sunshine_deb_version }}.deb"
+        mode: "0644"
+      register: sunshine_deb
+
+    - name: Install Sunshine from the local .deb (resolves dependencies)
+      ansible.builtin.apt:
+        deb: "{{ sunshine_deb.dest }}"
+
+    # Sunshine's .deb postinst setcaps the binary with cap_sys_admin (KMS
+    # frame capture on Wayland) + cap_sys_nice (encoder scheduling priority).
+    # Re-assert BOTH idempotently in case they're ever lost — in one setcap
+    # call, because community.general.capabilities manages a single capability
+    # and rewrites the whole set, dropping the other one.
+    - name: Read Sunshine's current capabilities
+      ansible.builtin.command: getcap /usr/bin/sunshine
+      register: sunshine_caps
+      changed_when: false
+      check_mode: false
+
+    - name: Ensure Sunshine has cap_sys_admin (KMS capture) + cap_sys_nice
+      ansible.builtin.command: setcap cap_sys_admin,cap_sys_nice+p /usr/bin/sunshine
+      when: >-
+        'cap_sys_admin' not in sunshine_caps.stdout
+        or 'cap_sys_nice' not in sunshine_caps.stdout
+
+    # uinput-based virtual gamepad/keyboard/mouse injection needs the
+    # sunshine-running user in the `input` group (the .deb ships the udev
+    # rule that grants that group access to /dev/uinput).
+    - name: Add pseudo to the input group for uinput device access
+      ansible.builtin.user:
+        name: pseudo
+        groups: input
+        append: true
+
+    # --- nvidia-persistenced ----------------------------------------------
+    # Holds a non-display reference to the GPU so the driver + CUDA init state
+    # stay warm between short-lived clients. Without it, Sunshine's encoder
+    # probe races a cold CUDA init, fails nvenc with CUDA_ERROR_NOT_INITIALIZED,
+    # and cascades all the way down to libx264 software encoding — burning CPU
+    # and wasting the passed-through GTX 970. The 580.95 .run installer ships
+    # no systemd unit (and the apt one was purged during bring-up), so install
+    # a minimal one. The ExecStartPre/ExecStopPost cleanup avoids the
+    # "stale /var/run/nvidia-persistenced" start failure seen after a manual
+    # foreground run or an unclean exit.
+
+    - name: Install the nvidia-persistenced unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/nvidia-persistenced.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-sunshine.yaml) — edit the playbook.
+          [Unit]
+          Description=NVIDIA Persistence Daemon (keeps the GTX 970 + CUDA warm for Sunshine)
+          After=syslog.target
+
+          [Service]
+          Type=forking
+          ExecStartPre=-/usr/bin/rm -rf /var/run/nvidia-persistenced
+          ExecStart=/usr/bin/nvidia-persistenced
+          ExecStopPost=-/usr/bin/rm -rf /var/run/nvidia-persistenced
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start nvidia-persistenced
+      ansible.builtin.systemd:
+        name: nvidia-persistenced.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # --- Headless graphical session ---------------------------------------
+    # A graphical session must always be present for Sunshine to capture on
+    # this headless VM. Autologin pseudo into the Plasma 6 Wayland session so
+    # a cold boot lands in a capturable desktop with no human at a keyboard.
+
+    - name: Ensure the SDDM drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/sddm.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: Configure SDDM autologin into the Plasma Wayland session
+      # Named `99-` so it sorts after Kubuntu's own `20-kubuntu.conf` (which
+      # ships `Relogin=false`) — SDDM reads /etc/sddm.conf.d/*.conf in order
+      # with later files winning, so this is the authoritative autologin
+      # config. `Session=plasma` is the Plasma 6 Wayland session. `Relogin=true`
+      # re-logs pseudo back in if the session ever exits, so Sunshine never
+      # loses its capture target on this headless host.
+      ansible.builtin.copy:
+        dest: /etc/sddm.conf.d/99-anduril-autologin.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-sunshine.yaml) — edit the playbook.
+          [Autologin]
+          User=pseudo
+          Session=plasma
+          Relogin=true
+
+    # Linger keeps pseudo's `systemd --user` manager (and the enabled sunshine
+    # + keep-awake user units) alive across logout, so streaming survives a
+    # session blip without needing a fresh interactive login.
+    - name: Enable linger for pseudo
+      # Create the linger marker directly rather than `loginctl enable-linger`:
+      # on this host the SetUserLinger D-Bus call to logind times out, but the
+      # marker file's existence is the actual mechanism logind reads at boot to
+      # start the user manager. (Belt-and-suspenders alongside SDDM autologin.)
+      ansible.builtin.copy:
+        dest: /var/lib/systemd/linger/pseudo
+        content: ""
+        owner: root
+        group: root
+        mode: "0644"
+
+
+- name: Configure Sunshine user-level integration and never-blank
+  hosts: anduril
   gather_facts: false
   become: false
   vars:
-    # Inventory sets `ansible_become: true` for this host; clear it here
-    # so the user-level tasks run as the SSH user (pseudo) without sudo.
+    # sudo_hosts sets ansible_become: true for this host; clear it here so
+    # these $HOME-scoped tasks run as the SSH user (pseudo) without sudo.
     ansible_become: false
 
   tasks:
+    # --- Never blank: a persistent kde-inhibit service ---------------------
+    # Replaces the old powermanagementprofilesrc `idleTime=""` tasks, which
+    # were unreliable on Plasma 6.6 (settings migrated to powerdevilrc and the
+    # empty-value "never" semantics didn't actually disable blanking). kde-inhibit
+    # holds a power + screensaver inhibit for as long as it runs, so the display
+    # never goes DPMS-off — critical because on this card a blank/wake cycle
+    # corrupts KMS capture until a host reboot. VERIFIED: holds the display On
+    # past a forced 60s blank timeout. WantedBy=graphical-session.target so it
+    # comes up with every (auto)login and survives reboots.
+    - name: Ensure the systemd user unit directory exists
+      ansible.builtin.file:
+        path: ~/.config/systemd/user
+        state: directory
+        mode: "0755"
+
+    - name: Install the keep-awake (kde-inhibit) user service
+      ansible.builtin.copy:
+        dest: ~/.config/systemd/user/sunshine-keepawake.service
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-sunshine.yaml) — edit the playbook.
+          [Unit]
+          Description=Hold a KDE power+screensaver inhibit so the display never blanks (Sunshine capture)
+          PartOf=graphical-session.target
+          After=plasma-workspace.target
+
+          [Service]
+          ExecStart=/usr/bin/kde-inhibit --power --screenSaver /usr/bin/sleep infinity
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=graphical-session.target
+
+    - name: Enable and start the keep-awake service
+      ansible.builtin.systemd:
+        name: sunshine-keepawake.service
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # --- KDE screen lock (headless: never lock) ---------------------------
+    # ini_file (not copy) so Plasma's own GUI writes to other sections are
+    # preserved. A lock screen on a headless host just blocks the capture.
+
+    - name: Disable KDE screen autolock
+      community.general.ini_file:
+        path: ~/.config/kscreenlockerrc
+        section: Daemon
+        option: Autolock
+        value: "false"
+        mode: "0644"
+        create: true
+        no_extra_spaces: true
+
+    - name: Disable KDE lock-on-resume
+      community.general.ini_file:
+        path: ~/.config/kscreenlockerrc
+        section: Daemon
+        option: LockOnResume
+        value: "false"
+        mode: "0644"
+        create: true
+        no_extra_spaces: true
+
+    # --- Sunshine systemd-user integration --------------------------------
+
     - name: Ensure sunshine systemd user dropin directory exists
       ansible.builtin.file:
         path: ~/.config/systemd/user/app-dev.lizardbyte.app.Sunshine.service.d
         state: directory
         mode: "0755"
 
+    - name: Ensure sunshine.conf trusts the host's FQDN for CSRF
+      # Sunshine's web UI (PIN pairing, app config) only trusts an Origin of
+      # `https://localhost:47990`. Pairing a Moonlight client from another
+      # host — the common case for a headless gaming VM, where the operator
+      # opens the web UI from a laptop browser — sends an Origin of
+      # `https://<host>.vingilot.internal:47990` and Sunshine drops the POST
+      # before the pairing handler runs, reporting a misleading
+      # "Pairing Failed". `csrf_allowed_origins` whitelists the FQDN so
+      # pairing works without SSH-tunnelling 47990 to localhost each time.
+      ansible.builtin.lineinfile:
+        path: ~/.config/sunshine/sunshine.conf
+        create: true
+        mode: "0644"
+        regexp: '^csrf_allowed_origins\s*='
+        line: "csrf_allowed_origins = https://{{ inventory_hostname }}.vingilot.internal:47990"
+      notify: Restart sunshine
+
     - name: Install sunshine env-wait dropin
-      # Background:
       # The upstream unit ships `ExecStartPre=/bin/sleep 5` as a fragile
-      # workaround for a startup race. Sunshine relies on the graphical
-      # session env (WAYLAND_DISPLAY etc.) being present in the user systemd
-      # manager. Plasma-wayland calls `systemctl --user import-environment`
-      # *during* session bring-up, but the systemd manager can fire
-      # graphical-session.target — and therefore start sunshine — before
-      # that import has actually completed. When it loses that race,
-      # sunshine starts with an empty environ, can't reach the compositor
-      # for capture, busy-loops at ~97% CPU, and eventually wedges a thread
-      # in the nvidia kernel driver such that even SIGKILL won't reap it.
-      # Symptom: sunshine.log halts at the first config line and never
-      # reaches encoder probing; streaming ports never open.
-      #
-      # Fix: replace the timing hack with a poll that waits for the env to
-      # actually be importable before sunshine starts.
+      # workaround for a startup race: Sunshine needs the graphical-session
+      # env (WAYLAND_DISPLAY etc.) present in the user systemd manager, but
+      # Plasma calls `systemctl --user import-environment` *during* session
+      # bring-up and the manager can start sunshine before that completes.
+      # When it loses that race, sunshine starts with an empty environ, can't
+      # reach the compositor to capture, busy-loops at ~97% CPU, and wedges a
+      # thread in the nvidia driver such that even SIGKILL won't reap it.
+      # Replace the timing hack with a poll for the env to be importable.
       ansible.builtin.copy:
         dest: ~/.config/systemd/user/app-dev.lizardbyte.app.Sunshine.service.d/wait-for-env.conf
         content: |
@@ -62,37 +335,29 @@
           ExecStartPre=
           ExecStartPre=/bin/bash -c 'until systemctl --user show-environment | grep -q "^WAYLAND_DISPLAY="; do sleep 0.5; done'
         mode: "0644"
-      notify: Reload user systemd manager
+      notify:
+        - Reload user systemd manager
+        - Restart sunshine
+
+    - name: Enable and start the Sunshine user unit
+      # The .deb installs the unit but does not enable it. daemon_reload picks
+      # up the dropins written above before the unit is (re)started.
+      ansible.builtin.systemd:
+        name: app-dev.lizardbyte.app.Sunshine.service
+        scope: user
+        enabled: true
+        state: started
+        daemon_reload: true
 
   handlers:
+    # Defined reload-before-restart: handlers run in definition order, so a
+    # dropin change reloads the manager before the restart picks it up.
     - name: Reload user systemd manager
       ansible.builtin.command: systemctl --user daemon-reload
       changed_when: false
 
-
-- name: Configure Sunshine system-level dependencies
-  hosts: bazzite_hosts
-  gather_facts: false
-  become: true
-
-  tasks:
-    # Background on the next task:
-    # nvidia-persistenced holds a non-display reference to the GPU so the
-    # kernel driver and CUDA init state stay warm between short-lived
-    # client processes. Without it, every fresh CUDA context pays a full
-    # driver reinit cost — and sunshine's encoder probe enumerates fast
-    # enough to race that cold start, failing nvenc selection with
-    # `CUDA_ERROR_NOT_INITIALIZED`. The fallback chain (vulkan, vaapi)
-    # uses the same CUDA path on this driver, so the failure cascades
-    # all the way down to libx264 software encoding — which works but
-    # burns CPU and discards the whole reason this VM has a GTX 970
-    # attached.
-    #
-    # Bazzite ships the unit with preset=enabled; this task just makes
-    # sure it's actually enabled and running on this host.
-
-    - name: Enable and start nvidia-persistenced
-      ansible.builtin.systemd:
-        name: nvidia-persistenced.service
-        enabled: true
-        state: started
+    - name: Restart sunshine
+      # Config-file edits (sunshine.conf) and unit dropins only take effect on
+      # a full restart. This boots any active streaming session; intended for
+      # changes applied between sessions.
+      ansible.builtin.command: systemctl --user restart app-dev.lizardbyte.app.Sunshine.service

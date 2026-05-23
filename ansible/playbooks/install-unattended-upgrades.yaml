@@ -14,16 +14,20 @@
         cache_valid_time: 3600
 
     - name: Probe apt for apt-config-auto-update
-      # Prefer apt-config-auto-update where available (Trixie default; also
-      # present on Bookworm). Fall back to update-notifier-common otherwise.
-      # apt-cache rc is per-package, so probe each independently.
-      ansible.builtin.command: apt-cache show apt-config-auto-update
+      # Prefer apt-config-auto-update where installable (Trixie default; also
+      # on Bookworm). Fall back to update-notifier-common (Ubuntu, older
+      # Debian) otherwise. Use a simulated install rather than `apt-cache
+      # show`: on Ubuntu 26.04 a metadata record for apt-config-auto-update
+      # exists (apt-cache show returns 0) but there's no installable
+      # candidate, so `show` would mis-select it. `install -s` checks the
+      # candidate, not just metadata.
+      ansible.builtin.command: apt-get install -s apt-config-auto-update
       changed_when: false
       failed_when: false
       register: probe_apt_config_auto_update
 
     - name: Probe apt for update-notifier-common
-      ansible.builtin.command: apt-cache show update-notifier-common
+      ansible.builtin.command: apt-get install -s update-notifier-common
       changed_when: false
       failed_when: false
       register: probe_update_notifier_common
@@ -53,6 +57,22 @@
           - apt-listchanges
         state: present
 
+    - name: Select security-update origins for this distro
+      # Debian and Ubuntu use different apt origins/labels for the security
+      # pocket, so the Origins-Pattern must be distro-specific or unattended
+      # security upgrades silently match nothing. (apt expands the
+      # ${distro_*} placeholders at runtime — they are literal strings here.)
+      ansible.builtin.set_fact:
+        uu_origins: "{{ uu_origins_ubuntu if ansible_facts.distribution == 'Ubuntu' else uu_origins_debian }}"
+      vars:
+        uu_origins_debian:
+          - "origin=Debian,codename=${distro_codename},label=Debian-Security"
+          - "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"
+        uu_origins_ubuntu:
+          - "${distro_id}:${distro_codename}-security"
+          - "${distro_id}ESMApps:${distro_codename}-apps-security"
+          - "${distro_id}ESM:${distro_codename}-infra-security"
+
     - name: Write /etc/apt/apt.conf.d/50unattended-upgrades
       ansible.builtin.copy:
         dest: /etc/apt/apt.conf.d/50unattended-upgrades
@@ -64,14 +84,22 @@
           // — edit the playbook, not this file.
 
           Unattended-Upgrade::Origins-Pattern {
-              // Security updates only
-              "origin=Debian,codename=${distro_codename},label=Debian-Security";
-              "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+              // Security updates only (distro-specific — see the playbook).
+          {% for o in uu_origins %}
+              "{{ o }}";
+          {% endfor %}
           };
 
-          // Don't auto-upgrade these even if they have security updates
-          // (add packages here if something breaks during an auto-upgrade).
+          // Don't auto-upgrade these even if they have security updates.
+          // Driven by `unattended_upgrade_blacklist` (default empty); set it
+          // in host_vars for hosts where a package family must never be
+          // touched unattended (e.g. anduril holds kernel/nvidia/sunshine so
+          // an auto-upgrade can't break GPU passthrough). Entries are
+          // regex-matched against package names.
           Unattended-Upgrade::Package-Blacklist {
+          {% for pkg in unattended_upgrade_blacklist | default([]) %}
+              "{{ pkg }}";
+          {% endfor %}
           };
 
           // Remove unused kernels and dependencies
