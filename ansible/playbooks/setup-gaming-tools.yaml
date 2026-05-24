@@ -1,0 +1,43 @@
+---
+# Gaming-specific userland tooling for anduril (the Kubuntu gaming VM).
+#
+# Kept separate from:
+#   - setup-debian-base.yaml  — deliberately minimal + fleet-wide; nothing
+#                               gaming-specific belongs there.
+#   - setup-sunshine.yaml     — the streaming *server*; this is client-side
+#                               tooling for the games themselves.
+#
+# mangohud: a Vulkan/OpenGL overlay + frame limiter. Used via a Steam launch
+# option, e.g.  MANGOHUD_CONFIG=fps_limit=40 mangohud %command%
+# A steady frame cap (paired with in-game V-Sync OFF) avoids the hard-V-Sync
+# 60/N staircase (60 -> 30 -> 20 -> 12) that otherwise shows up as FPS dips
+# while streaming over Sunshine — the GPU has headroom but V-Sync quantizes
+# the present rate. A steady cap also gives the NVENC encoder even frame
+# pacing, which smooths the Moonlight stream.
+#
+# `hosts: anduril` scopes this play to anduril by construction, so it's safe
+# to run unrestricted — no other host is ever in scope.
+#
+# Idempotent — safe to re-run.
+
+- name: Install gaming userland tooling on anduril
+  hosts: anduril
+  tasks:
+    - name: Sanity-check this is anduril (the gaming VM)
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "anduril"
+        fail_msg: "setup-gaming-tools.yaml is anduril-only; got {{ inventory_hostname }}"
+
+    - name: Refresh apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install gaming tools
+      # mangohud lives in Ubuntu 'universe'. If a future release drops it,
+      # fall back to the upstream .deb from github.com/flightlessmango/MangoHud.
+      ansible.builtin.apt:
+        name:
+          - mangohud
+        state: present
