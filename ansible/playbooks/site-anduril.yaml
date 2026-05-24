@@ -12,6 +12,7 @@
 #                                         sunshine held back via host_vars)
 #   5. install-alloy.yaml               — metrics + journald logs to Grafana
 #   6. setup-sunshine.yaml              — Sunshine .deb + headless streaming
+#   7. setup-gaming-tools.yaml          — mangohud + gaming userland tooling
 #
 # This closes the old ROADMAP "Anduril Alloy + distribute-root-ca rollout"
 # item: those plays are OS-family-aware and now Just Work on the apt base.
@@ -38,3 +39,4 @@
 - import_playbook: install-unattended-upgrades.yaml
 - import_playbook: install-alloy.yaml
 - import_playbook: setup-sunshine.yaml
+- import_playbook: setup-gaming-tools.yaml
