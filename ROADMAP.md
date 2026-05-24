@@ -122,6 +122,16 @@ Plant watering as a Flux-reconciled k3s workload on samwise (ARM worker — join
 
 Time-pressured by growing season. Samwise is a k3s worker now; the remaining gate is the USB SSD swap (needed before any local-path PV gets written to SD-card flash) + relay/solenoid hardware on the Pi side.
 
+### hamfast — recovered Pi 2 as a standalone (non-k3s) remote-plant node
+
+The **original v1 watering Pi** resurfaced 2026-05-24 — and it's a **Raspberry Pi 2 Model B v1.1**, not the Pi 3 it was remembered as: BCM2836, **ARMv7 32-bit** (cannot run arm64), quad-core A7, 1 GB RAM, Edimax USB WiFi, 40-pin header. Found with the original 8-channel SONGLE opto-isolated relay + resistive sensors still wired (and the long-lost soldering kit).
+
+**Decision: onboard it as a standalone ansible-managed host, _not_ a k3s worker.** The k3s agent (~300–500 MB) stacked on the host Alloy we already run everywhere (~300 MB) is unjustifiable on 1 GB for a single pinned, can't-reschedule, hand-built-armhf workload — Alloy alone gives the observability without the orchestration tax. (Tainting it into a corner works but solves the wrong problem; armv7 is effectively EOL — k3s has flagged armhf for possible removal — and a k3s node churns the SD card harder than a bare service.) The same overhead that's a rounding error on samwise's 8 GB is half the box here; the arithmetic inverts. When it's actually onboarded it earns the name **`hamfast`** (the Gaffer — Sam's father, fitting companion to samwise).
+
+**Candidate role:** a remote / awkward-spot plant monitor-waterer running the same `auto_water` Python app from a venv + systemd unit (armhf from source, not the arm64 container samwise pulls), writing to the **same CNPG Postgres** as samwise — the `readings` table already keys on `sensor_id`, so a second node is free in the data model. samwise stays the main plant; hamfast is whenever a second plant in an odd spot materializes. No rush.
+
+**Open design thread (multi-node → DB):** hamfast can't use cluster-local DB access, which nudges toward fronting CNPG with a **small ingestion service** both nodes write through — samwise via in-cluster Service DNS, hamfast over the LAN / Headscale tailnet (or a MetalLB LoadBalancer). Clients then hold an API token instead of DB creds and don't couple to the schema, and it's a natural home for future watering-command APIs. Leaning gRPC (doubles as a learning goal). The app's `ReadingSink` abstraction makes the client side a drop-in (add a gRPC sink alongside the Postgres/stdout ones). A queue (Kafka/etc.) in between was weighed and rejected as overkill for one low-rate sink — NATS JetStream would be the lighter pick if durable buffering is ever wanted, but the poller already has an in-memory retry buffer.
+
 ### Deploy Vibeseeker to local k3s
 
 User's own app — currently developed elsewhere, wants a stable in-cluster deployment as a real "production"-feeling target. Standard shape: HelmRelease in a `vibeseeker` namespace, HTTPRoute at `vibeseeker.vingilot.internal` (or whatever public hostname makes sense via Cloudflare Tunnel), CNPG-backed Postgres if it needs persistent state, image pulled from the local registry (see CI/CD section) or upstream until that lands. Image probably built by self-hosted GHA runners — three of the CI/CD items below are natural preconditions if the goal is full local dev-loop.
