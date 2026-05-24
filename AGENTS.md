@@ -32,7 +32,7 @@ The balance: don't propose hacky homelab shortcuts that would hurt the resume an
 Single physical machine (earendil) hosting everything:
 
 - **CPU**: Intel Core i7-6700K (Skylake, 4C/8T, 4.0 GHz base)
-- **RAM**: 16 GB DDR4 — Corsair Vengeance LPX CMK16GX4M2B3000C15 (kit is rated 3000 MHz; running at JEDEC 2133 because no XMP profile is enabled). **TODO**: enable XMP in BIOS during a planned maintenance window for ~40% more memory bandwidth. Requires a full earendil reboot (homelab-wide outage) and a memtest86 pass to confirm Skylake's IMC stays stable at the rated profile.
+- **RAM**: 48 GB DDR4 (46.9 GiB usable), 4 DIMMs — a **mixed kit**: 2× 16 GB Corsair `CMK32GX4M2E3200C16` (rated 3200) + 2× 8 GB Corsair `CMK16GX4M2B3000C15` (rated 3000), all running at JEDEC **2133 MT/s**. **XMP: evaluated and declined.** The two kits have different rated speeds, timings, and densities, so a stable rated profile is uncertain (XMP would target the lower common denominator at best, or fail to POST), and earendil is the always-on hypervisor — RAM instability is a homelab-wide blast radius, Postgres/CNPG corruption included. The only RAM-speed-sensitive workload is CPU-bound gaming on anduril (k3s/containers are capacity/IO/CPU-bound, indifferent to DDR4 speed), and that gain is a few fps at most. Left at JEDEC 2133 deliberately — do not re-pitch XMP without this context.
 - **Motherboard**: MSI Z170A Gaming M7 (MS-7976)
 - **GPU**: Nvidia GeForce GTX 970 — passed through to anduril for Moonlight game streaming
 - **Storage**:
