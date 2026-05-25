@@ -1,0 +1,30 @@
+# Sync the auto-water app repo directly. Its deploy/ directory owns the app's
+# k8s manifests, so releases (including image-tag bumps) happen in that repo —
+# no homelab PR per deploy. The repo + its GHCR image are public, so no git
+# auth or imagePullSecret is needed.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: auto-water
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: https://github.com/swerdick/auto-water.git
+  ref:
+    branch: main
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: auto-water
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: auto-water
+  path: ./deploy
+  prune: true
+  wait: true
