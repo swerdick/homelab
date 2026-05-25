@@ -12,3 +12,4 @@ resources:
   - loki-basic-auth.yaml
   - loki-route.yaml
   - alloy.yaml
+  - auto-water-datasource.yaml

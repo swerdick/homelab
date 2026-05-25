@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: auto-water-grafana-datasource
+    namespace: monitoring
+    labels:
+        # Picked up by the kube-prometheus-stack grafana datasource sidecar
+        # (RESOURCE=both, watches the monitoring namespace).
+        grafana_datasource: "1"
+type: Opaque
+stringData:
+    auto-water.yaml: ENC[AES256_GCM,data:6nkvP7vl/MnEVDa2p5OrV14BscmkHxj76+EjX4iKGe7RvijLIcmNcD6SF+hxuoA+lo8+0mE6O7uoqQqa6c4phGritCtldWyCGcGYa9ronWeQhj+8WaZvfiWRzQP4FUCRawPmSbf1EDFRG0RfavrPNcN/etV6Ge4y5pZriOr4xvRLQQ885UKf8MJVcfIogD5gwaWxboqvV8dWNfT+BIYMgPSoglzEz8aOAMcfCi3RiP1UqCjkRFOKVBCgz0gP28OOxVOSKlxB10Bu5JxK41LRi9gs+067eZp3Ssqffrls7A6dPT+bKdpfuokPyYywW96uznqyr/EGbBq4oAQIUPkl5kHKNMafFW8LiofaYbd2Ioz9oGGpczFh3t6Xx2z8y1r22nsJ5T1j4GhtgCKadZFthjddrWyToxhshqhHXPOksZZZbQEZ47C6MttvdFrGpYZHIbRHB3N16wHscHiCFQPTzW+DZC/wwPiOOOQGUACFTBK6bJuhNG3Zamca3dIWxHq/i/Rrcdtcbc4fDwl+hWwQQJ5c33EXEUPgPyKqORsaKDQUdNRbJ/j9tIXd24k+kWvBIrE7nzCXccf/Na72B3fY3GtAFQ==,iv:ofg08y07kZdwle28bznK4r0Eu7LNJ5zZ8BhzFdCQiNE=,tag:FkaI0H2OCcQLPHserOhzZQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBseVlpREx6TWFYcFg4aWdD
+            UGRGWkZTSENVdVlqUkhWWUN2MnFxQUpYVEJVCjY2c1lOdVRZTXJLRkR6SkpteXJR
+            WWVWSFc1RVRMbllCZ0tvNVdFUHhpVmsKLS0tIFpMbEFsclQwb1plWTVsNS80NDRJ
+            bjNDMHVwcnhQNW9VOWxCM2pRdTBaaFUK8qHhccUGGFOokZ7706TGk7w6ba04WSVY
+            6ikX4SFZ4JzqEukdBh4nVMoc3bq8UjuNAhwEw+6dsUJ9oRl+mMGPuw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-05-25T01:56:16Z"
+    mac: ENC[AES256_GCM,data:gETBm/pbps/hV0OLjVS9du50ltOzU8Ha6vUuJVEmHpEO1TbVAE3Wo4phAC3HJ8YQwQtpdMM0ej0JCR2RpndIxgVGwWCji19nJ6H8us6ROrFhraPdOCp1xWVVuvy/6gnzKnl4esvW8JOYge5InZSHs21Lb4DUMqbm/nUo7/60Yqs=,iv:0rwvseysv818mdgchyT3Ec75sd0DQjoKCLAKqpCj/hw=,tag:FscHjzXf3vmXAfy/CaDK7w==,type:str]
+    version: 3.13.1
