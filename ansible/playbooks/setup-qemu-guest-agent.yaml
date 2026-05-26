@@ -1,0 +1,61 @@
+---
+# Install + run the QEMU guest agent inside anduril (the Kubuntu gaming VM).
+#
+# This is the GUEST half of a two-part setup. terraform/anduril.tf sets
+# `agent { enabled = true }`, which tells PVE "this VM has a guest agent, go
+# talk to it" and wires up the virtio-serial channel. But the Kubuntu 26.04
+# replatform never installed the in-guest `qemu-guest-agent` daemon, so the
+# PVE side has been talking to nobody. Symptoms of the missing half:
+#
+#   - `tofu plan`/`apply` hangs ~per-VM then warns "timeout while waiting for
+#     the QEMU agent on VM 117 to publish the network interfaces" — bpg polls
+#     the agent for NIC info and waits out the timeout. (Authorized, just
+#     unanswered: the Terraform role has VM.GuestAgent.Audit; the daemon
+#     simply wasn't running. A 403 would have been instant.)
+#   - PVE can't report the guest's IPs, do agent-assisted graceful shutdown,
+#     or fsfreeze the filesystem for a consistent vzdump of the scsi0 OS disk.
+#
+# None of this affects gameplay or the Sunshine stream — it's host/PVE-side
+# plumbing. The games disk (scsi1) is backup=false, so fsfreeze only matters
+# for the OS disk's nightly backup.
+#
+# `hosts: anduril` scopes this play to anduril by construction, so it's safe
+# to run unrestricted — no other host is ever in scope. (Note this is VM-only:
+# the LXC fleet has no QEMU agent, which is exactly why this lives here and
+# not in the fleet-wide setup-debian-base.yaml.)
+#
+# Idempotent — safe to re-run.
+
+- name: Ensure the QEMU guest agent runs on anduril
+  hosts: anduril
+  tasks:
+    - name: Sanity-check this is anduril (the gaming VM)
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "anduril"
+        fail_msg: "setup-qemu-guest-agent.yaml is anduril-only; got {{ inventory_hostname }}"
+
+    - name: Refresh apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install qemu-guest-agent
+      ansible.builtin.apt:
+        name: qemu-guest-agent
+        state: present
+
+    - name: Enable and start the qemu-guest-agent service
+      # The service is activated off the virtio-serial channel PVE created
+      # when agent was enabled on the VM; enabling + starting it explicitly is
+      # idempotent and makes the dependency on that channel obvious.
+      ansible.builtin.systemd:
+        name: qemu-guest-agent
+        enabled: true
+        state: started
+      # Skipped under --check: the unit doesn't exist until the package is
+      # actually installed, which a dry run doesn't do. Without this guard the
+      # preview fails with "Could not find the requested service". A real run
+      # installs the package first, so the unit is present by the time we hit
+      # this task.
+      when: not ansible_check_mode

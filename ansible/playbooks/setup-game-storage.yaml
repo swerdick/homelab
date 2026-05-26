@@ -1,0 +1,76 @@
+---
+# Format + mount anduril's dedicated games disk (the 400G scsi1 zvol).
+#
+# This is the guest-OS half of the games-disk work. terraform/anduril.tf only
+# provisions the *block device*: it attaches a 400G disk on the scratch-zfs
+# pool as scsi1 (host zvol scratch/vm-117-disk-0) and hands the VM a raw
+# /dev/sd*. The filesystem + mount live inside the guest, which Terraform can't
+# reach — so they're codified here. (anduril's 128G OS disk on scsi0 was at
+# ~97%; the Steam library moves onto this disk.)
+#
+# Addressed by the stable by-id path tied to the scsi1 slot, NOT /dev/sdb,
+# which can reorder across boots/hotplugs.
+#
+# force is left at its default (false) so a re-run NEVER reformats a disk that
+# already has a filesystem — this is the guard that makes the play idempotent
+# and safe in the site-anduril.yaml chain (a PBS-restore rebuild re-establishes
+# the mount without touching data).
+#
+# `nofail` is load-bearing: anduril's bar is console-like cold-start
+# reliability, so a missing/not-ready games disk must NEVER block boot. With
+# nofail, anduril still comes up to the Sunshine session even if this disk is
+# detached. Thin-zvol space reclaim rides the default weekly fstrim.timer (the
+# QEMU disk has discard=on), so no continuous `discard` mount option.
+#
+# One-time manual step after the first run: in Steam, Settings -> Storage ->
+# add {{ games_mount }} as a library folder. Steam library config is per-user
+# GUI state, not worth automating.
+#
+# `hosts: anduril` scopes this to anduril by construction — safe to run
+# unrestricted. Idempotent — safe to re-run.
+
+- name: Format + mount anduril's games disk
+  hosts: anduril
+  vars:
+    games_disk: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
+    games_mount: /games
+    games_fstype: ext4
+    games_owner: pseudo
+  tasks:
+    - name: Sanity-check this is anduril (the gaming VM)
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "anduril"
+        fail_msg: "setup-game-storage.yaml is anduril-only; got {{ inventory_hostname }}"
+
+    - name: Create the ext4 filesystem on the games disk
+      # force=false (default) → never reformats a disk that already carries a
+      # filesystem. This is what makes a re-run a no-op instead of a wipe.
+      community.general.filesystem:
+        fstype: "{{ games_fstype }}"
+        dev: "{{ games_disk }}"
+        opts: -L games
+
+    - name: Ensure the mount point exists
+      ansible.builtin.file:
+        path: "{{ games_mount }}"
+        state: directory
+        mode: "0755"
+
+    - name: Mount the games disk (persisted in /etc/fstab)
+      ansible.posix.mount:
+        path: "{{ games_mount }}"
+        src: "{{ games_disk }}"
+        fstype: "{{ games_fstype }}"
+        opts: defaults,nofail
+        state: mounted
+
+    - name: Give pseudo ownership of the games volume
+      # Runs after the mount so it chowns the mounted filesystem root (mkfs
+      # leaves it root-owned), letting Steam — running as pseudo — create its
+      # SteamLibrary here.
+      ansible.builtin.file:
+        path: "{{ games_mount }}"
+        state: directory
+        owner: "{{ games_owner }}"
+        group: "{{ games_owner }}"

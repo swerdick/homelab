@@ -7,12 +7,16 @@
 #
 #   1. setup-pseudo-user.yaml           — pseudo user + NOPASSWD sudo + SSH key
 #   2. setup-debian-base.yaml           — locale, UTC timezone, base packages
-#   3. distribute-root-ca.yaml          — homelab root CA into the trust store
-#   4. install-unattended-upgrades.yaml — security updates (kernel/nvidia/
+#   3. setup-qemu-guest-agent.yaml      — QEMU guest agent (PVE NIC reporting,
+#                                         graceful shutdown, fsfreeze backups)
+#   4. distribute-root-ca.yaml          — homelab root CA into the trust store
+#   5. install-unattended-upgrades.yaml — security updates (kernel/nvidia/
 #                                         sunshine held back via host_vars)
-#   5. install-alloy.yaml               — metrics + journald logs to Grafana
-#   6. setup-sunshine.yaml              — Sunshine .deb + headless streaming
-#   7. setup-gaming-tools.yaml          — mangohud + gaming userland tooling
+#   6. install-alloy.yaml               — metrics + journald logs to Grafana
+#   7. setup-sunshine.yaml              — Sunshine .deb + headless streaming
+#   8. setup-gaming-tools.yaml          — mangohud + gaming userland tooling
+#   9. setup-game-storage.yaml          — format + mount the 400G games disk
+#                                         (scsi1) at /games for the Steam library
 #
 # This closes the old ROADMAP "Anduril Alloy + distribute-root-ca rollout"
 # item: those plays are OS-family-aware and now Just Work on the apt base.
@@ -35,8 +39,10 @@
 
 - import_playbook: setup-pseudo-user.yaml
 - import_playbook: setup-debian-base.yaml
+- import_playbook: setup-qemu-guest-agent.yaml
 - import_playbook: distribute-root-ca.yaml
 - import_playbook: install-unattended-upgrades.yaml
 - import_playbook: install-alloy.yaml
 - import_playbook: setup-sunshine.yaml
 - import_playbook: setup-gaming-tools.yaml
+- import_playbook: setup-game-storage.yaml
