@@ -14,6 +14,15 @@ resource "proxmox_virtual_environment_vm" "gondor" {
   on_boot       = true
   started       = true
 
+  # Never let Terraform power-cycle gondor: it's the single-node k3s server
+  # (the cluster control plane), so a bpg auto-reboot to apply a change would
+  # bounce all of Kubernetes. Unlike anduril this isn't about a hung shutdown
+  # (gondor stops cleanly) — it's about never surprise-rebooting the control
+  # plane for a cosmetic diff. Updates needing the VM offline FAIL loudly
+  # instead; we reboot gondor deliberately and re-apply. See anduril.tf for
+  # the incident that motivated this.
+  reboot_after_update = false
+
   agent {
     enabled = true
   }

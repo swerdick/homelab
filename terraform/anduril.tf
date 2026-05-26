@@ -26,6 +26,19 @@ resource "proxmox_virtual_environment_vm" "anduril" {
   on_boot       = true
   started       = true
 
+  # Never let Terraform power-cycle anduril. A bpg-issued graceful shutdown
+  # hangs indefinitely here: the headless Plasma session intercepts the ACPI
+  # power event (and the guest agent doesn't make it reliable), so an apply
+  # that needs a reboot stalls and then risks escalating to a force-stop. A
+  # hard stop is dangerous on this VM — the GTX 970 has no PCI reset, so a bad
+  # re-init wedges NVENC until a *host* reboot of earendil (see anduril.md's
+  # "Sunshine wedged" notes). With this false, an update that requires taking
+  # the VM offline FAILS loudly instead; we then reboot anduril ourselves (PVE
+  # UI / `qm reboot` / from inside) and re-apply. Learned the hard way on
+  # 2026-05-24 while hot-adding the scsi1 games disk — bpg tried to reboot to
+  # apply a cosmetic scsi0 option rewrite and the shutdown wedged.
+  reboot_after_update = false
+
   agent {
     enabled = true
   }
@@ -54,6 +67,28 @@ resource "proxmox_virtual_environment_vm" "anduril" {
     discard      = "on"
     iothread     = true
     ssd          = true
+  }
+
+  # Game library on the WD Blue (scratch pool, ~658G free). Games are
+  # re-downloadable, so this lives on the non-redundant scratch pool rather
+  # than eating into bulk (kept free for media). Becomes zvol
+  # scratch/vm-117-disk-N — a raw block device; anduril formats/mounts it
+  # guest-side. Explicitly:
+  #   ssd = false  — it's a 7200rpm HDD, don't lie to the guest about rotation.
+  #   discard = on — TRIM passes through so deleting a game reclaims pool space
+  #                  (scratch-zfs is thin-provisioned).
+  #   backup = false — anduril is in the nightly vzdump (backup-jobs.tf:27),
+  #                  which writes to /scratch/backups on this same disk. Backing
+  #                  up a disposable 400G library to its own drive is pure waste
+  #                  and would blow the backups quota.
+  disk {
+    datastore_id = "scratch-zfs"
+    interface    = "scsi1"
+    size         = 400
+    discard      = "on"
+    iothread     = true
+    ssd          = false
+    backup       = false
   }
 
   efi_disk {
