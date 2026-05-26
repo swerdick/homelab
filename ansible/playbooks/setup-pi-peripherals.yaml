@@ -1,0 +1,45 @@
+---
+# Enables the I²C and 1-Wire buses on Raspberry Pi sensor hosts so attached
+# sensors are reachable from userspace (and from containers via device mounts).
+# Idempotent — samwise was first configured by hand via raspi-config, so this
+# playbook simply becomes the source of truth and is a no-op on an already-set
+# host. Re-runs only reboot if the device-tree config actually changed.
+#
+# Targets samwise explicitly (the only Pi sensor host today). Extend to a group
+# if hamfast (the recovered Pi 2) ever joins as a second sensor box.
+#
+# Buses enabled:
+#   - I²C  (dtparam=i2c_arm=on)   -> /dev/i2c-1, addresses 0x23 (BH1750), 0x44 (HDC3022)
+#   - 1-Wire (dtoverlay=w1-gpio)  -> GPIO4, /sys/bus/w1/devices/28-* (DS18B20 probes)
+
+- name: Enable I²C and 1-Wire on Pi sensor hosts
+  hosts: samwise
+  tasks:
+    - name: Ensure I²C is enabled in /boot/firmware/config.txt
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: dtparam=i2c_arm=on
+        regexp: '^#?\s*dtparam=i2c_arm='
+        state: present
+      register: i2c_cfg
+
+    - name: Ensure the 1-Wire overlay (GPIO4) is enabled in /boot/firmware/config.txt
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: dtoverlay=w1-gpio
+        regexp: '^#?\s*dtoverlay=w1-gpio'
+        state: present
+      register: w1_cfg
+
+    - name: Ensure the i2c-dev module loads at boot
+      ansible.builtin.lineinfile:
+        path: /etc/modules
+        line: i2c-dev
+        state: present
+      register: i2c_mod
+
+    - name: Reboot to apply device-tree changes
+      ansible.builtin.reboot:
+        msg: "Applying I²C/1-Wire device-tree changes"
+        reboot_timeout: 600
+      when: i2c_cfg.changed or w1_cfg.changed or i2c_mod.changed
