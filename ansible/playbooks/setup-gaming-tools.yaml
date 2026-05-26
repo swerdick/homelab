@@ -15,6 +15,13 @@
 # the present rate. A steady cap also gives the NVENC encoder even frame
 # pacing, which smooths the Moonlight stream.
 #
+# qml6-module-qtlocation: the QtLocation QML module Plasma's digital-clock
+# "Time Zones" config page needs — its map-based TimezoneSelector does
+# `import QtLocation`. anduril's lean replatform pulled KDE WITHOUT Recommends,
+# so this map-selector dependency was skipped and the page silently failed to
+# load (`module "QtLocation" is not installed`). Additive desktop QoL, not a
+# gaming tool, but anduril-only — so it rides here rather than in fleet-wide base.
+#
 # `hosts: anduril` scopes this play to anduril by construction, so it's safe
 # to run unrestricted — no other host is ever in scope.
 #
@@ -40,4 +47,14 @@
       ansible.builtin.apt:
         name:
           - mangohud
+        state: present
+
+    - name: Install anduril desktop QoL packages
+      # qml6-module-qtlocation provides the QtLocation QML module Plasma's
+      # digital-clock "Time Zones" config page imports (the map-based
+      # TimezoneSelector). Absent on anduril's no-Recommends KDE install; apt
+      # auto-pulls qml6-module-qtpositioning as a dependency.
+      ansible.builtin.apt:
+        name:
+          - qml6-module-qtlocation
         state: present
