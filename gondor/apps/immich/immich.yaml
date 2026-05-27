@@ -40,12 +40,35 @@ spec:
   # of a HelmRelease); Immich pods will CrashLoopBackOff briefly until
   # CNPG creates the Secret, then settle.
   values:
-    # ML disabled for the initial deploy. Save 1-2 GiB of memory; lose
-    # face/object recognition (can be flipped on later by setting
-    # machine-learning.enabled=true once we've validated the rest works
-    # and the capacity-rebalance ROADMAP item lands).
+    # ML enabled 2026-05-26 (the rest of the pipeline is validated and
+    # earendil's 48 GiB upgrade retired the capacity ceiling). Adds ~1-2 GiB
+    # RAM — CLIP + face-detection models held resident — and unlocks smart
+    # search, face grouping, and content-aware tagging. Default CPU image
+    # (gondor has no GPU passthrough; that lives on anduril).
+    #
+    # cache is a PVC, not the chart-default emptyDir, so the ~1.5 GiB of
+    # downloaded models survive a pod restart instead of re-downloading on
+    # every start. ReadWriteOnce is fine — single ML replica.
     machine-learning:
-      enabled: false
+      enabled: true
+      persistence:
+        cache:
+          enabled: true
+          type: persistentVolumeClaim
+          accessMode: ReadWriteOnce
+          size: 10Gi
+          storageClass: nfs-scratch
+      controllers:
+        main:
+          containers:
+            main:
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 1Gi
+                limits:
+                  cpu: 2000m
+                  memory: 3Gi
 
     # Bundled Valkey for the in-cluster job queue / cache. Single replica;
     # ephemeral by default (loses queue state on pod restart, which is fine
