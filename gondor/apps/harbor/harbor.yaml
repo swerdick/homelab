@@ -1,0 +1,174 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: harbor
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://helm.goharbor.io
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: harbor
+  namespace: harbor
+spec:
+  interval: 30m
+  releaseName: harbor
+  chart:
+    spec:
+      chart: harbor
+      # Chart 1.19.x bundles Harbor 2.15.x (the chart version and Harbor's
+      # appVersion differ). Pin to the 1.19 line so patches flow but a major
+      # chart bump is a deliberate change.
+      version: ">=1.19.0 <1.20.0"
+      sourceRef:
+        kind: HelmRepository
+        name: harbor
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  # Harbor reads the Postgres password from the CNPG-generated
+  # harbor-postgresql-app Secret (database.external.existingSecret, key
+  # `password`) over the harbor-postgresql-rw Service. As with Immich, CNPG
+  # provisions that Secret asynchronously, so core/registry pods may
+  # CrashLoopBackOff briefly on first apply until it exists, then settle.
+  values:
+    # Harbor bakes externalURL into registry auth tokens and docker-login
+    # redirects — it must be the public https hostname even though TLS is
+    # terminated upstream at the vingilot Gateway (Traefik forwards
+    # X-Forwarded-Proto: https, so Harbor emits https URLs).
+    externalURL: https://harbor.vingilot.internal
+
+    # TLS terminates at the Gateway; Harbor runs plain HTTP behind it.
+    # expose.type clusterIP makes the chart deploy its internal nginx proxy
+    # (Service `harbor`, port 80) which path-routes /v2, /api, /service, and
+    # the portal — so harbor-route.yaml only needs a single `/` backend.
+    expose:
+      type: clusterIP
+      tls:
+        enabled: false
+      clusterIP:
+        name: harbor
+        ports:
+          httpPort: 80
+
+    # Admin bootstrap password from the SOPS-encrypted Secret (harbor-admin.yaml).
+    existingSecretAdminPassword: harbor-admin
+    existingSecretAdminPasswordKey: HARBOR_ADMIN_PASSWORD
+
+    # External Postgres (CNPG). Password from the existingSecret; the rest is
+    # plaintext config. sslmode disable for the in-cluster hop on first
+    # bring-up — revisit to `require` once validated (CNPG serves TLS).
+    database:
+      type: external
+      external:
+        host: harbor-postgresql-rw.harbor.svc.cluster.local
+        port: "5432"
+        username: harbor
+        coreDatabase: registry
+        existingSecret: harbor-postgresql-app
+        sslmode: disable
+
+    # External Redis → our per-app Valkey. DB indexes are Harbor's standard
+    # allocation; Valkey ships 16 logical DBs by default so 0–5 are in range.
+    redis:
+      type: external
+      external:
+        addr: harbor-valkey.harbor.svc.cluster.local:6379
+        coreDatabaseIndex: "0"
+        jobserviceDatabaseIndex: "1"
+        registryDatabaseIndex: "2"
+        trivyAdapterIndex: "5"
+
+    # Bundled Trivy scanner on from day one — auto-scans every pushed image.
+    # NOTE: Trivy pulls its vuln DB from ghcr.io anonymously, which is
+    # rate-limited; if DB refreshes start failing, add a GitHub PAT via
+    # trivy.gitHubToken (follow-up).
+    trivy:
+      enabled: true
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+
+    # mTLS between Harbor components — off for bring-up simplicity.
+    internalTLS:
+      enabled: false
+
+    # Storage on nfs-scratch (expandable). Registry blobs get the bulk; trivy
+    # holds its vuln DB; jobservice keeps its logs. The chart-internal
+    # database/redis PVCs are not created because we run external Postgres +
+    # Valkey, so their size keys are omitted.
+    persistence:
+      enabled: true
+      imageChartStorage:
+        type: filesystem
+      persistentVolumeClaim:
+        registry:
+          storageClass: nfs-scratch
+          accessMode: ReadWriteOnce
+          size: 50Gi
+        jobservice:
+          jobLog:
+            storageClass: nfs-scratch
+            accessMode: ReadWriteOnce
+            size: 1Gi
+        trivy:
+          storageClass: nfs-scratch
+          accessMode: ReadWriteOnce
+          size: 5Gi
+
+    # Explicit resource sizing on every running component — the chart ships
+    # none. Tuned for a low-traffic homelab registry on gondor.
+    nginx:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+    portal:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+    core:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    jobservice:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+    registry:
+      registry:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 512Mi
+      controller:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
