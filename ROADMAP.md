@@ -90,6 +90,19 @@ Probably a Phase-2-of-Loki-style session: ~60-90 min for the chart + ingress + d
 
 ## Apps & data services
 
+### Network status tester
+
+A little Go pod running as a cronjob that starts up, runs a network speedtest for upload/download rate, then saves that 
+do a DB which is added to a data source in grafana.  Cadance TBD, but I'm thinking once an hour.  goal is to gather data 
+on how my network performance is over time so I can feel justified in my disdain for verizon
+
+Earendil's nightly shutdown complicates this.  could run it on samwise, but it'd have to be a persistent pod instead of a 
+cron because we lose the control plane every night.  but might be fine if this is a little 25mb pod
+
+Could also run it as a daemon set and have the pods do leader election so that they don't run their tests at the same time. 
+then we have data per node.  would want the pod to check and make sure the node's link isn't already saturated so that they 
+don't run at a time when other high network bandwidth tasks are running
+
 ### Re-add EssentialsX to eregion when Paper-26 compat lands
 
 EssentialsX 2.21.2 (latest stable as of May 2026) crashes on enable against Paper 26.1.2 — `NullPointerException` from its `ServerStateProvider` lookup, which is a Paper-26 API change. The `2.22.0-dev` snapshots on `ci.ender.zone` predate Paper 26.1.2's release by a few days so they don't have the fix either. Dropped from `host_vars/eregion/main.yaml`'s `paper_plugins:` for now; Multiverse-Core covers the multi-world need and vanilla `/gamemode`, `/tp`, `/give`, `/time set`, `/weather`, etc. cover the basic admin needs on a 1-2 player server.
