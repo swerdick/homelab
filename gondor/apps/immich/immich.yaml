@@ -99,12 +99,18 @@ spec:
     # bjw-s common library accepts dict-style env with object values for
     # valueFrom references.
     #
-    # Resource limits cap the server pod (which also runs the microservices /
-    # thumbnail-and-transcode workers in current Immich versions) so a runaway
-    # job can't pin gondor's whole CPU/RAM budget. Sized for gondor at 4c/10G:
-    # server gets up to half the cores and ~30% of the VM's memory, leaving
-    # headroom for kubelet, observability stack, and CNPG. Bump alongside the
-    # gondor capacity rebalance — see ROADMAP "Audit guest CPU/memory".
+    # Resource limits cap the server pod, which also runs Immich's microservices
+    # / thumbnail-and-transcode workers. Those workers spike memory far above
+    # steady state during video metadata/thumbnail jobs (ffmpeg/ffprobe over the
+    # bulk-media tree): working set sits ~600Mi-1.2Gi, but container_memory_max_
+    # usage_bytes hit the cgroup ceiling — so a 3Gi limit OOMKilled the pod in a
+    # loop (82 restarts/18d; see Loki: AssetExtractMetadata). Bumped to 6Gi for
+    # headroom 2026-05-27; gondor is 6c/20G with room to spare. The real cure is
+    # scoping the external library off the video tree + capping job concurrency
+    # (Immich Admin UI) — the limit bump is the safety net, not the fix.
+    #
+    # request stays at 1Gi (steady-state footprint) so the scheduling reservation
+    # is modest while the pod can burst to 6Gi under a job storm.
     controllers:
       main:
         containers:
@@ -121,7 +127,7 @@ spec:
                 memory: 1Gi
               limits:
                 cpu: 2000m
-                memory: 3Gi
+                memory: 6Gi
 
     # External library mount for the existing /bulk/photos NFS export.
     # PV+PVC defined in bulk-photos-pv.yaml. This block is merged into the
