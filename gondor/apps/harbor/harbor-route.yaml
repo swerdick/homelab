@@ -1,0 +1,24 @@
+# Routes https://harbor.vingilot.internal/* to Harbor's internal nginx proxy
+# Service (`harbor`, :80), which path-splits to core / portal / registry. No
+# basic-auth middleware — Harbor has its own auth, and `docker login` / OCI
+# clients must reach /v2 and /service/token unwrapped.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: harbor
+  namespace: harbor
+spec:
+  parentRefs:
+    - name: vingilot
+      namespace: traefik
+      sectionName: harbor-https
+  hostnames:
+    - harbor.vingilot.internal
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: harbor
+          port: 80

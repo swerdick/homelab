@@ -1,0 +1,19 @@
+# Hand-managed PodMonitor for Harbor's CNPG instance metrics endpoint (:9187).
+# CNPG deprecated the operator-managed spec.monitoring.enablePodMonitor flag
+# (removed in a future release), so we own the PodMonitor directly from the
+# start here. Mirrors the operator's generated spec; `cnpg.io/podRole: instance`
+# is required — its omission is the metric-label-loss bug in issue #8978.
+# Scraped by kube-prometheus-stack (match-all podMonitorSelector).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: harbor-postgresql-metrics
+  namespace: harbor
+spec:
+  namespaceSelector: {}
+  selector:
+    matchLabels:
+      cnpg.io/cluster: harbor-postgresql
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics

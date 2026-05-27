@@ -1,0 +1,42 @@
+---
+# CNPG-managed Postgres for Harbor's core metadata DB (projects, repos, tags,
+# users, robot accounts, scan-result summaries, audit log). Harbor 2.x needs
+# only this one database — notary/clair/chartmuseum were removed upstream, so
+# there's no notaryserver/notarysigner/clair DB to create.
+#
+# No imageName: Harbor needs no Postgres extensions (unlike Immich, which pins
+# the tensorchord/vchord image), so we use the CNPG operator's tested default
+# image — it tracks the operator version (1.29.x) and avoids pinning a tag.
+#
+# Auto-generates a `harbor-postgresql-app` Secret; Harbor's HelmRelease reads
+# the password from its `password` key via database.external.existingSecret.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: harbor-postgresql
+  namespace: harbor
+spec:
+  instances: 1
+
+  storage:
+    size: 8Gi
+    storageClass: nfs-scratch
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      # Harbor's core DB is light (metadata only — blobs live on the registry
+      # PVC, vuln data in Trivy's PVC). 512Mi is comfortable; nfs-scratch
+      # allows volume expansion if the DB ever outgrows 8Gi.
+      memory: 512Mi
+
+  bootstrap:
+    initdb:
+      # `registry` is Harbor's conventional core DB name (database.external.
+      # coreDatabase below must match). `harbor` owns it — no SUPERUSER needed;
+      # Harbor only creates its own tables, no extensions.
+      database: registry
+      owner: harbor
+      dataChecksums: true
