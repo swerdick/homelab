@@ -1,0 +1,25 @@
+# Routes https://authentik.vingilot.internal/* to the Authentik server Service
+# (authentik-server:80 → container :9000). No basic-auth middleware — Authentik
+# IS the auth system, and its flows / API / embedded outpost must be reachable
+# unwrapped. Authentik trusts X-Forwarded-* from the pod network (Traefik's
+# source) by default, so login redirects resolve to the https externalURL.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: authentik
+  namespace: authentik
+spec:
+  parentRefs:
+    - name: vingilot
+      namespace: traefik
+      sectionName: authentik-https
+  hostnames:
+    - authentik.vingilot.internal
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: authentik-server
+          port: 80

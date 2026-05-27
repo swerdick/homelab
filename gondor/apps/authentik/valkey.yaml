@@ -1,0 +1,94 @@
+---
+# Per-app Valkey for Authentik's Redis needs: Django cache, session store, and
+# the Celery broker the worker uses. Ephemeral by design — no persistence; on a
+# restart users re-auth and tasks re-run (cache + broker, not a system of
+# record, per the data-layer standard). Deliberately NOT an operator and NOT
+# shared: one small Valkey per app keeps the blast radius contained.
+#
+# noeviction (Valkey default — no maxmemory-policy) is intentional: the Celery
+# broker keeps live task state here, so an LRU policy could silently drop queued
+# work. We size memory with headroom and let it restart loudly if exceeded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authentik-valkey
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-valkey
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: authentik-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: authentik-valkey
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: valkey
+          image: valkey/valkey:9.1-alpine
+          args:
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - name: valkey
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          livenessProbe:
+            tcpSocket:
+              port: valkey
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authentik-valkey
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-valkey
+spec:
+  selector:
+    app.kubernetes.io/name: authentik-valkey
+  ports:
+    - name: valkey
+      port: 6379
+      targetPort: valkey
