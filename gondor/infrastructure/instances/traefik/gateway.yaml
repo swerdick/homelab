@@ -87,14 +87,14 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
-    - name: authentik-https
+    - name: keycloak-https
       protocol: HTTPS
       port: 8443
-      hostname: authentik.vingilot.internal
+      hostname: keycloak.vingilot.internal
       tls:
         mode: Terminate
         certificateRefs:
-          - name: authentik-vingilot-tls
+          - name: keycloak-vingilot-tls
       allowedRoutes:
         namespaces:
           from: All
@@ -183,12 +183,12 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: authentik-vingilot-tls
+  name: keycloak-vingilot-tls
   namespace: traefik
 spec:
-  secretName: authentik-vingilot-tls
+  secretName: keycloak-vingilot-tls
   dnsNames:
-    - authentik.vingilot.internal
+    - keycloak.vingilot.internal
   issuerRef:
     name: tirion
     kind: ClusterIssuer
