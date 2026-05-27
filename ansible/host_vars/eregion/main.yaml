@@ -13,27 +13,42 @@
 paper_version: "26.1.2"
 paper_build: 64
 
-# JVM heap. Set Xms == Xmx (Aikar's recommendation: eliminates heap-resize
-# pauses that read as TPS drops to players). Sized to ~75% of LXC RAM,
-# leaving ~1 GiB for OS + JVM non-heap (metaspace, code cache, direct
-# buffers).
-paper_heap: "3G"
+# JVM heap. Xms < Xmx (deliberately NOT Aikar's Xms==Xmx) so the heap can
+# shrink back toward Xms while the server is idle and hand the freed pages
+# back to earendil. eregion sits empty ~90% of the time, so the payoff is a
+# ~3.8 GiB -> ~1.5-2 GiB idle host footprint. Xmx stays at 3G, so the busy
+# ceiling — and therefore the LXC's 4 GiB cap and our host worst-case memory
+# budget — is unchanged. The first player to join after a long idle eats a
+# brief heap-regrow warm-up; imperceptible on a <=10-player friends server.
+# (Drop Xms to 512M for an even lower idle floor at the cost of a bigger regrow.)
+paper_xms: "1G"
+paper_xmx: "3G"
 
-# Recommended JVM flags. Matches what `fill.papermc.io/v3/projects/paper/
-# versions/<ver>` publishes under `version.java.flags.recommended` — these
-# are Aikar's G1GC flags, originally collected at docs.papermc.io and now
-# maintained as part of Paper's per-version metadata. The trailing
-# `-Daikars.*` markers are for monitoring tools that detect the tuning;
-# they're not in the API's list but are harmless and aid identification.
+# JVM flags. Base is Paper's recommended Aikar G1GC set (published at
+# fill.papermc.io/v3/projects/paper/versions/<ver> under
+# version.java.flags.recommended), with two deliberate deviations so an idle
+# server returns memory to the host (see paper_xms/paper_xmx):
+#   * removed  -XX:+AlwaysPreTouch
+#       It force-commits the entire heap at startup and never releases it —
+#       the single biggest reason eregion pinned 3.8 GiB whether 0 or 10
+#       players were on.
+#   * added    -XX:G1PeriodicGCInterval=60000 -XX:-G1PeriodicGCInvokesConcurrent
+#       JEP 346: once 60s pass with no GC (i.e. the server is idle), G1 runs a
+#       *full* GC and uncommits unused heap. The full-GC variant (-...Concurrent)
+#       hands back the most memory. It can only fire after a GC-free window, so
+#       it never triggers during active play — an active server GCs far more
+#       often than every 60s.
+# Dropped the -Daikars.* identification markers since this is no longer the
+# stock recommended set.
 paper_flags: >-
   -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200
-  -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch
+  -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC
   -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M
   -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4
   -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90
   -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32
   -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1
-  -Dusing.aikars.flags=https://mcflags.emc.gs -Daikars.new.flags=true
+  -XX:G1PeriodicGCInterval=60000 -XX:-G1PeriodicGCInvokesConcurrent
 
 # RCON port for `mcrcon` from thorondor. Paper always listens on 0.0.0.0
 # (vanilla MC's `rcon.bind` is silently ignored); LAN-only positioning +
@@ -45,6 +60,15 @@ paper_motd: "Vingilot Minecraft - eregion"
 paper_max_players: 10
 paper_view_distance: 10
 paper_difficulty: "normal"
+
+# Pause world + entity ticking once the server has had zero players for this
+# many seconds (vanilla server.properties key; Paper ships it at -1 = never).
+# Pairs with the idle-uncommit JVM flags above: a paused server stops
+# allocating, so the periodic GC has nothing to retain and the heap shrinks
+# promptly. Players un-pause the world instantly on join (brief tick warm-up,
+# the same idle trade-off as the heap regrow). Set to -1 to restore Paper's
+# default if any time-based plugin behaviour misbehaves while empty.
+paper_pause_when_empty_seconds: 60
 
 # paper_rcon_password lives in host_vars/eregion/secrets.sops.yaml
 # (SOPS-encrypted; community.sops.sops vars plugin auto-decrypts at runtime).
