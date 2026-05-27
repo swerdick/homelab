@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - postgres-cluster.yaml
+  - postgres-podmonitor.yaml
   - library-pvc.yaml
   - bulk-photos-pv.yaml
   - bulk-media-pv.yaml

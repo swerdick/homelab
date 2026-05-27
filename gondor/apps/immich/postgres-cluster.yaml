@@ -25,15 +25,6 @@ spec:
     shared_preload_libraries:
       - vchord.so
 
-  # Tell the operator to create a PodMonitor against the instance metrics
-  # endpoint (:9187) so kube-prometheus-stack scrapes it and the CNPG Grafana
-  # dashboard populates. Opt-in per cluster by design — CNPG won't assume a
-  # Prometheus Operator is installed. (2026-05-27: the dashboard was empty
-  # precisely because no cluster had this set; the operator's own
-  # cnpg-system/cloudnative-pg PodMonitor only covers the controller.)
-  monitoring:
-    enablePodMonitor: true
-
   storage:
     size: 20Gi
     storageClass: nfs-scratch

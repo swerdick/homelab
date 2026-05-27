@@ -1,0 +1,29 @@
+# Hand-managed PodMonitor for the CNPG instance metrics endpoint (:9187),
+# replacing the deprecated spec.monitoring.enablePodMonitor flag. CNPG is
+# removing the operator-managed PodMonitor (deprecated in 1.26, PR #8753) in
+# favor of users owning their own — see the data-layer memory / ROADMAP detour.
+#
+# This mirrors what the operator generated verbatim. The
+# `cnpg.io/podRole: instance` selector is the bit the upstream docs' minimal
+# example omits — and its absence is what loses metric labels in issue #8978.
+#
+# Named *-metrics (not the bare cluster name) so it can't collide with an
+# operator-created PodMonitor during the handoff. Metric labels
+# (namespace / pod / cnpg.io/cluster) come from the selector + scrape target,
+# not from this resource's name, so the CNPG dashboard works regardless.
+# Prometheus adopts it via kube-prometheus-stack's match-all podMonitorSelector.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: immich-postgresql-metrics
+  namespace: immich
+  labels:
+    app: immich
+spec:
+  namespaceSelector: {}
+  selector:
+    matchLabels:
+      cnpg.io/cluster: immich-postgresql
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
