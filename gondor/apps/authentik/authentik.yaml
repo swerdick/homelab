@@ -1,0 +1,103 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: authentik
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://charts.goauthentik.io
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: authentik
+  namespace: authentik
+spec:
+  interval: 30m
+  releaseName: authentik
+  chart:
+    spec:
+      chart: authentik
+      # CalVer chart; pin to the 2026.5 line so patches flow but a feature bump
+      # (2026.6 — carries DB migrations) is a deliberate change.
+      version: ">=2026.5.0 <2026.6.0"
+      sourceRef:
+        kind: HelmRepository
+        name: authentik
+        namespace: flux-system
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  # The worker runs DB migrations on first boot; server waits on them, so pods
+  # may be NotReady / restart briefly until CNPG's authentik-postgresql-app
+  # Secret exists and migrations finish, then settle (same pattern as immich/harbor).
+  values:
+    # Bundled bitnami Postgres off — we run an external CNPG cluster. (There's
+    # no bundled redis subchart; redis is pure env config, pointed at our Valkey.)
+    postgresql:
+      enabled: false
+
+    # The chart serializes this `authentik:` block into AUTHENTIK_* env vars
+    # (double-underscore = nesting). Only NON-secret connection params go here;
+    # secrets are injected via global.env below so they never sit in plaintext.
+    authentik:
+      postgresql:
+        host: authentik-postgresql-rw.authentik.svc.cluster.local
+        name: authentik
+        user: authentik
+        port: 5432
+      redis:
+        # Our per-app Valkey (no auth). → AUTHENTIK_REDIS__HOST
+        host: authentik-valkey.authentik.svc.cluster.local
+
+    # Secrets injected as env from Kubernetes Secrets (applied to server +
+    # worker). secret_key MUST stay stable forever after first install —
+    # rotating it invalidates all sessions/tokens.
+    global:
+      env:
+        - name: AUTHENTIK_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: authentik-secret
+              key: secret_key
+        - name: AUTHENTIK_POSTGRESQL__PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: authentik-postgresql-app
+              key: password
+        # First-boot bootstrap of the akadmin superuser + an API token for it
+        # (both ignored after the initial install).
+        - name: AUTHENTIK_BOOTSTRAP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: authentik-secret
+              key: bootstrap_password
+        - name: AUTHENTIK_BOOTSTRAP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: authentik-secret
+              key: bootstrap_token
+
+    # We expose via our own HTTPRoute (authentik-route.yaml) on the vingilot
+    # Gateway; the chart's Ingress stays off. Service is authentik-server:80.
+    server:
+      ingress:
+        enabled: false
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
+
+    worker:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
