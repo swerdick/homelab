@@ -1,0 +1,31 @@
+---
+# CNPG-managed Postgres for Keycloak (realms, clients, users, sessions, events).
+# No imageName → CNPG operator's default image (PG18), matching harbor/auto-water;
+# Keycloak needs no extensions. Auto-generates a `keycloak-postgresql-app` Secret;
+# the Keycloak CR reads its `username`/`password` keys for the DB connection.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keycloak-postgresql
+  namespace: keycloak
+spec:
+  instances: 1
+
+  storage:
+    size: 8Gi
+    storageClass: nfs-scratch
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      # Keycloak's DB is light (realm/client/user metadata + sessions). 512Mi is
+      # comfortable; nfs-scratch allows expansion if it ever outgrows 8Gi.
+      memory: 512Mi
+
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+      dataChecksums: true

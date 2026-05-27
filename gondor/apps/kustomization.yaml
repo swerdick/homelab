@@ -6,4 +6,4 @@ resources:
   - immich
   - auto-water
   - harbor
-  - authentik
+  - keycloak

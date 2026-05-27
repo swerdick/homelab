@@ -1,0 +1,55 @@
+# Keycloak instance, reconciled by the Keycloak Operator (vendored under operator/).
+# Runs plain HTTP behind the vingilot Gateway, which terminates TLS — hence
+# http.httpEnabled + proxy.headers: xforwarded (trust Traefik's X-Forwarded-*),
+# and ingress.enabled: false (we attach our own HTTPRoute). hostname is the full
+# external https URL so Keycloak emits correct https links / token issuer.
+#
+# DB: external CNPG (keycloak-postgresql); creds from the CNPG-generated
+# keycloak-postgresql-app Secret. No Redis — Keycloak uses embedded Infinispan
+# for caching on a single instance.
+#
+# Initial admin: the operator generates a one-time admin and stores it in the
+# `keycloak-initial-admin` Secret — retrieve with:
+#   kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.username}' | base64 -d; echo
+#   kubectl get secret keycloak-initial-admin -n keycloak -o jsonpath='{.data.password}' | base64 -d; echo
+# Realm/client/user config comes later as code via terraform-provider-keycloak.
+apiVersion: k8s.keycloak.org/v2beta1
+kind: Keycloak
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  instances: 1
+
+  db:
+    vendor: postgres
+    host: keycloak-postgresql-rw.keycloak.svc.cluster.local
+    port: 5432
+    database: keycloak
+    usernameSecret:
+      name: keycloak-postgresql-app
+      key: username
+    passwordSecret:
+      name: keycloak-postgresql-app
+      key: password
+
+  hostname:
+    hostname: https://keycloak.vingilot.internal
+
+  http:
+    httpEnabled: true
+
+  proxy:
+    headers: xforwarded
+
+  ingress:
+    enabled: false
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      # JVM (Quarkus) heap defaults to ~70% of the limit → ~1.4Gi heap, leaving
+      # headroom for non-heap. Comfortable for a homelab IdP with realm caches.
+      memory: 2Gi

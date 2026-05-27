@@ -1,0 +1,18 @@
+# Hand-managed PodMonitor for Keycloak's CNPG instance metrics (:9187). CNPG
+# deprecated the operator-managed enablePodMonitor flag, so we own this directly
+# (matches immich/harbor/auto-water). Mirrors the operator's spec — the
+# `cnpg.io/podRole: instance` selector is required; its omission is the
+# metric-label-loss bug in CNPG #8978. Scraped by kube-prometheus-stack.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: keycloak-postgresql-metrics
+  namespace: keycloak
+spec:
+  namespaceSelector: {}
+  selector:
+    matchLabels:
+      cnpg.io/cluster: keycloak-postgresql
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
