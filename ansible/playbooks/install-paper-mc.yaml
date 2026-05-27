@@ -303,6 +303,7 @@
         - { key: "rcon.password", value: "{{ paper_rcon_password }}" }
         - { key: "broadcast-rcon-to-ops", value: "false" }
         - { key: "online-mode", value: "true" }
+        - { key: "pause-when-empty-seconds", value: "{{ paper_pause_when_empty_seconds }}" }
       loop_control:
         # label keeps the per-iteration output readable ("item=rcon.password")
         # instead of printing the full dict (which would leak the value).
@@ -345,7 +346,7 @@
           User={{ paper_user }}
           Group={{ paper_group }}
           WorkingDirectory={{ paper_home }}
-          ExecStart=/usr/bin/java -Xms{{ paper_heap }} -Xmx{{ paper_heap }} {{ paper_flags }} -jar {{ paper_jar_symlink }} --nogui
+          ExecStart=/usr/bin/java -Xms{{ paper_xms }} -Xmx{{ paper_xmx }} {{ paper_flags }} -jar {{ paper_jar_symlink }} --nogui
           # Clean shutdown: RCON `stop` triggers save-all + orderly exit
           # rather than a SIGTERM mid-tick. The `-` prefix tells systemd to
           # ignore mcrcon failures — if Paper is still booting (RCON not up
