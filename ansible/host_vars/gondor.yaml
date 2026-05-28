@@ -3,7 +3,7 @@
 # verifies its host_vars k3s_version against this at join time (see
 # install-k3s-agent.yaml's `Pre-flight — assert server version matches
 # host_vars k3s_version` task), so bumping for a cluster upgrade means
-# editing here, then host_vars/samwise.yaml, then re-running the agent
+# editing here, then host_vars/samwise/main.yaml, then re-running the agent
 # playbook (and a deliberate server upgrade flow, not just re-running
 # install-k3s-server.yaml).
 k3s_version: v1.34.6+k3s1

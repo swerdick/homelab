@@ -1,0 +1,138 @@
+---
+# Installs Tailscale natively (the apt `tailscale` package + its `tailscaled`
+# systemd unit) and joins the host to the tailnet.
+#
+# Why native systemd, not a k3s HelmRelease (as the ROADMAP first sketched):
+# tailscaled wants host networking for subnet routing and the WoL broadcast,
+# its state file (/var/lib/tailscale/tailscaled.state) is tiny with infrequent
+# writes — so the SD-card flash-wear concern that gated the HelmRelease plan
+# doesn't apply — and a host daemon survives gondor's nightly k3s shutdown with
+# no taint/toleration/PV gymnastics. samwise is the only host today; targets it
+# explicitly. Extend to a group if a second tailnet node ever appears.
+#
+# Idempotence: `tailscale up --authkey=...` runs only on first registration
+# (when the backend isn't already connected). Re-runs are a no-op apart from
+# converging the advertised routes via `tailscale set`. The auth key is only
+# needed to register — an already-registered node holds its own persistent node
+# key — so an expired key in host_vars never breaks a re-run.
+#
+# Auth key lives in host_vars/<host>/secrets.sops.yaml as `tailscale_authkey`
+# (SOPS-encrypted; auto-decrypted by the community.sops vars plugin). Generate a
+# reusable, pre-authorized key in the admin console: Settings -> Keys.
+#
+# Manual follow-ups after first run (admin console, one-time):
+#   1. Approve the advertised subnet route: Machines -> samwise -> Edit route
+#      settings -> enable 192.168.1.0/24. Advertising alone doesn't route it.
+#   2. Disable key expiry on samwise so the subnet route never lapses on an
+#      always-on infra node: Machines -> samwise -> Disable key expiry.
+
+- name: Install and configure Tailscale
+  hosts: samwise
+  tasks:
+    - name: Sanity-check that this is a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+        fail_msg: "Expected Debian-family host, got {{ ansible_facts.os_family }}"
+
+    - name: Ensure gnupg is present
+      # ansible.builtin.apt_repository sanity-checks for gpg even with the modern
+      # signed-by= keyring syntax. Debian 13 (trixie) apt handles https natively,
+      # so apt-transport-https isn't needed here.
+      ansible.builtin.apt:
+        name: gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Add Tailscale apt signing key
+      # Codename-pinned key/repo. samwise runs RPi OS Lite (Debian 13 / trixie,
+      # aarch64); bump 'trixie' here and below on a future OS major upgrade.
+      ansible.builtin.get_url:
+        url: https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
+        dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Add Tailscale apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main"
+        state: present
+        filename: tailscale
+        update_cache: true
+
+    - name: Install tailscale package
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+
+    - name: Enable IP forwarding for subnet routing
+      # Required for a subnet router to forward tailnet traffic onto the LAN.
+      # Only applied when this host actually advertises routes.
+      ansible.posix.sysctl:
+        name: "{{ item }}"
+        value: "1"
+        state: present
+        sysctl_file: /etc/sysctl.d/99-tailscale.conf
+        sysctl_set: true
+        reload: true
+      loop:
+        - net.ipv4.ip_forward
+        - net.ipv6.conf.all.forwarding
+      when: tailscale_advertise_routes | default([]) | length > 0
+
+    - name: Ensure tailscaled is enabled and running
+      ansible.builtin.systemd:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    - name: Check whether Tailscale is already connected
+      # Read-only; run it even under --check so ts_status is registered and the
+      # downstream `when:` conditions evaluate during a dry-run preview.
+      ansible.builtin.command: tailscale status
+      register: ts_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Assert an auth key is available for first registration
+      ansible.builtin.assert:
+        that:
+          - tailscale_authkey is defined
+          - tailscale_authkey | length > 0
+        fail_msg: >-
+          No tailscale_authkey found. Create
+          host_vars/{{ inventory_hostname }}/secrets.sops.yaml with a
+          tailscale_authkey generated in the admin console (Settings -> Keys),
+          then re-run. (Already-registered hosts skip this — it only fires when
+          the node still needs to join the tailnet.)
+      when: ts_status.rc != 0
+
+    - name: Authenticate and bring Tailscale up (first registration)
+      # no_log: the command line embeds the auth key. Runs only when the backend
+      # isn't already connected; `--accept-dns=false` keeps tailscaled from
+      # rewriting /etc/resolv.conf (samwise must resolve via the CR1000A router,
+      # not MagicDNS — matters for the future Pi-hole bootstrap order).
+      no_log: true
+      ansible.builtin.command: >-
+        tailscale up
+        --authkey={{ tailscale_authkey }}
+        --hostname={{ inventory_hostname }}
+        --accept-dns=false
+        {% if tailscale_advertise_routes | default([]) | length > 0 %}--advertise-routes={{ tailscale_advertise_routes | join(',') }}{% endif %}
+      register: ts_up
+      changed_when: ts_up.rc == 0
+      when: ts_status.rc != 0
+
+    - name: Converge advertised subnet routes
+      # For the already-connected case: idempotently reconcile the advertised
+      # routes if host_vars changed (no auth key needed). `tailscale set` is a
+      # server-side no-op when nothing changed; changed_when is left false
+      # because it doesn't reliably report whether it altered anything.
+      ansible.builtin.command: tailscale set --advertise-routes={{ tailscale_advertise_routes | join(',') }}
+      changed_when: false
+      when:
+        - ts_status.rc == 0
+        - tailscale_advertise_routes | default([]) | length > 0
