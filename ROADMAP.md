@@ -165,34 +165,48 @@ User's own app — currently developed elsewhere, wants a stable in-cluster depl
 
 ### Self-hosted GitHub Actions runners
 
-GitHub-hosted runners have monthly minute caps and can't reach internal homelab services without exposing them. Self-hosted runners give faster builds + access to in-cluster registries, databases, and the future SonarQube/Harbor/Vibeseeker triad below. Two viable shapes:
+GitHub-hosted runners have monthly minute caps (727 min consumed in Apr 2026 — still inside the 2000-min free tier but trending up, and the curve gets steeper as Harbor pushes + Trivy scans + SonarQube + Vibeseeker pipelines come online). They also can't reach internal homelab services without burning extra minutes via `tailscale/github-action` (~20–30s of tunnel-setup per workflow on top of the actual work). Self-hosted runners pop both ceilings at once: zero per-minute charge, direct LAN access to in-cluster registries / databases / SonarQube / Harbor with no Tailscale dance. Two viable shapes:
 
-- **`actions-runner-controller` (ARC) in k3s** — operator scales runner pods up on workflow events, down to zero between. GitHub App authentication. Most-homelabby choice; deploys via HelmRelease, plays well with Flux.
+- **`actions-runner-controller` (ARC) in k3s** *(preferred)* — operator scales runner pods up on workflow events, down to zero between. GitHub App authentication. Most-homelabby choice; deploys via HelmRelease, plays well with Flux. Ephemeral pods are also the right security shape (fresh runner per job, no carry-over artifacts).
 - **Docker-based runners on a dedicated LXC** — simpler, no scale-to-zero. Lower complexity but always-running cost.
 
-Security: a self-hosted runner executes whatever workflow code is in the repo. Restrict via `runs-on: self-hosted` + first-time-contributor approval, and isolate runners from credential-bearing infrastructure (separate namespace, no cluster-admin). Pairs with the local registry + security scanning items below.
+Security: a self-hosted runner executes whatever workflow code is in the repo. Restrict via `runs-on: self-hosted` + first-time-contributor approval, and isolate runners from credential-bearing infrastructure (separate namespace, no cluster-admin). Pairs with the local registry + security scanning items below — this entry is the keystone several others depend on (SonarQube reachability, Harbor push from CI, ORAS pushes from CI).
 
-### Gitea / Forgejo as GitHub mirror
+### GitHub mirror for Flux availability during a GitHub outage
 
-Single-failure-domain risk: any of "GitHub repo disappearing" (account suspension, outage, policy change) cripples Flux which reconciles from `github.com/swerdick/homelab.git`. A local Gitea (or its more-active fork Forgejo) running as a HelmRelease can mirror every repo we care about on a schedule.
+Single-failure-domain risk: GitHub disappearing (account suspension, outage, policy change) cripples Flux, which reconciles from `github.com/swerdick/homelab.git`. Distributed-git already gives free **backup** (every local clone — Mac, Flux's working copy on gondor — holds the full DAG), so this isn't about losing history. It's specifically about whether Flux keeps reconciling during the outage. Keeping GitHub public + primary for push + CI is non-negotiable; no switch to GitLab/Gitea/self-hosted GHE.
 
-HelmRelease in `gitea` namespace, CNPG-backed Postgres (extends the operator pattern Immich already uses), HTTPRoute at `gitea.vingilot.internal`, NFS-backed PVC for repo storage. Configure each repo as a "pull mirror" against GitHub. Optionally re-point Flux's `GitRepository` at the local Gitea once it's been operating reliably — full dogfooding, GitHub becomes the upstream-of-the-mirror.
+Mirror-only, no full forge: a **minimal bare-repo server** on the homelab (a small LXC running `sshd` + bare repos, optionally `gitolite` for keyed access) — no web UI to maintain, no extra Postgres, just git endpoints. A cron'd `git fetch --mirror` from GitHub keeps it warm in steady state.
 
-Mirror-only is the right scope. Pushing changes back to GitHub stays the source-of-truth flow; local Gitea is the read-only insurance copy.
+Outage workflow (manual, infrequent): swap the Flux `GitRepository` URL to the local mirror via a single yaml edit + `kubectl apply` (Flux can't poll GitHub during the outage anyway). Push commits to the mirror directly until GitHub recovers; then push catch-up commits back to GitHub and revert the GitRepository URL. GitHub remains source-of-truth in steady state.
+
+(Forgejo / a real forge with a UI was an earlier shape for this entry — explicitly out of scope after the no-Gitea-style-forge call. Revisit only if the no-UI cost ever becomes annoying.)
 
 ### Security scanning — CI-side (Trivy)
 
 Registry-side Trivy **shipped with Harbor** (bundled scanner, `trivy.enabled: true` — auto-scans every pushed image, CVE counts per repo/tag in the Harbor UI). Remaining is the **CI-side**: `aquasecurity/trivy-action` in GitHub Actions to scan images before they're pushed (pairs with self-hosted runners). Threshold gates (fail build on HIGH+ CVEs) come later; first goal is "we can see CVE counts at all."
 
-Replication policies are a natural Harbor follow-up too: pull-mirror upstream registries (Docker Hub, ghcr.io, quay.io, immich-app.github.io) on a schedule so an upstream outage / rate-limit can't break a Flux deploy, and point Flux's `HelmRepository`/image refs at Harbor's `oci://` endpoint.
+### Harbor as upstream-registry proxy/cache
+
+Every image we use today is pulled live from Docker Hub / ghcr.io / quay.io / registry.k8s.io / per-app Helm repos — each one a single point of failure for new pods (upstream rate-limits, removed-by-author, registry outages, supply-chain compromise) and an opaque trust boundary (we never scan upstream blobs before they land on the cluster). Harbor's **Proxy Cache** project type fronts an upstream registry: first pull populates the cache, subsequent pulls hit Harbor, Trivy scans run on the cached copies.
+
+Scope: one proxy-cache Harbor project per upstream (`dockerhub`, `ghcr`, `quay`, `registry-k8s`), plus OCI helm-chart fronting for the chart sources we depend on (Jellyfin / Harbor / Immich / kube-prometheus / etc.). containerd `registries.conf.d/` mirror entries on each k3s node so existing image refs transparently resolve through Harbor (no manifest churn); Flux `HelmRepository` URLs migrate from upstream to `oci://harbor.vingilot.internal/...` for charts. Pin by digest where Flux supports it.
+
+End state: a Flux reconcile with every upstream registry offline still succeeds, Trivy has scanned every image we run, and CVE drift becomes a queryable thing.
+
+### Harbor + ORAS for critical loose binaries (Minecraft jars, etc.)
+
+A handful of setup scripts pull "loose" binaries — Paper / Purpur server jars, plugin jars, mod jars — directly from upstream URLs (PaperMC's CDN, GitHub release assets). Each is a silent supply-chain dependency that breaks a host bootstrap if the URL changes or vanishes, and they get no scanning even though Trivy speaks Java archive perfectly well. ORAS (OCI Registry As Storage) pushes arbitrary blobs as OCI artifacts; Harbor accepts ORAS pushes and Trivy scans the result the same as a container image.
+
+Workflow: catalog the critical binaries the playbooks actually reference; `oras push harbor.vingilot.internal/minecraft/paper:1.21.1 paper-1.21.1.jar` for each (one-off or via a small refresh-cron CI job); teach the playbooks to pull from Harbor with the upstream URL kept as a documented fallback comment. Pinning happens via the artifact tag; rotation happens by running the refresh job.
 
 ### Self-hosted SonarQube for static analysis
 
-Static-analysis side of the quality/security story (Trivy covers CVEs; SQ covers code smells / bugs / coverage / duplications). Community Edition is free, Helm-installable, Postgres-backed — extends the existing CNPG operator pattern.
+Static-analysis side of the quality/security story (Trivy covers CVEs; SQ covers code smells / bugs / coverage / duplications). Community Edition is free, Helm-installable, Postgres-backed — extends the existing CNPG operator pattern. Primary consumer is GitHub Actions on this repo + future personal projects, via `sonarsource/sonarqube-scan-action`; PR-comment integration surfaces issues at review time.
 
-Resource cost is the gotcha: ~3-4 GiB RAM for the SQ server idle, plus CPU spikes during analysis runs. Almost certainly lands *after* the gondor capacity rebalance, or runs as a dedicated PVE LXC if it doesn't fit in k3s.
+Lands after self-hosted runners — cloud-runner access would need Cloudflare Tunnel or a Tailscale-action burn that ARC sidesteps entirely. Auth: local admin only at first (CE doesn't ship OIDC; SAML works but isn't worth the wiring for one user), Keycloak deferred until Developer Edition or a CE workaround is justified.
 
-GitHub Actions integration via `sonarsource/sonarqube-scan-action` — works cleanly when the runner can reach the SQ server over the in-cluster network. So this item realistically depends on self-hosted runners landing first; cloud-runner access would need Cloudflare Tunnel + auth gymnastics that aren't worth it.
+Resource cost is the gotcha: ~3-4 GiB RAM for the SQ server idle, plus CPU spikes during analysis. Lands after the gondor capacity rebalance, or runs as a dedicated PVE LXC if it doesn't fit in k3s.
 
 ## Capacity & resource management
 
@@ -392,7 +406,7 @@ Reverse-chronological — most recent first. One line each; `git log` carries th
 - **Manage NFS exports in ansible** — `manage-nfs-exports.yaml` templates `/etc/exports` from `host_vars/nfs.yaml`; idempotent re-runs.
 - **CloudNativePG operator** — Postgres platform on gondor; underpins Immich, available for future stateful apps.
 - **Immich** — initial deploy (ML + OOM fix landed later — see above).
-- **Jellyfin** — deployed.
+- **Jellyfin** — deployed. (open: Keycloak SSO via the 9p4 `Jellyfin-Plugin-SSO` — no native OIDC; needs plugin install (manual UI install vs initContainer-pulled DLL, TBD), tirion-CA mount into the .NET system trust bundle, and a TF client + group-membership mapper mirroring the immich/grafana/harbor pattern. `homelab-admins` → Administrator; `homelab-readonly` → regular user — Jellyfin's media-streaming model has no real read-only concept.)
 - **Pseudo users + sudo on root-only hosts** — `setup-pseudo-user.yaml`; SSH switched from root → pseudo with NOPASSWD sudo.
 - **`nfs-common` install — generalize beyond k3s** — folded into the planned onboarding-playbook entry.
 - **`tirion-root-ca` Secret cleanup** — one-off cleanup, completed.
