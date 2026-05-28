@@ -172,13 +172,24 @@ GitHub-hosted runners have monthly minute caps (727 min consumed in Apr 2026 —
 
 Security: a self-hosted runner executes whatever workflow code is in the repo. Restrict via `runs-on: self-hosted` + first-time-contributor approval, and isolate runners from credential-bearing infrastructure (separate namespace, no cluster-admin). Pairs with the local registry + security scanning items below — this entry is the keystone several others depend on (SonarQube reachability, Harbor push from CI, ORAS pushes from CI).
 
-### GitHub mirror for Flux availability during a GitHub outage
+### In-cluster git mirror as Flux's primary source
 
-Single-failure-domain risk: GitHub disappearing (account suspension, outage, policy change) cripples Flux, which reconciles from `github.com/swerdick/homelab.git`. Distributed-git already gives free **backup** (every local clone — Mac, Flux's working copy on gondor — holds the full DAG), so this isn't about losing history. It's specifically about whether Flux keeps reconciling during the outage. Keeping GitHub public + primary for push + CI is non-negotiable; no switch to GitLab/Gitea/self-hosted GHE.
+Single-failure-domain risk: GitHub disappearing (account suspension, outage, policy change) cripples Flux, which reconciles from `github.com/swerdick/homelab.git`. Distributed-git already gives free **backup** (every local clone — Mac, Flux's working copy on gondor — holds the full DAG), so this isn't about losing history. It's specifically about whether Flux keeps reconciling. Keeping GitHub public + primary for push + CI is non-negotiable; no switch to GitLab/Gitea/self-hosted GHE.
 
-Mirror-only, no full forge: a **minimal bare-repo server** on the homelab (a small LXC running `sshd` + bare repos, optionally `gitolite` for keyed access) — no web UI to maintain, no extra Postgres, just git endpoints. A cron'd `git fetch --mirror` from GitHub keeps it warm in steady state.
+**Design — mirror as primary, not backup:**
 
-Outage workflow (manual, infrequent): swap the Flux `GitRepository` URL to the local mirror via a single yaml edit + `kubectl apply` (Flux can't poll GitHub during the outage anyway). Push commits to the mirror directly until GitHub recovers; then push catch-up commits back to GitHub and revert the GitRepository URL. GitHub remains source-of-truth in steady state.
+- **k3s Deployment in `git-mirror` namespace** (not LXC). A tiny image — `openssh-server` or similar — exposes `git+ssh://` for Flux to clone from. PVC-backed bare-repo storage, NetworkPolicy locks the SSH endpoint to in-cluster traffic. Manifests live in `gondor/apps/git-mirror/` so Flux reconciles its own dependency (chicken-and-egg only on initial deploy, irrelevant forever after).
+- **GitHub App auth, not SSH keys.** Register one fine-grained App (`Contents: Read` on the repos we mirror), mount its private key as a SOPS Secret, mint a 1h installation token at *fetch time* via JWT → `/app/installations/<id>/access_tokens` (~30-line Python helper in a ConfigMap). No long-lived token at rest in the cluster, no SSH key proliferation, revocable from the GitHub UI.
+- **Flux's `GitRepository` points at the mirror by default** (not GitHub). Failure-mode story collapses: "GitHub down" becomes a non-event (mirror keeps serving last-fetched state); "mirror down" overlaps with "Flux down" since both run on gondor, an already-accepted SPOF.
+- **CronJob fetches from GitHub every ~10 min** as background warmth. Smart fetch script (below) handles outage-time pushes safely.
+- **`just deploy` recipe** triggers an immediate mirror fetch + `flux reconcile source git homelab` so post-push deployment latency stays sub-second (rather than the up-to-10-min cron lag).
+
+**Smart fetch script — handles outage-time pushes without silent ref clobbering.** Naive `git fetch --mirror` is `+refs/*:refs/*` (force) and would overwrite any direct-to-mirror pushes when GitHub recovers. Instead, per branch: compare `origin/$b` to local `$b`; if mirror is ahead, `git push origin` to catch GitHub up; if GitHub is ahead, fast-forward the mirror; if genuinely diverged (rare — requires concurrent pushes to both), refuse and page. Three-way safe.
+
+**Justfile recipes, no runbook** (per the no-low-frequency-runbooks principle):
+- `just deploy` — immediate mirror fetch + flux reconcile after a push.
+- `just mirror-failover-to-github` — patch `GitRepository` URL to `github.com` when the mirror itself is broken. Code is the runbook; idempotent.
+- `just mirror-failback-to-mirror` — patch it back when the mirror is healthy again.
 
 (Forgejo / a real forge with a UI was an earlier shape for this entry — explicitly out of scope after the no-Gitea-style-forge call. Revisit only if the no-UI cost ever becomes annoying.)
 
