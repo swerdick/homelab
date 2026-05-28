@@ -121,6 +121,46 @@ spec:
             timeout: 60
             maxLines: 1000
 
+      # OIDC SSO via Keycloak (vingilot realm). Client + secret are TF-managed
+      # in `terraform/keycloak/keycloak.tf`; the client secret is SOPS'd in
+      # grafana-oauth.yaml and injected via envValueFrom below. `tls_client_ca`
+      # scopes tirion-root trust to the OAuth provider only — Grafana's system
+      # trust store stays intact for plugins/external HTTPS.
+      grafana.ini:
+        server:
+          root_url: https://grafana.vingilot.internal/
+        auth.generic_oauth:
+          enabled: true
+          name: Keycloak
+          allow_sign_up: true
+          client_id: grafana
+          scopes: openid email profile
+          auth_url: https://keycloak.vingilot.internal/realms/vingilot/protocol/openid-connect/auth
+          token_url: https://keycloak.vingilot.internal/realms/vingilot/protocol/openid-connect/token
+          api_url: https://keycloak.vingilot.internal/realms/vingilot/protocol/openid-connect/userinfo
+          tls_client_ca: /etc/ssl/tirion/ca.crt
+          login_attribute_path: preferred_username
+          email_attribute_path: email
+          use_refresh_token: true
+
+      # OAuth client secret from a SOPS-encrypted Secret (grafana-oauth.yaml).
+      envValueFrom:
+        GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+          secretKeyRef:
+            name: grafana-oauth
+            key: client_secret
+
+      # Per-pod tirion root CA mount — Go's TLS doesn't inherit the host trust
+      # store, so every SSO-wired pod needs its own CA. See the
+      # project_in_cluster_internal_ca_trust memory for the language-specific
+      # env-var pattern (Grafana uses auth.generic_oauth.tls_client_ca above
+      # rather than the global SSL_CERT_FILE, so this trust is OAuth-scoped).
+      extraConfigmapMounts:
+        - name: tirion-ca
+          mountPath: /etc/ssl/tirion
+          configMap: grafana-tirion-ca
+          readOnly: true
+
     alertmanager:
       alertmanagerSpec:
         storage:

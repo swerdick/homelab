@@ -4,6 +4,8 @@ resources:
   - namespace.yaml
   - kube-prometheus-stack.yaml
   - grafana-admin.yaml
+  - grafana-oauth.yaml
+  - tirion-ca-configmap.yaml
   - grafana-route.yaml
   - prometheus-route.yaml
   - prometheus-basic-auth.yaml
