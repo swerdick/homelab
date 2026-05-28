@@ -1,0 +1,39 @@
+---
+# Installs the `wakeonlan` CLI and a per-target `/usr/local/bin/wake-<name>`
+# wrapper so an always-on host can cold-start a sleeping one with a magic packet.
+#
+# Primary use: samwise (always on) wakes earendil (Proxmox host, off nightly)
+# from anywhere over the tailnet — SSH to samwise, run `wake-earendil`. The
+# wrappers mirror the operator's Mac alias (`wakeonlan b8:fb:b3:cb:ef:50`) so
+# the muscle memory carries over.
+#
+# Targets are declared per host in host_vars as `wol_targets` (a list of
+# {name, mac}); a host with no `wol_targets` just gets the `wakeonlan` binary.
+# The packet is a UDP broadcast to 255.255.255.255:9 (wakeonlan's default), so
+# sender and target must share the LAN broadcast domain — fine for samwise (Wi-Fi)
+# waking earendil (wired) on the same /24.
+
+- name: Install Wake-on-LAN tooling
+  hosts: samwise
+  tasks:
+    - name: Install wakeonlan
+      ansible.builtin.apt:
+        name: wakeonlan
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Template a wake-<name> wrapper per WoL target
+      ansible.builtin.copy:
+        dest: "/usr/local/bin/wake-{{ item.name }}"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # Managed by ansible/playbooks/install-wakeonlan.yaml — do not edit by hand.
+          # Wakes {{ item.name }} ({{ item.mac }}) with a magic packet.
+          exec wakeonlan {{ item.mac }} "$@"
+      loop: "{{ wol_targets | default([]) }}"
+      loop_control:
+        label: "wake-{{ item.name }}"

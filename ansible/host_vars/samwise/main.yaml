@@ -1,0 +1,31 @@
+---
+# k3s version samwise's agent installs. MUST match gondor's server version
+# (canonical source: host_vars/gondor.yaml). install-k3s-agent.yaml's
+# pre-flight task asserts this at join time. Cluster upgrade flow: bump
+# host_vars/gondor.yaml first via a deliberate server-upgrade procedure,
+# then bump this file, then re-run install-k3s-agent.yaml.
+#
+# The legacy fallbacks (gondor/bootstrap/install-k3s.sh + `just bootstrap-gondor`
+# + the justfile top-line `k3s_version :=`) are pending retirement once
+# install-k3s-server.yaml has been validated on the live cluster.
+k3s_version: v1.34.6+k3s1
+
+# --- Tailscale (install-tailscale.yaml) ---
+# samwise is the always-on tailnet node + subnet router. It announces the home
+# LAN so the whole fleet is reachable over the tailnet through one node — no
+# per-host Tailscale install. The route must also be approved once in the admin
+# console (Machines -> samwise -> Edit route settings); advertising alone isn't
+# enough. Empty list => plain tailnet member (no forwarding, no route).
+# The auth key lives in host_vars/samwise/secrets.sops.yaml (tailscale_authkey).
+tailscale_advertise_routes:
+  - 192.168.1.0/24
+
+# --- Wake-on-LAN (install-wakeonlan.yaml) ---
+# samwise stays up while earendil sleeps nightly, so it's the magic-packet
+# sender that cold-starts the hypervisor from anywhere over the tailnet. Each
+# entry installs /usr/local/bin/wake-<name> (mirrors the operator's Mac alias
+# `wake-earendil`). earendil's WoL rides its TP-Link add-in NIC — see the
+# "earendil Wake-on-LAN via add-in NIC" item in ROADMAP Completed.
+wol_targets:
+  - name: earendil
+    mac: "b8:fb:b3:cb:ef:50"

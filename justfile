@@ -1,5 +1,5 @@
 # Lockstep with gondor/bootstrap/install-k3s.sh and
-# ansible/host_vars/samwise.yaml — bump all three together until the
+# ansible/host_vars/samwise/main.yaml — bump all three together until the
 # "refactor install-k3s.sh to ansible" ROADMAP item collapses them.
 k3s_version := "v1.34.6+k3s1"
 
@@ -212,13 +212,19 @@ dump-pve-configs:
 #   just tf apply
 #   just tf import proxmox_virtual_environment_container.aglarond earendil/131
 #
-# Two secrets exported:
+# Three secrets exported:
 #   - PROXMOX_VE_API_TOKEN: bpg provider's native env var (used by the
 #     provider block to talk to PVE).
 #   - TF_VAR_pbs_main_password: the API token secret for the `main` PBS
 #     storage entry. PVE keeps this in /etc/pve/priv/storage/main.pw,
 #     separate from /etc/pve/storage.cfg, and bpg's storage_pbs resource
 #     requires it.
+#   - KEYCLOAK_CLIENT_SECRET: secret for the `terraform` service-account
+#     client in Keycloak's master realm (client-credentials grant for the
+#     keycloak provider). Add it under key `keycloak_terraform_client_secret`
+#     via `sops ansible/group_vars/all/secrets.sops.yaml`. NOTE: once the
+#     keycloak provider exists, every `just tf` configures it — so this secret
+#     must be present or all tofu commands fail at provider auth.
 #
 # Secrets live in the parent shell's process env only for the duration of
 # the tofu invocation; sops --extract avoids YAML parsing fragility.
@@ -226,6 +232,7 @@ tf +args:
     @cd terraform && \
       PROXMOX_VE_API_TOKEN="$(sops --decrypt --extract '["pve_api_token"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
       TF_VAR_pbs_main_password="$(sops --decrypt --extract '["pbs_main_password"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
+      KEYCLOAK_CLIENT_SECRET="$(sops --decrypt --extract '["keycloak_terraform_client_secret"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
       tofu {{args}}
 
 # One-shot init with the partial backend config. Re-run with -reconfigure
