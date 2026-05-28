@@ -45,6 +45,12 @@ spec:
     # X-Forwarded-Proto: https, so Harbor emits https URLs).
     externalURL: https://harbor.vingilot.internal
 
+    # Inject the tirion root CA into core/jobservice/registry/trivy trust stores
+    # so Harbor can validate Keycloak's internal-CA cert during OIDC discovery +
+    # token exchange. Secret defined in tirion-ca-secret.yaml (public cert,
+    # intentionally not SOPS-encrypted — see that file's comment for the why).
+    caBundleSecretName: harbor-tirion-ca
+
     # TLS terminates at the Gateway; Harbor runs plain HTTP behind it.
     # expose.type clusterIP makes the chart deploy its internal nginx proxy
     # (Service `harbor`, port 80) which path-routes /v2, /api, /service, and
