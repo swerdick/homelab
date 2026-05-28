@@ -204,41 +204,42 @@ dump-pve-configs:
 
 # --- OpenTofu / Terraform ---
 
-# Wrapper that decrypts the secrets needed by Terraform from SOPS, exports
-# them as env vars per-invocation, and runs `tofu` from terraform/ so
-# backend.hcl + .tf files resolve.
+# Two independent stacks, each with its own state, backend key, and providers:
+#   terraform/proxmox/  — PVE host + guests + storage + backup jobs (bpg/proxmox)
+#   terraform/keycloak/ — Keycloak realm/client config (keycloak/keycloak)
 #
-#   just tf plan
-#   just tf apply
-#   just tf import proxmox_virtual_environment_container.aglarond earendil/131
+# Each recipe decrypts only the secrets ITS stack needs from SOPS and exports
+# them per-invocation, then runs `tofu` from that stack's dir. Splitting the
+# secrets per stack means a proxmox change never depends on the Keycloak secret
+# (and vice versa). Secrets live in the process env only for the tofu invocation;
+# `sops --extract` avoids YAML-parsing fragility.
 #
-# Three secrets exported:
-#   - PROXMOX_VE_API_TOKEN: bpg provider's native env var (used by the
-#     provider block to talk to PVE).
-#   - TF_VAR_pbs_main_password: the API token secret for the `main` PBS
-#     storage entry. PVE keeps this in /etc/pve/priv/storage/main.pw,
-#     separate from /etc/pve/storage.cfg, and bpg's storage_pbs resource
-#     requires it.
-#   - KEYCLOAK_CLIENT_SECRET: secret for the `terraform` service-account
-#     client in Keycloak's master realm (client-credentials grant for the
-#     keycloak provider). Add it under key `keycloak_terraform_client_secret`
-#     via `sops ansible/group_vars/all/secrets.sops.yaml`. NOTE: once the
-#     keycloak provider exists, every `just tf` configures it — so this secret
-#     must be present or all tofu commands fail at provider auth.
-#
-# Secrets live in the parent shell's process env only for the duration of
-# the tofu invocation; sops --extract avoids YAML parsing fragility.
-tf +args:
-    @cd terraform && \
-      PROXMOX_VE_API_TOKEN="$(sops --decrypt --extract '["pve_api_token"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
-      TF_VAR_pbs_main_password="$(sops --decrypt --extract '["pbs_main_password"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
-      KEYCLOAK_CLIENT_SECRET="$(sops --decrypt --extract '["keycloak_terraform_client_secret"]' ../ansible/group_vars/all/secrets.sops.yaml)" \
+#   just tf-proxmox plan
+#   just tf-proxmox import proxmox_virtual_environment_container.aglarond earendil/131
+#   just tf-keycloak plan   /   just tf-keycloak apply
+# Re-init after a backend/provider change: just tf-proxmox-init / just tf-keycloak-init
+
+# Proxmox infra stack — PROXMOX_VE_API_TOKEN (bpg's native env var) +
+# TF_VAR_pbs_main_password (the `main` PBS storage token).
+tf-proxmox +args:
+    @cd terraform/proxmox && \
+      PROXMOX_VE_API_TOKEN="$(sops --decrypt --extract '["pve_api_token"]' ../../ansible/group_vars/all/secrets.sops.yaml)" \
+      TF_VAR_pbs_main_password="$(sops --decrypt --extract '["pbs_main_password"]' ../../ansible/group_vars/all/secrets.sops.yaml)" \
       tofu {{args}}
 
-# One-shot init with the partial backend config. Re-run with -reconfigure
-# if backend.hcl ever changes.
-tf-init:
-    cd terraform && tofu init -backend-config=backend.hcl
+tf-proxmox-init:
+    cd terraform/proxmox && tofu init -backend-config=backend.hcl
+
+# Keycloak app stack — KEYCLOAK_CLIENT_SECRET for the `terraform` service-account
+# client (client-credentials grant). Add it under key
+# `keycloak_terraform_client_secret` via `sops ansible/group_vars/all/secrets.sops.yaml`.
+tf-keycloak +args:
+    @cd terraform/keycloak && \
+      KEYCLOAK_CLIENT_SECRET="$(sops --decrypt --extract '["keycloak_terraform_client_secret"]' ../../ansible/group_vars/all/secrets.sops.yaml)" \
+      tofu {{args}}
+
+tf-keycloak-init:
+    cd terraform/keycloak && tofu init -backend-config=backend.hcl
 
 # --- Grafana ---
 
