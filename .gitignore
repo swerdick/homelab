@@ -6,9 +6,9 @@
 
 # OpenTofu / Terraform. `.terraform.lock.hcl` is intentionally NOT ignored
 # (provider versions/hashes must be reproducible across operators).
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/*.tfvars
-terraform/crash.log
-terraform/crash.*.log
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/*.tfvars
+terraform/**/crash.log
+terraform/**/crash.*.log

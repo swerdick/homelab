@@ -42,11 +42,11 @@ Inventory groups (`alloy`, `debian_guests`, `root_hosts`, `sudo_hosts`, etc.) ar
 The Proxmox-level topology — LXC/VM definitions, bind mounts, network — is managed under [`terraform/`](terraform/) using OpenTofu + the `bpg/proxmox` provider. Currently covers the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`) and the `gondor` k3s VM. `anduril` is queued for a follow-up that depends on a host-side ansible playbook for GPU passthrough prereqs.
 
 ```sh
-just tf plan      # preview against live PVE
-just tf apply
+just tf-proxmox plan      # preview against live PVE
+just tf-proxmox apply
 ```
 
-`just tf` decrypts the PVE API token from SOPS per-invocation and runs `tofu` inside `terraform/`. State lives in the `vingilot-homelab-tfstate` S3 bucket (hardened — see `terraform/README.md`). The fresh-rebuild flow is `terraform apply` → `ansible-playbook ...` → data restore from PBS/restic.
+`terraform/` is split into two independent stacks — **proxmox** (PVE topology, this section) and **keycloak** (OIDC client config; see `terraform/README.md`) — each with its own state and a `just tf-<stack>` wrapper that decrypts only its secrets from SOPS per-invocation. State lives in the `vingilot-homelab-tfstate` S3 bucket (hardened — see `terraform/README.md`). The fresh-rebuild flow is `just tf-proxmox apply` → `ansible-playbook ...` → data restore from PBS/restic.
 
 The PVE config snapshots under [`earendil/pve-configs/`](earendil/pve-configs/) remain as a documentation + audit reference for the resources TF now owns; revisit them after a full DR drill.
 

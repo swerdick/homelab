@@ -13,5 +13,5 @@ provider "proxmox" {
   endpoint = var.pve_endpoint
   insecure = false
   # api_token is intentionally omitted — bpg reads PROXMOX_VE_API_TOKEN
-  # from the environment, which the justfile `tf` recipe sources from SOPS.
+  # from the environment, which the justfile `tf-proxmox` recipe sources from SOPS.
 }
