@@ -129,17 +129,6 @@ spec:
       grafana.ini:
         server:
           root_url: https://grafana.vingilot.internal/
-        # Allow Grafana to LINK an OAuth login to an existing local user via
-        # email match (e.g. the seeded `pseudo` admin in grafana-admin.yaml).
-        # Grafana 10+ disables this by default as a CVE mitigation against an
-        # attacker controlling an OIDC IdP claiming arbitrary emails to take
-        # over local accounts. Acceptable here: one trusted IdP (our own
-        # Keycloak), single-operator homelab. Without this, the very first
-        # OAuth login fails with a misleading "user not found" because the
-        # OAuth-created user would collide on `login=pseudo` with the seeded
-        # admin and Grafana can't link the two.
-        auth:
-          oauth_allow_insecure_email_lookup: true
         auth.generic_oauth:
           enabled: true
           name: Keycloak
