@@ -7,5 +7,6 @@ resources:
   - library-pvc.yaml
   - bulk-photos-pv.yaml
   - bulk-media-pv.yaml
+  - tirion-ca-configmap.yaml
   - immich.yaml
   - immich-route.yaml
