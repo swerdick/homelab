@@ -142,6 +142,15 @@ spec:
           login_attribute_path: preferred_username
           email_attribute_path: email
           use_refresh_token: true
+          # Map Keycloak groups → Grafana role on each OIDC login. Members of
+          # homelab-admins get GrafanaAdmin (server admin + org admin);
+          # homelab-readonly → Viewer; everyone else → Viewer as a safe default.
+          # Requires the groups claim mapper on the grafana client (TF-managed
+          # in terraform/keycloak/keycloak.tf) so `groups[*]` is in the userinfo,
+          # + allow_assign_grafana_admin so role_attribute_path can grant
+          # server admin (vs only org-level Admin).
+          role_attribute_path: "contains(groups[*], 'homelab-admins') && 'GrafanaAdmin' || contains(groups[*], 'homelab-readonly') && 'Viewer' || 'Viewer'"
+          allow_assign_grafana_admin: true
 
       # OAuth client secret from a SOPS-encrypted Secret (grafana-oauth.yaml).
       envValueFrom:

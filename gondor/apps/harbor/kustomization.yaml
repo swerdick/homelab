@@ -6,5 +6,6 @@ resources:
   - postgres-podmonitor.yaml
   - valkey.yaml
   - harbor-admin.yaml
+  - tirion-ca-secret.yaml
   - harbor.yaml
   - harbor-route.yaml
