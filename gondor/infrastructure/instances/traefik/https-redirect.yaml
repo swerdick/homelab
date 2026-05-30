@@ -1,0 +1,21 @@
+---
+# Cluster-wide HTTP->HTTPS redirect. Attaches to the `web` listener with no
+# hostname or path filters, so every plaintext request gets a 301 to https://
+# on the same host. cert-manager's ACME solver routes match the more specific
+# PathPrefix `/.well-known/acme-challenge/`, which wins under Gateway API's
+# longest-PathPrefix tiebreaker, so HTTP-01 challenges still reach the solver.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: https-redirect
+  namespace: traefik
+spec:
+  parentRefs:
+    - name: vingilot
+      sectionName: web
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
