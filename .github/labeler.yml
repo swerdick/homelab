@@ -1,0 +1,25 @@
+# Path-based PR labeling for actions/labeler@v6.
+# Labels must exist on the repo first (see gh label create commands in the
+# initial CI bootstrap commit).
+
+ansible:
+  - changed-files:
+      - any-glob-to-any-file: "ansible/**"
+
+terraform:
+  - changed-files:
+      - any-glob-to-any-file: "terraform/**"
+
+k8s:
+  - changed-files:
+      - any-glob-to-any-file: "gondor/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "runbooks/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
