@@ -1,7 +1,7 @@
 ---
 # Routes https://grafana.vingilot.internal/* to the kube-prometheus-stack
 # Grafana Service. Binds specifically to the `grafana-https` listener on the
-# vingilot Gateway; HTTP requests are not served (no redirect for now).
+# vingilot Gateway; HTTP is handled by the cluster-wide https-redirect route.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
