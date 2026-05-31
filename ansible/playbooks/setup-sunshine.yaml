@@ -349,6 +349,57 @@
         state: started
         daemon_reload: true
 
+    # --- PipeWire: mirror Sunshine audio to HDMI so the TV also plays ----
+    # The "TV speakers AND Moonlight" use case. Default sink stays as Sunshine's
+    # virtual `sink-sunshine-stereo` (Sunshine auto-creates this and sets it
+    # default on startup); apps play there as always and Sunshine captures it
+    # for the stream. A user-level PipeWire loopback module duplicates that
+    # sink's monitor output into the GPU's HDMI audio sink in real-time, so
+    # the TV plays the same audio whenever the TV is on. When the TV is off
+    # the HDMI sink stays present (cable plugged → GPU keeps the sink alive)
+    # but receives audio silently — no harm. Trade-off: the loopback adds
+    # ~20-50ms latency on the TV path. Fine for game audio in isolation,
+    # noticeable as A/V drift if the user is watching HDMI video directly
+    # without going through Moonlight. Switch to a combined-sink topology
+    # (module-combine-stream) if the drift bothers us — left as a follow-up.
+
+    - name: Ensure pipewire user config dir exists
+      ansible.builtin.file:
+        path: ~/.config/pipewire/pipewire.conf.d
+        state: directory
+        mode: "0755"
+
+    - name: Drop sunshine→HDMI audio loopback config
+      # node.target identifies sinks by node.name (not pactl-style ID), which
+      # is stable across reboots. stream.capture.sink=true tells the loopback
+      # to capture the *monitor* of the named sink (equivalent to the pactl
+      # `source=NAME.monitor` form). The loopback module patiently waits for
+      # both targets to exist — Sunshine's virtual sink is created when the
+      # sunshine user service starts; the HDMI sink appears when the GPU's
+      # snd_hda card enumerates at boot.
+      ansible.builtin.copy:
+        dest: ~/.config/pipewire/pipewire.conf.d/60-sunshine-to-hdmi.conf
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-sunshine.yaml) — edit the playbook.
+          context.modules = [
+              {
+                  name = libpipewire-module-loopback
+                  args = {
+                      node.name = sunshine-to-hdmi
+                      node.description = "Mirror Sunshine audio to HDMI (TV)"
+                      capture.props = {
+                          node.target = sink-sunshine-stereo
+                          stream.capture.sink = true
+                      }
+                      playback.props = {
+                          node.target = alsa_output.pci-0000_01_00.1.hdmi-stereo
+                      }
+                  }
+              }
+          ]
+      notify: Restart pipewire user stack
+
   handlers:
     # Defined reload-before-restart: handlers run in definition order, so a
     # dropin change reloads the manager before the restart picks it up.
@@ -361,3 +412,14 @@
       # a full restart. This boots any active streaming session; intended for
       # changes applied between sessions.
       ansible.builtin.command: systemctl --user restart app-dev.lizardbyte.app.Sunshine.service
+
+    - name: Restart pipewire user stack
+      # Restart pipewire + wireplumber + pulse-shim together so the new
+      # pipewire.conf.d/*.conf is picked up. Pipewire config is only read at
+      # daemon start; no in-process reload mechanism exists for context.modules.
+      # This briefly drops all audio in the user session — disruptive mid-game,
+      # which is why this is in the post-install playbook flow, not a recurring
+      # path.
+      ansible.builtin.command: >
+        systemctl --user restart pipewire.service wireplumber.service
+        pipewire-pulse.service
