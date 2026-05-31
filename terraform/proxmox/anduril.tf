@@ -6,12 +6,32 @@
 # on the host, this VM will hang on `RmInitAdapter failed!` at boot
 # because the host kernel will have claimed the GPU first.
 #
-# USB passthrough is intentionally NOT defined here right now — the live
-# PVE config has no usb0/usb1 lines after a recent manual removal. When
-# the Razer/Corsair (or future Steam Controller 2 dongle) get re-attached,
-# add `usb { ... }` blocks with `host = "VID:PID"`. Per project memory:
-# USB passthrough must always be best-effort, never boot-mandatory — the
-# VM must come up even if a dongle is unplugged.
+# USB passthrough is via PVE cluster-level "resource mappings" rather than
+# raw `host = "VID:PID"` on the VM. Two reasons:
+#   1. PVE restricts raw USB attach to root@pam; API tokens get HTTP 500
+#      "only root can set 'usb0' config for real devices". Mappings are
+#      the documented way to delegate USB passthrough to a non-root token.
+#   2. Mappings stay best-effort by design — id-only (no path) means
+#      qemu/PVE start the VM with the device missing and hot-attach when
+#      it appears. Per project memory, anduril USB passthrough must NEVER
+#      be boot-mandatory (the dongle may be unplugged or replaced).
+# The TF token (terraform@pve!provider) holds PVEMappingAdmin at /mapping,
+# granted via `pvesh set /access/acl` from root@pam on earendil.
+
+resource "proxmox_hardware_mapping_usb" "anduril_bt" {
+  name = "anduril-bt"
+  # ASCII-only: bpg + PVE round-trip mangles UTF-8 (em-dash et al), the
+  # readback fails the post-apply consistency check, terraform aborts.
+  comment = "TP-Link UB500 BT adapter; pairs PS5/Steam controllers to anduril"
+
+  map = [
+    {
+      node    = "earendil"
+      id      = "2357:0604"
+      comment = "front-panel USB port; path intentionally omitted so any port works"
+    },
+  ]
+}
 
 resource "proxmox_virtual_environment_vm" "anduril" {
   node_name = "earendil"
@@ -118,6 +138,14 @@ resource "proxmox_virtual_environment_vm" "anduril" {
     mac_address = "BC:24:11:2B:A8:D6"
     # firewall not enabled on anduril's net0 (matches live PVE config).
     firewall = false
+  }
+
+  # TP-Link UB500 Bluetooth adapter — pairs PS5 DualSense (and eventually a
+  # Steam Controller 2) directly to anduril for couch play on the TV. Goes
+  # through a cluster-level resource mapping (see anduril_bt above) so the
+  # API token can attach it; raw VID:PID attach is root@pam-only in PVE.
+  usb {
+    mapping = proxmox_hardware_mapping_usb.anduril_bt.name
   }
 
   operating_system {
