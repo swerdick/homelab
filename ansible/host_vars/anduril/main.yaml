@@ -12,6 +12,18 @@
 sunshine_deb_version: "v2026.516.143833"
 sunshine_deb_url: "https://github.com/LizardByte/Sunshine/releases/download/{{ sunshine_deb_version }}/sunshine-ubuntu-26.04-amd64.deb"
 
+# --- MangoHud ------------------------------------------------------------
+# Built from upstream source instead of apt because Debian's `mangohud`
+# package is the DFSG variant — it strips the NVIDIA NVML linkage (proprietary
+# library), so the overlay renders but GPU% / VRAM / temp / power all read 0
+# on this NVIDIA-only host. Upstream source build links NVML cleanly and
+# returns real GPU metrics. Confirmed via diagnostic 2026-05-30 (NMS at 60fps
+# with apt mangohud reported 0% GPU; nvidia-smi confirmed actual ~50W draw).
+# Bump deliberately — confirm the tag still has a `*-Source.tar.xz` asset
+# (not -DFSG) at https://github.com/flightlessmango/MangoHud/releases.
+mangohud_version: "0.8.4"
+mangohud_source_url: "https://github.com/flightlessmango/MangoHud/releases/download/v{{ mangohud_version }}/MangoHud-v{{ mangohud_version }}-Source.tar.xz"
+
 # --- Unattended upgrades -------------------------------------------------
 # anduril gets unattended *security* upgrades like the rest of debian_guests,
 # but these package families are held back (Unattended-Upgrade::Package-Blacklist

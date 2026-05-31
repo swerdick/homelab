@@ -15,6 +15,15 @@
 # the present rate. A steady cap also gives the NVENC encoder even frame
 # pacing, which smooths the Moonlight stream.
 #
+# Built from upstream source (NOT apt) because Debian's mangohud package is
+# DFSG-stripped: NVIDIA NVML support is gone, so GPU%/VRAM/temp/power all read
+# 0 on this NVIDIA-only host (confirmed 2026-05-30 — overlay rendered fine but
+# every NVIDIA metric was 0). The pinned upstream tarball links NVML cleanly.
+# Apt mangohud is explicitly purged first to avoid a dual Vulkan-layer manifest
+# load (apt drops into /usr/share/vulkan, source-build into /usr/local/share/vulkan;
+# both visible to the Vulkan loader → layer loaded twice → undefined behavior).
+# Version + URL pinned in host_vars/anduril/main.yaml; bump deliberately.
+#
 # qml6-module-qtlocation: the QtLocation QML module Plasma's digital-clock
 # "Time Zones" config page needs — its map-based TimezoneSelector does
 # `import QtLocation`. anduril's lean replatform pulled KDE WITHOUT Recommends,
@@ -41,13 +50,147 @@
         update_cache: true
         cache_valid_time: 3600
 
-    - name: Install gaming tools
-      # mangohud lives in Ubuntu 'universe'. If a future release drops it,
-      # fall back to the upstream .deb from github.com/flightlessmango/MangoHud.
-      ansible.builtin.apt:
-        name:
-          - mangohud
-        state: present
+    - name: Read MangoHud version-marker file (written by this playbook on last successful install)
+      # We don't trust `mangohud --version` for the up-to-date check because
+      # upstream's tarballs don't bake the version into the binary (build.sh would
+      # via `git describe`, but we use meson directly — see below). This marker
+      # file is the canonical record of what this playbook last installed.
+      # File missing → never installed (or only apt's DFSG variant exists) → build.
+      ansible.builtin.slurp:
+        src: /usr/local/share/mangohud/.ansible-installed-version
+      register: mangohud_marker
+      failed_when: false
+
+    - name: Source-build MangoHud (NVIDIA NVML enabled)
+      when: >
+        mangohud_marker.content is not defined or
+        (mangohud_marker.content | b64decode | trim) != mangohud_version
+      block:
+        - name: Purge apt mangohud (DFSG variant — no NVML)
+          # Critical: also removes its /usr/share/vulkan/implicit_layer.d manifest,
+          # which would otherwise double-load alongside the source-built one.
+          ansible.builtin.apt:
+            name: mangohud
+            state: absent
+            purge: true
+
+        - name: Install MangoHud build dependencies
+          # Per upstream README; libxnvctrl-dev + libdbus-1-dev are "optional"
+          # but enable the X11 NVCTRL fallback + better discord/etc integration
+          # at trivial cost. Skipping 32-bit multilib for now — NMS (Proton) and
+          # most modern Steam titles are 64-bit; if a 32-bit-only game later needs
+          # the overlay, add gcc-multilib/g++-multilib + re-run build_32 target.
+          ansible.builtin.apt:
+            name:
+              - gcc
+              - g++
+              - meson
+              - ninja-build
+              - glslang-tools
+              - libglvnd-dev
+              - libx11-dev
+              - libxnvctrl-dev
+              - libdbus-1-dev
+              - libwayland-dev
+              - libxkbcommon-dev
+              - python3-mako
+              - pkg-config
+            state: present
+
+        - name: Create MangoHud build workspace
+          ansible.builtin.file:
+            path: /tmp/mangohud-build
+            state: directory
+            mode: "0755"
+
+        - name: Download MangoHud source tarball
+          ansible.builtin.get_url:
+            url: "{{ mangohud_source_url }}"
+            dest: "/tmp/mangohud-{{ mangohud_version }}.tar.xz"
+            mode: "0644"
+
+        - name: Extract source tarball
+          ansible.builtin.unarchive:
+            src: "/tmp/mangohud-{{ mangohud_version }}.tar.xz"
+            dest: /tmp/mangohud-build
+            remote_src: true
+            extra_opts: ["--strip-components=1"]
+
+        - name: Configure MangoHud build (meson)
+          # Direct meson invocation rather than upstream's build.sh wrapper
+          # because build.sh derives its version from `git describe`, which fails
+          # on extracted-tarball trees (no .git dir). meson_options.txt has
+          # `with_nvml = enabled` by default, so no flag override needed.
+          ansible.builtin.command: meson setup build --prefix=/usr/local
+          args:
+            chdir: /tmp/mangohud-build
+
+        - name: Compile MangoHud
+          ansible.builtin.command: ninja -C build
+          args:
+            chdir: /tmp/mangohud-build
+
+        - name: Install MangoHud to /usr/local
+          ansible.builtin.command: ninja -C build install
+          args:
+            chdir: /tmp/mangohud-build
+
+        - name: Refresh ld cache so the new libMangoHud.so is discoverable
+          ansible.builtin.command: ldconfig
+
+        - name: Verify the installed binary runs and confirm NVML compiled in
+          # Two-part check: (1) binary runs at all (smoke test for broken build);
+          # (2) NVML API symbols are present in the compiled .so. MangoHud calls
+          # NVML by symbol name (nvmlInit_v2, nvmlDeviceGetUtilizationRates, etc.)
+          # rather than dlopen'ing libnvidia-ml.so as a path string, so grep for
+          # the symbol name — not the library filename. The DFSG apt build omits
+          # the entire nvidia.cpp object so no nvml* symbols appear there.
+          # Skipping an exact-version match: upstream's source tarballs don't bake
+          # the pinned version into the binary (build.sh would via `git describe`,
+          # but we run meson directly — see "Configure" task above). The marker
+          # file written below is the authoritative version record for re-run
+          # detection in the outer `when:` guard.
+          # NOTE: deliberately NOT using `set -o pipefail` here. `grep -q` exits
+          # immediately on first match, which closes the pipe and SIGPIPEs the
+          # still-streaming `strings` (rc=141). Pipefail would then propagate that
+          # failure even though grep found exactly what we wanted.
+          ansible.builtin.shell: |
+            mangohud --version >/dev/null 2>&1 || { echo "binary did not run"; exit 1; }
+            strings /usr/local/lib/x86_64-linux-gnu/mangohud/libMangoHud.so 2>/dev/null \
+              | grep -q nvmlInit || { echo "NVML symbols missing from libMangoHud.so"; exit 1; }
+            echo "OK"
+          args:
+            executable: /bin/bash
+          register: mangohud_verify
+          changed_when: false
+          failed_when: "'OK' not in mangohud_verify.stdout"
+
+        - name: Ensure /usr/local/share/mangohud exists for the marker
+          # MangoHud's meson install doesn't create this dir if there are no
+          # example configs to drop in; we create it to hold our version marker.
+          ansible.builtin.file:
+            path: /usr/local/share/mangohud
+            state: directory
+            mode: "0755"
+
+        - name: Drop a marker recording what version this playbook installed
+          # The binary itself doesn't carry the version (upstream's build.sh would
+          # via git describe, but we run meson directly — see "Configure" task).
+          # Persist the version we built so the next playbook run's outer `when:`
+          # guard has something authoritative to compare to via the slurp at the
+          # top of this play.
+          ansible.builtin.copy:
+            dest: /usr/local/share/mangohud/.ansible-installed-version
+            content: "{{ mangohud_version }}\n"
+            mode: "0644"
+
+        - name: Clean up build artifacts
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /tmp/mangohud-build
+            - "/tmp/mangohud-{{ mangohud_version }}.tar.xz"
 
     - name: Install anduril desktop QoL packages
       # qml6-module-qtlocation provides the QtLocation QML module Plasma's
