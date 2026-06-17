@@ -1,0 +1,164 @@
+---
+# Configure the Proxmox host so the discrete AMD GPU is owned by `amdgpu`
+# and shared into LXC guests via /dev/dri + /dev/kfd — the opposite of the
+# old vfio-passthrough model.
+#
+# Background: anduril is moving from a GPU-passthrough VM (GTX 970, vfio-pci)
+# to an LXC sharing the host kernel's amdgpu driver (AMD RX 9070 XT, RDNA4 /
+# gfx1201, PCI 03:00.0 + audio 03:00.1). For that to work the host must NOT
+# claim the card for vfio and must NOT blacklist amdgpu; the card binds
+# amdgpu at boot and the render/KMS device nodes become available to
+# privileged containers. The host's own console stays on the Intel iGPU
+# (00:02.0 / i915), so the AMD card is free for the gaming container's
+# compositor to drive the TV.
+#
+# This REPLACES setup-vfio-passthrough.yaml in site-earendil.yaml. It undoes
+# that play's host-side changes (vfio-pci ID binding, the NVIDIA/nouveau
+# blacklist, the vfio module autoload) and leaves IOMMU enabled (harmless).
+#
+# Changes here take effect on the NEXT boot only (initramfs + modprobe land
+# before userspace). This playbook does NOT reboot earendil — rebooting drops
+# every guest; that's a deliberate human decision. Final task prints a
+# reminder. Idempotent — safe to re-run. Lives in site-earendil.yaml.
+
+- name: Make amdgpu own the discrete GPU on the Proxmox host
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    # Kept enabled — harmless without passthrough and useful generally.
+    # Token-merged into the existing cmdline so ZFS-root and other params
+    # are preserved (same approach as the retired vfio play).
+    iommu_kernel_params:
+      - intel_iommu=on
+      - iommu=pt
+
+    # vfio modules the old passthrough play autoloaded; no longer needed once
+    # the GPU is amdgpu-owned. Removed from /etc/modules so nothing competes
+    # to claim the card.
+    vfio_modules:
+      - vfio
+      - vfio_iommu_type1
+      - vfio_pci
+
+  tasks:
+    # --- Kernel cmdline: keep IOMMU (idempotent no-op if already present) ---
+
+    - name: Read current /etc/kernel/cmdline
+      ansible.builtin.slurp:
+        src: /etc/kernel/cmdline
+      register: cmdline_raw
+
+    - name: Parse cmdline into tokens + compute the merged set
+      ansible.builtin.set_fact:
+        cmdline_current: "{{ (cmdline_raw.content | b64decode | trim).split() }}"
+        cmdline_merged: >-
+          {{
+            ((cmdline_raw.content | b64decode | trim).split()) +
+            (iommu_kernel_params | difference((cmdline_raw.content | b64decode | trim).split()))
+          }}
+
+    - name: Update /etc/kernel/cmdline if IOMMU params missing
+      ansible.builtin.copy:
+        dest: /etc/kernel/cmdline
+        owner: root
+        group: root
+        mode: "0644"
+        content: "{{ cmdline_merged | join(' ') }}\n"
+      when: cmdline_merged != cmdline_current
+      notify: Refresh proxmox boot ESPs
+
+    # --- Undo the vfio claim so amdgpu can bind the card ---
+
+    - name: Remove vfio-pci ID binding (no longer claim the GPU for vfio)
+      ansible.builtin.file:
+        path: /etc/modprobe.d/vfio.conf
+        state: absent
+      notify:
+        - Refresh initramfs
+        - Refresh proxmox boot ESPs
+
+    - name: Remove the NVIDIA/nouveau blacklist (no NVIDIA card present)
+      ansible.builtin.file:
+        path: /etc/modprobe.d/blacklist-nvidia.conf
+        state: absent
+      notify:
+        - Refresh initramfs
+        - Refresh proxmox boot ESPs
+
+    - name: Stop autoloading vfio modules at boot
+      ansible.builtin.lineinfile:
+        path: /etc/modules
+        line: "{{ item }}"
+        state: absent
+      loop: "{{ vfio_modules }}"
+      notify:
+        - Refresh initramfs
+        - Refresh proxmox boot ESPs
+
+    # --- Confirm amdgpu can take the card + surface device GIDs ---
+
+    - name: Ensure nothing blacklists amdgpu
+      # Defensive: assert no modprobe.d file blacklists amdgpu/radeon. There
+      # shouldn't be one (the old play only touched NVIDIA), but a stray
+      # blacklist would silently break the whole LXC-GPU model.
+      ansible.builtin.shell: >-
+        grep -RIl --include='*.conf' -E '^\s*blacklist\s+(amdgpu|radeon)\b'
+        /etc/modprobe.d/ || true
+      register: amdgpu_blacklist
+      changed_when: false
+      check_mode: false
+
+    - name: Fail if amdgpu/radeon is blacklisted
+      ansible.builtin.assert:
+        that: amdgpu_blacklist.stdout | trim | length == 0
+        fail_msg: >-
+          amdgpu/radeon is blacklisted in: {{ amdgpu_blacklist.stdout }}.
+          Remove it before relying on host-shared GPU containers.
+
+    - name: Read render/video group GIDs (for container device access)
+      # Privileged LXCs map 1:1, so the in-container video/render groups must
+      # use these host GIDs to access /dev/dri/card* and /dev/dri/renderD128.
+      # Captured here for reference by the spike + the gaming-session play.
+      ansible.builtin.shell: "getent group render video"
+      register: gpu_gids
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: Show render/video GIDs
+      ansible.builtin.debug:
+        msg: "{{ gpu_gids.stdout_lines }}"
+
+    # --- Reboot reminder ---
+
+    - name: Reboot reminder
+      ansible.builtin.debug:
+        msg: |
+          ─────────────────────────────────────────────────────────────────
+          amdgpu host setup complete.
+
+          If any tasks above reported `changed=`, the kernel cmdline,
+          initramfs, or modprobe config changed. These take effect on the
+          NEXT boot only — reboot earendil to bind amdgpu to the AMD card.
+
+          NB: rebooting earendil drops every guest in the homelab. Do this
+          during a planned maintenance window (fold into the PVE 9.2 upgrade
+          + kernel unpin per the anduril replatform plan).
+
+          Verify post-reboot:
+              ssh earendil "lspci -k -s 03:00.0"   # Kernel driver in use: amdgpu
+              ssh earendil "ls -l /dev/dri /dev/kfd"
+              ssh earendil "lsmod | grep -E 'amdgpu|vfio'"
+          ─────────────────────────────────────────────────────────────────
+
+  handlers:
+    # initramfs must regenerate BEFORE proxmox-boot-tool copies it to the
+    # ESPs, otherwise the ESPs get the stale initrd. (Same ordering as the
+    # retired vfio play.)
+    - name: Refresh initramfs
+      ansible.builtin.command: update-initramfs -u -k all
+
+    - name: Refresh proxmox boot ESPs
+      ansible.builtin.command: proxmox-boot-tool refresh

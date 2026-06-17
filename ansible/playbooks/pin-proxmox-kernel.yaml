@@ -1,44 +1,50 @@
 ---
-# Pin the Proxmox VE host kernel to a known-good version.
+# Manage the Proxmox VE host boot-kernel pin.
 #
-# Proxmox's `proxmox-default-kernel` meta-package can roll the host onto a
-# new kernel series during routine upgrades; this playbook makes the choice
-# explicit and persistent across reboots by writing /etc/kernel/proxmox-boot-pin
-# and refreshing the EFI System Partitions. Bump `proxmox_kernel_pin` to
-# move the host forward intentionally.
+# History: a pin to 6.17.13-4-pve was added because proxmox-kernel-7.0.0
+# (which became proxmox-default-kernel on 2026-04-29) carried a vfio-pci /
+# KVM regression that stopped the GTX 970 (Maxwell GM204) initializing in
+# the anduril passthrough VM (`RmInitAdapter failed!`). That card has been
+# replaced by an AMD RX 9070 XT and anduril is moving off passthrough to an
+# LXC sharing the host's amdgpu (kernel 7.0 is fine-to-better for RDNA4), so
+# the pin is obsolete. Default is now UNPINNED — the host floats on
+# proxmox-default-kernel again.
+#
+# To deliberately pin again, set `proxmox_kernel_pin` to a version string
+# (e.g. -e proxmox_kernel_pin=6.17.13-4-pve); empty (default) ensures the
+# pin file is absent. Either way refreshes the ESPs. Effective on next boot.
 #
 # Currently only earendil is in `proxmox_hosts`.
 
-- name: Pin Proxmox boot kernel on Proxmox VE hosts
+- name: Manage Proxmox boot-kernel pin on Proxmox VE hosts
   hosts: proxmox_hosts
   become: true
   gather_facts: false
 
   vars:
-    # Pin the host to a known-good Proxmox kernel.
-    #
-    # proxmox-kernel-7.0.0-3-pve (which became proxmox-default-kernel as of
-    # 2026-04-29) introduced a vfio-pci / KVM regression that prevents the
-    # GTX 970 (Maxwell GM204) from initializing inside the anduril VM —
-    # `NVRM: GPU 0000:01:00.0: RmInitAdapter failed! (0x24:0x72:1590)` after
-    # the kernel module loads. 6.17.13-4-pve is the last known-good kernel
-    # for that passthrough path.
-    #
-    # Revisit when a later 7.0.x point release ships; unpin and test before
-    # changing this value.
-    proxmox_kernel_pin: "6.17.13-4-pve"
+    # Empty = unpinned (let proxmox-default-kernel win). Set to a version
+    # string to pin. See header for history.
+    proxmox_kernel_pin: ""
 
   tasks:
-    - name: Pin Proxmox boot kernel
+    - name: Remove the boot-kernel pin (unpinned — default)
+      ansible.builtin.file:
+        path: /etc/kernel/proxmox-boot-pin
+        state: absent
+      when: proxmox_kernel_pin | length == 0
+      register: kernel_unpin
+
+    - name: Pin the boot kernel (only when a version is set)
       ansible.builtin.copy:
         dest: /etc/kernel/proxmox-boot-pin
         content: "{{ proxmox_kernel_pin }}\n"
         owner: root
         group: root
         mode: "0644"
+      when: proxmox_kernel_pin | length > 0
       register: kernel_pin
 
-    - name: Refresh boot ESPs after pin change
+    - name: Refresh boot ESPs after a pin change
       ansible.builtin.command: proxmox-boot-tool refresh
-      when: kernel_pin is changed
+      when: (kernel_unpin is changed) or (kernel_pin is changed)
       changed_when: true
