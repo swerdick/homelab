@@ -4,16 +4,18 @@
 #
 # Imports the three earendil-specific playbooks in dependency order:
 #
-#   1. pin-proxmox-kernel.yaml — pins the host kernel to a known-good
-#      version. Runs first so the vfio config below lands on the kernel
-#      we mean to keep.
-#   2. setup-vfio-passthrough.yaml — IOMMU cmdline, vfio modules,
-#      NVIDIA blacklist, vfio-pci ID binding. Anduril's GPU passthrough
-#      depends on this; pin must already be in place so we don't
-#      configure for one kernel and reboot into another.
-#   3. setup-earendil-network.yaml — pins vmbr0's uplink to the added
-#      Realtek NIC (enp4s0) and persists magic-packet Wake-on-LAN. Self
-#      contained; order vs. the others doesn't matter.
+#   1. pin-proxmox-kernel.yaml — manages the host boot-kernel pin. Now
+#      defaults to UNPINNED (the GTX 970 reason is gone); the host floats
+#      on proxmox-default-kernel. Runs first so amdgpu config below lands
+#      on the kernel we'll actually boot.
+#   2. setup-amdgpu-host.yaml — keeps IOMMU, undoes the old vfio claim
+#      (vfio-pci binding, NVIDIA blacklist, vfio module autoload) so the
+#      AMD card binds amdgpu and shares into LXC guests. Replaces the
+#      retired setup-vfio-passthrough.yaml (anduril is moving off
+#      passthrough to an amdgpu-sharing LXC).
+#   3. setup-earendil-network.yaml — pins vmbr0's uplink to the Realtek
+#      NIC by MAC (stable name lan0) and persists magic-packet Wake-on-LAN.
+#      Self contained; order vs. the others doesn't matter.
 #   4. setup-terraform-pve-access.yaml — provisions the Terraform PVE
 #      user/role/ACL. Orthogonal to the others; placed last because
 #      its operator-driven token step is a natural end of session.
@@ -35,11 +37,11 @@
 #   ansible-playbook playbooks/site-earendil.yaml
 #
 # All imported playbooks target `proxmox_hosts` (= earendil today).
-# Idempotent — safe to re-run. setup-vfio-passthrough may print a
-# reboot reminder; rebooting earendil drops every guest, so timing
-# is a deliberate operator decision.
+# Idempotent — safe to re-run. setup-amdgpu-host may print a reboot
+# reminder; rebooting earendil drops every guest, so timing is a
+# deliberate operator decision.
 
 - import_playbook: pin-proxmox-kernel.yaml
-- import_playbook: setup-vfio-passthrough.yaml
+- import_playbook: setup-amdgpu-host.yaml
 - import_playbook: setup-earendil-network.yaml
 - import_playbook: setup-terraform-pve-access.yaml

@@ -3,25 +3,39 @@
 #
 # Background: earendil's onboard NIC is a Qualcomm/Atheros Killer E2400
 # (alx driver), whose Wake-on-LAN support is unreliable. A TP-Link TG-3468
-# (Realtek RTL8168, r8169 driver, enp4s0) was added specifically to get
-# dependable magic-packet cold-start (the operator's `wake-nas` alias).
-# vmbr0 was repointed from the onboard NIC (nic0) to enp4s0.
+# (Realtek RTL8168, r8169 driver) was added specifically to get dependable
+# magic-packet cold-start (the operator's `wake-nas` alias). vmbr0 uplinks
+# this Realtek card.
 #
-# Two things this play keeps true on the host:
-#   1. vmbr0's uplink is enp4s0 (asserted, not auto-applied — see caution).
-#   2. Magic-packet WoL is armed on enp4s0, and re-armed on every boot.
-#      r8169 does NOT persist WoL across boots, so a udev rule (matched by
-#      MAC, so it's rename-proof) re-applies it whenever the NIC appears.
+# The Realtek's *predictable* name is NOT stable across hardware changes:
+# swapping the GTX 970 for an AMD 9070XT (June 2026) renumbered the PCI bus
+# and renamed the card enp4s0 -> enp6s0, which stranded the host (vmbr0's
+# bridge-port vanished, so the bridge had no carrier). To make this
+# rename-proof, a systemd .link file pins the card BY MAC to a fixed name
+# (lan0), so the bridge-port never moves again regardless of slot or
+# enumeration order.
+#
+# Three things this play keeps true on the host:
+#   1. The Realtek uplink is pinned to a stable name (lan0) by MAC via a
+#      systemd .link file. Rename-proof.
+#   2. vmbr0's uplink is lan0 (asserted, not auto-applied -- see CAUTION 1).
+#   3. Magic-packet WoL is armed on the uplink, and re-armed on every boot
+#      via a MAC-matched udev rule (r8169 does not persist WoL across boots).
 #      The play also arms it live so protection doesn't wait for a reboot.
 #
-# CAUTION — the bridge-ports assertion is intentionally NOT auto-applied.
+# CAUTION 1 -- the bridge-ports assertion is intentionally NOT auto-applied.
 # Changing vmbr0's uplink on a live host and running `ifreload -a` can strand
-# the host (the management IP rides this bridge). In steady state the replace
-# is a no-op; if it ever reports `changed`, apply with the self-healing
-# procedure (systemd-run + ifreload + timed auto-revert), ideally on console
-# — never a bare `ifreload -a` over SSH. The handler only prints a reminder.
+# the host (the management IP rides this bridge). The handler only warns.
 #
-# Idempotent — safe to re-run. Lives in site-earendil.yaml.
+# CAUTION 2 -- the .link rename only takes effect on the NEXT reboot (you
+# can't rename a live, bridge-enslaved interface). Between applying this play
+# and that reboot, the live interface keeps its current kernel name while
+# /etc/network/interfaces already says `lan0`. That is reboot-consistent
+# (udev renames the device -> ifupdown reads `lan0`), but do NOT run
+# `ifreload -a` in that window, and do the activating reboot with console
+# access so you can verify `ip -br link` shows lan0 and the host returns.
+#
+# Idempotent -- safe to re-run. Lives in site-earendil.yaml.
 
 - name: Configure earendil's uplink NIC + Wake-on-LAN
   hosts: proxmox_hosts
@@ -29,24 +43,50 @@
   gather_facts: false
 
   vars:
-    # The management uplink NIC and its MAC. WoL is matched by MAC (not name)
-    # in udev so it survives any future predictable-name change.
-    wol_nic: enp4s0
-    wol_nic_mac: "b8:fb:b3:cb:ef:50"
+    # The management uplink's permanent MAC, and the stable name we pin it
+    # to. Both the name-pin and WoL match by MAC so they survive any future
+    # predictable-name change.
+    uplink_mac: "b8:fb:b3:cb:ef:50"
+    uplink_name: lan0
 
   tasks:
-    - name: Ensure vmbr0 uplinks the Realtek TG-3468 (enp4s0), not the onboard Killer (nic0)
-      # Surgical: only rewrites the uplink if it has drifted back to nic0.
-      # No-op once enp4s0 is in place. Preserves the line's leading indent.
+    - name: Pin the Realtek uplink to a stable name by MAC (rename-proof)
+      # systemd-udevd reads .link files regardless of the network manager
+      # (ifupdown2 here). Matching the permanent MAC and forcing Name= means
+      # the card is always `lan0`, even if PCI enumeration renumbers its bus.
+      # Takes effect on the NEXT reboot (can't rename a live, in-use NIC).
+      ansible.builtin.copy:
+        dest: /etc/systemd/network/10-mgmt-uplink.link
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-earendil-network.yaml).
+          # Pin the Realtek TG-3468 management uplink to a stable name so
+          # vmbr0's bridge-port never moves when PCI enumeration changes
+          # (e.g. a GPU swap). Matched by the card's permanent MAC.
+          [Match]
+          MACAddress={{ uplink_mac }}
+          Type=ether
+
+          [Link]
+          Name={{ uplink_name }}
+      notify: Reload udev rules
+
+    - name: Ensure vmbr0 uplinks the pinned name (lan0)
+      # Rewrites bridge-ports to the stable name regardless of what it
+      # currently says (nic0 / enp4s0 / enp6s0). Replacing lan0 with lan0 is
+      # a content no-op, so this reports changed=0 once settled. Preserves the
+      # line's leading indent. NOT auto-applied -- see CAUTION 1/2 in header.
       ansible.builtin.replace:
         path: /etc/network/interfaces
-        regexp: '^(\s*bridge-ports\s+)nic0\s*$'
-        replace: '\g<1>{{ wol_nic }}'
+        regexp: '^(\s*bridge-ports\s+)\S.*$'
+        replace: '\g<1>{{ uplink_name }}'
       notify: Warn interfaces changed
 
     - name: Persist magic-packet WoL via udev (matched by MAC, rename-proof)
       ansible.builtin.copy:
-        dest: "/etc/udev/rules.d/70-wol-{{ wol_nic }}.rules"
+        dest: /etc/udev/rules.d/70-wol-uplink.rules
         owner: root
         group: root
         mode: "0644"
@@ -56,34 +96,53 @@
           # magic-packet wake whenever this NIC appears. Matched by MAC so
           # it survives an interface rename. Without this, the NIC boots
           # with WoL disabled and `wake-nas` can't cold-start earendil.
-          ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="{{ wol_nic_mac }}", RUN+="/usr/sbin/ethtool -s %k wol g"
+          ACTION=="add", SUBSYSTEM=="net", ATTR{address}=="{{ uplink_mac }}", RUN+="/usr/sbin/ethtool -s %k wol g"
       notify: Reload udev rules
+
+    - name: Find the live uplink interface by MAC
+      # The .link rename only applies on reboot, so the live device may still
+      # carry its kernel-default name (enp6s0). Locate whatever interface
+      # currently owns the uplink MAC so the live WoL tasks below target the
+      # right device no matter its current name. sysfs addresses are
+      # lowercase; -x anchors the whole line, -l prints the matching path.
+      ansible.builtin.shell: "grep -ilx '{{ uplink_mac }}' /sys/class/net/*/address"
+      register: uplink_grep
+      changed_when: false
+      check_mode: false
+      failed_when: uplink_grep.rc != 0 or uplink_grep.stdout == ""
+
+    - name: Set live uplink name fact
+      ansible.builtin.set_fact:
+        # /sys/class/net/<name>/address -> field index 4 is <name>.
+        live_uplink_name: "{{ uplink_grep.stdout_lines[0].split('/')[4] }}"
 
     - name: Read current WoL state
       # Read-only; runs even under --check so the arm task below has real data.
-      ansible.builtin.command: "ethtool {{ wol_nic }}"
+      ansible.builtin.command: "ethtool {{ live_uplink_name }}"
       register: wol_state
       changed_when: false
       check_mode: false
 
     - name: Arm magic-packet WoL now (don't wait for a reboot)
-      ansible.builtin.command: "ethtool -s {{ wol_nic }} wol g"
+      ansible.builtin.command: "ethtool -s {{ live_uplink_name }} wol g"
       when: "'Wake-on: g' not in wol_state.stdout"
 
   handlers:
     - name: Reload udev rules
-      # Reloads rules into udevd; they apply on the next NIC add (next boot).
-      # We don't `udevadm trigger` the live NIC — re-adding a bridged uplink
-      # mid-flight is disruptive, and the task above already armed it now.
+      # Reloads rules into udevd; the WoL rule applies on the next NIC add
+      # (next boot). We don't `udevadm trigger` the live NIC -- re-adding a
+      # bridged uplink mid-flight is disruptive, and the task above already
+      # armed it now. The .link rename also waits for the next boot.
       ansible.builtin.command: udevadm control --reload
 
     - name: Warn interfaces changed
       ansible.builtin.debug:
         msg: |
           ─────────────────────────────────────────────────────────────
-          /etc/network/interfaces changed: vmbr0 uplink reset to enp4s0.
-          This is NOT yet applied. Applying an uplink change remotely can
-          strand the host — use the self-healing procedure (systemd-run +
-          ifreload + timed auto-revert), ideally on console. Do NOT run a
-          bare `ifreload -a` over SSH.
+          /etc/network/interfaces changed: vmbr0 uplink set to {{ uplink_name }}.
+          This is NOT yet applied. The systemd .link rename + this
+          bridge-port both take effect only on the NEXT reboot. Do NOT run
+          a bare `ifreload -a` before that reboot (the live NIC still has
+          its old kernel name until then), and reboot with console access
+          so you can verify `ip -br link` shows {{ uplink_name }}.
           ─────────────────────────────────────────────────────────────
