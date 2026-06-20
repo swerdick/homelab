@@ -149,6 +149,26 @@ patch-anduril:
     @echo "Patching anduril (Kubuntu)..."
     ssh anduril 'sudo bash -c "export DEBIAN_FRONTEND=noninteractive && apt update && apt -y upgrade && apt -y autoremove && apt clean"'
 
+# Cleanly restart the anduril gaming session (KWin + Steam Big Picture) in CT 117.
+# Use this instead of Steam's in-app "Restart"/"Shut Down" power menu: the
+# container can't honor a logind reboot, so that menu just blanks the TV with a
+# dead session. Stops the session, kills any stray Steam (e.g. an instance left
+# running in an xrdp desktop session — Steam is single-instance per user, so a
+# leftover would make the TV's `steam -gamepadui` signal it instead of painting
+# the TV), then starts fresh.
+restart-anduril:
+    @echo "Restarting the anduril gaming session..."
+    ssh root@earendil 'pct exec 117 -- bash -c "systemctl stop anduril-session.service; pkill -9 -x steam; pkill -9 -x steamwebhelper; sleep 2; systemctl reset-failed anduril-session.service; systemctl start anduril-session.service"'
+
+# Drop anduril into desktop-admin mode: stop the TV gaming session so Steam is
+# free for an xrdp desktop session (Steam is single-instance per user). RDP to
+# the CT as `pseudo` for desktop Steam / Prism / emulator config, then run
+# `just restart-anduril` to return to Big Picture on the TV.
+anduril-desktop-mode:
+    @echo "Stopping the TV session — RDP to 192.168.1.17 as pseudo for desktop admin."
+    @echo "Run 'just restart-anduril' when done to return to the TV."
+    ssh root@earendil 'pct exec 117 -- systemctl stop anduril-session.service'
+
 # Check pending reboots across all apt-based hosts
 # (Returns nothing if no reboot is pending)
 check-reboots:

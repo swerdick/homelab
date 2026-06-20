@@ -86,6 +86,32 @@
         groups: "{{ device_groups }}"
         append: true
 
+    - name: Grant the session user access to game controllers + uinput (udev)
+      # The CT runs its OWN systemd-udevd, which (like the host) tags Valve/Sony
+      # controller hidraw nodes `uaccess` -> systemd-logind clamps them to
+      # root:root 0660 and adds an ACL only for an active *seat* user. pseudo has
+      # no seat in this VT-less LXC, so Steam (as pseudo) can't open the hidraw to
+      # take the controller out of lizard mode (firmware mouse/kbd emulation) or
+      # create the virtual gamepad via uinput -> "No controller connected". Strip
+      # the uaccess tag (stops logind managing the node) and set world-rw on the
+      # controller hidraws, the raw-USB nodes (so Steam can flash firmware over
+      # the controller's bootloader, 28de:1007 — needs /dev/bus/usb passthrough
+      # from setup-anduril-lxc.yaml), and uinput. The CT's udev is the last
+      # writer on the bind-mounted /dev/bus/usb nodes, so the usb rule must live
+      # here (a host-only rule gets overwritten). Valve = 28de, Sony = 054c.
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-anduril-controllers.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="28de", TAG-="uaccess", MODE="0666"
+          SUBSYSTEM=="hidraw", ATTRS{idVendor}=="054c", TAG-="uaccess", MODE="0666"
+          SUBSYSTEM=="usb", ATTR{idVendor}=="28de", TAG-="uaccess", MODE="0666"
+          SUBSYSTEM=="usb", ATTR{idVendor}=="054c", TAG-="uaccess", MODE="0666"
+          KERNEL=="uinput", MODE="0666", OPTIONS+="static_node=uinput"
+      notify: Reload udev rules
+
     - name: Disable the KWin screen locker (kiosk)
       ansible.builtin.copy:
         dest: "/home/{{ session_user }}/.config/kscreenlockerrc"
@@ -165,6 +191,45 @@
       args:
         creates: "/home/{{ session_user }}/.steam/debian-installation/steam.sh"
 
+    # Register the 600G /games ZFS dataset as a Steam library folder. The host
+    # chowns it to pseudo (setup-anduril-lxc.yaml); here we add it to Steam's
+    # libraryfolders.vdf so installs can target it and Steam reports its real
+    # free space. (Earlier attempt — a steamapps->/games symlink — made Steam
+    # mis-report the rootfs's free space and refuse >60G installs.) We write a
+    # MINIMAL vdf (paths only); Steam repopulates contentid/totalsize/apps and
+    # adopts any existing appmanifests on next launch. Guarded so it only writes
+    # when /games isn't already registered (Steam rewrites the file at runtime).
+    - name: Check whether /games is already a registered Steam library
+      ansible.builtin.command: >
+        grep -q '"/games"'
+        /home/{{ session_user }}/.steam/debian-installation/steamapps/libraryfolders.vdf
+      register: games_lib_registered
+      changed_when: false
+      failed_when: false
+
+    - name: Register /games as a Steam library folder
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          "libraryfolders"
+          {
+          	"0"
+          	{
+          		"path"		"/home/{{ session_user }}/.steam/debian-installation"
+          	}
+          	"1"
+          	{
+          		"path"		"/games"
+          	}
+          }
+      loop:
+        - "/home/{{ session_user }}/.steam/debian-installation/steamapps/libraryfolders.vdf"
+        - "/home/{{ session_user }}/.steam/debian-installation/config/libraryfolders.vdf"
+      when: games_lib_registered.rc != 0
+
     - name: Enable seatd + the session boot service
       ansible.builtin.systemd:
         name: "{{ item }}"
@@ -209,3 +274,7 @@
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+
+    - name: Reload udev rules
+      ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger --action=add --subsystem-match=hidraw
+      changed_when: false
