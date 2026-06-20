@@ -1,0 +1,211 @@
+---
+# In-guest setup for the anduril gaming LXC (CT 117): a KWin-Wayland session that
+# autostarts Steam Big Picture on the TV, with PipeWire audio to HDMI. Pairs with
+# the host-side setup-anduril-lxc.yaml (device passthrough) + setup-amdgpu-host.yaml.
+#
+# Why KWin and not gamescope: gamescope needs a VT to activate its libseat seat,
+# which a container lacks; KWin tolerates the VT-less seatd seat. The desktop
+# pointer is unusable (libinput needs a VT), so the controller drives Steam
+# directly via /dev/input + /dev/hidraw. See [[project-anduril-lxc-spike]].
+#
+# NOTE: this play has only been validated as a faithful transcription of a
+# hand-built + reboot-tested container; it has not yet been run end-to-end via
+# ansible (that needs SSH/sudo onboarding of the CT first — setup-pseudo-user.yaml).
+# Run order in site-anduril.yaml: after the base/pseudo-user plays.
+
+- name: Configure the anduril in-guest gaming session
+  hosts: anduril
+  become: true
+  gather_facts: true
+
+  vars:
+    session_user: pseudo
+    # GID-by-name groups that own the passed-through devices in the container:
+    # video=card0, render/clock=renderD129+kfd, audio=snd, input=event*, seat=seatd.
+    device_groups: [audio, video, input, render, seat]
+
+  tasks:
+    - name: Enable i386 multiarch (Steam)
+      ansible.builtin.command: dpkg --add-architecture i386
+      register: i386
+      changed_when: false
+
+    - name: Enable universe + multiverse repos
+      ansible.builtin.apt_repository:
+        repo: "{{ item }}"
+        state: present
+      loop:
+        - universe
+        - multiverse
+
+    - name: Preseed Steam license (non-interactive)
+      ansible.builtin.debconf:
+        name: steam
+        question: steam/question
+        vtype: select
+        value: "I AGREE"
+
+    - name: Install the gaming + session stack
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - kwin-wayland
+          - xwayland
+          - seatd
+          - kscreen            # provides kscreen-doctor (output mgmt)
+          - dbus-user-session
+          - libnotify-bin
+          - steam-installer
+          - mesa-vulkan-drivers
+          - mesa-vulkan-drivers:i386
+          - mesa-va-drivers
+          - libgl1-mesa-dri
+          - libgl1-mesa-dri:i386
+          - vulkan-tools
+          - vainfo
+          - pipewire
+          - pipewire-pulse
+          - wireplumber
+          - pulseaudio-utils
+
+    - name: Ensure the seat group exists
+      ansible.builtin.group:
+        name: seat
+        state: present
+
+    - name: Create the session user
+      ansible.builtin.user:
+        name: "{{ session_user }}"
+        uid: 1000
+        shell: /bin/bash
+        create_home: true
+
+    - name: Add the session user to device groups
+      ansible.builtin.user:
+        name: "{{ session_user }}"
+        groups: "{{ device_groups }}"
+        append: true
+
+    - name: Disable the KWin screen locker (kiosk)
+      ansible.builtin.copy:
+        dest: "/home/{{ session_user }}/.config/kscreenlockerrc"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          [Daemon]
+          Autolock=false
+          LockOnResume=false
+          Timeout=0
+
+    - name: Install the session launcher
+      ansible.builtin.copy:
+        dest: /usr/local/bin/anduril-session.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          export HOME=/home/pseudo
+          export XDG_RUNTIME_DIR=/run/user/1000
+          export XDG_SESSION_TYPE=wayland
+          export XDG_CURRENT_DESKTOP=KDE
+          export LIBSEAT_BACKEND=seatd
+          export KWIN_DRM_DEVICES=/dev/dri/card0
+          export PATH=/usr/games:/usr/bin:/bin
+          exec dbus-run-session -- /usr/local/bin/anduril-inner.sh
+
+    - name: Install the inner session (audio + output + kwin->steam)
+      ansible.builtin.copy:
+        dest: /usr/local/bin/anduril-inner.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          /usr/bin/pipewire &
+          /usr/bin/wireplumber &
+          /usr/bin/pipewire-pulse &
+          (
+            for i in $(seq 1 40); do [ -S "${XDG_RUNTIME_DIR}/wayland-0" ] && break; sleep 1; done
+            sleep 2
+            # TV is the only/primary output (disable the DP-3 dummy)
+            WAYLAND_DISPLAY=wayland-0 kscreen-doctor output.HDMI-A-4.enable output.HDMI-A-4.priority.1 output.DP-3.disable 2>/dev/null || true
+            # route audio to the AMD HDMI (TV) sink
+            for i in $(seq 1 20); do
+              HDMI=$(pactl list short sinks 2>/dev/null | grep -iE "hdmi|03_00.1|Navi" | head -1 | awk '{print $2}')
+              [ -n "$HDMI" ] && { pactl set-default-sink "$HDMI" 2>/dev/null; break; }
+              sleep 1
+            done
+          ) &
+          exec kwin_wayland --xwayland /usr/local/bin/steam-bigpicture.sh
+
+    - name: Install the Steam Big Picture launcher
+      ansible.builtin.copy:
+        dest: /usr/local/bin/steam-bigpicture.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          exec steam -gamepadui
+
+    - name: Bootstrap Steam non-interactively (skip the first-run zenity prompt)
+      # The Ubuntu steam wrapper pops a zenity "Install Steam?" dialog on first
+      # run (un-clickable here — desktop pointer is dead). Auto-accept via a
+      # throwaway zenity stub so the wrapper downloads + extracts the client.
+      # Guarded: only runs until the bootstrap exists.
+      become_user: "{{ session_user }}"
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /tmp/steam-firstrun
+        printf '#!/bin/sh\nexit 0\n' > /tmp/steam-firstrun/zenity
+        chmod +x /tmp/steam-firstrun/zenity
+        timeout 300 env PATH=/tmp/steam-firstrun:/usr/games:/usr/bin:/bin steam --headless +quit >/dev/null 2>&1 || true
+      args:
+        creates: "/home/{{ session_user }}/.steam/debian-installation/steam.sh"
+
+    - name: Enable seatd + the session boot service
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop:
+        - seatd.service
+
+    - name: Install the session boot service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/anduril-session.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Anduril gaming session (KWin + Steam Big Picture)
+          After=seatd.service network-online.target
+          Wants=seatd.service network-online.target
+
+          [Service]
+          Type=simple
+          User=pseudo
+          Group=pseudo
+          ExecStartPre=+/usr/bin/install -d -o pseudo -g pseudo -m 700 /run/user/1000
+          ExecStart=/usr/local/bin/anduril-session.sh
+          Restart=on-failure
+          RestartSec=5
+          TimeoutStartSec=0
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload systemd
+
+    - name: Enable the session boot service
+      ansible.builtin.systemd:
+        name: anduril-session.service
+        enabled: true
+        daemon_reload: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

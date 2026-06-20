@@ -18,11 +18,11 @@ all:
         erebor: {}
         samwise: {}
         eregion: {}
-        # anduril is a Kubuntu 26.04 gaming VM (replatformed from Bazzite,
-        # 2026-05). Off most of the time, so fleet plays should treat it as
-        # opportunistically reachable — an `unreachable` recap line when it's
-        # powered down is expected, not a failure to chase. The `pseudo` user
-        # is created at OS-install time with the operator's SSH key.
+        # anduril is now CT 117 — the amdgpu-sharing gaming LXC (Steam Big
+        # Picture via KWin; replatformed from a GPU-passthrough VM 2026-06).
+        # Always-on (boots to Steam via anduril-session.service). Host-side prep
+        # is in site-earendil.yaml (setup-anduril-lxc.yaml); the in-guest session
+        # is setup-anduril-session.yaml. See descriptions/anduril.md.
         anduril: {}
     proxmox_hosts:
       hosts:
@@ -48,9 +48,9 @@ all:
         anduril: {}
     # Debian-family hosts that should receive automated security updates.
     # Excludes earendil (Proxmox host — kernel upgrades need manual care).
-    # anduril (Kubuntu gaming VM) is included but holds back kernel/NVIDIA/
-    # Sunshine from unattended upgrades via host_vars/anduril (those families
-    # can break GPU passthrough / cold-start); see unattended_upgrade_blacklist.
+    # anduril (gaming LXC) is included with no holds — it shares the host kernel,
+    # so there's no in-guest kernel/driver to protect (host_vars/anduril sets an
+    # empty unattended_upgrade_blacklist).
     debian_guests:
       hosts:
         gondor: {}

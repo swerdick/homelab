@@ -43,5 +43,6 @@
 
 - import_playbook: pin-proxmox-kernel.yaml
 - import_playbook: setup-amdgpu-host.yaml
+- import_playbook: setup-anduril-lxc.yaml
 - import_playbook: setup-earendil-network.yaml
 - import_playbook: setup-terraform-pve-access.yaml
