@@ -21,7 +21,12 @@ resource "proxmox_virtual_environment_container" "anduril" {
 
   cpu {
     architecture = "amd64"
-    cores        = 6
+    cores        = 8
+    # Below default (100): anduril may burst to all 8 host threads (Fossilize
+    # shader compiles parallelize across them), but yields to the infra guests
+    # (gondor k3s VM, nfs, smb) under contention. cores is a ceiling, not a
+    # reservation, so 8 just uses otherwise-idle threads on this 4c/8t host.
+    units = 50
   }
 
   memory {
