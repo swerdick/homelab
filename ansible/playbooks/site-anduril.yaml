@@ -1,48 +1,25 @@
 ---
-# Entry point for configuring anduril (the Kubuntu gaming VM) end-to-end.
+# Entry point for configuring anduril — now CT 117, the amdgpu-sharing gaming
+# LXC (was a GPU-passthrough VM; replatformed 2026-06). See
+# terraform/proxmox/descriptions/anduril.md and [[project-anduril-lxc-spike]].
 #
-# anduril was replatformed from Bazzite to Kubuntu 26.04 LTS in May 2026
-# (see terraform/descriptions/anduril.md). It now follows the standard Debian
-# fleet bootstrap, with the Sunshine play layered on last:
+# Host-side prep (device passthrough, games dataset, fbcon/hid-steam) lives in
+# setup-anduril-lxc.yaml under site-earendil.yaml. This composes the in-guest
+# config.
 #
-#   1. setup-pseudo-user.yaml           — pseudo user + NOPASSWD sudo + SSH key
-#   2. setup-debian-base.yaml           — locale, UTC timezone, base packages
-#   3. setup-qemu-guest-agent.yaml      — QEMU guest agent (PVE NIC reporting,
-#                                         graceful shutdown, fsfreeze backups)
-#   4. distribute-root-ca.yaml          — homelab root CA into the trust store
-#   5. install-unattended-upgrades.yaml — security updates (kernel/nvidia/
-#                                         sunshine held back via host_vars)
-#   6. install-alloy.yaml               — metrics + journald logs to Grafana
-#   7. setup-sunshine.yaml              — Sunshine .deb + headless streaming
-#   8. setup-gaming-tools.yaml          — mangohud + gaming userland tooling
-#   9. setup-game-storage.yaml          — format + mount the 400G games disk
-#                                         (scsi1) at /games for the Steam library
+# Dropped vs the VM era: setup-qemu-guest-agent (no qemu in an LXC),
+# setup-sunshine (NVIDIA/Kubuntu — replaced by setup-anduril-session, which is
+# Steam-in-KWin; Sunshine/Moonlight is a later add), setup-game-storage (games
+# is a bind-mounted ZFS dataset now, not a raw disk to format), setup-gaming-tools
+# (its MangoHud source build was NVIDIA-NVML-specific).
 #
-# This closes the old ROADMAP "Anduril Alloy + distribute-root-ca rollout"
-# item: those plays are OS-family-aware and now Just Work on the apt base.
-#
-# SCOPING: plays 1-5 target fleet groups (alloy / debian_guests / all), not
-# anduril alone. For an anduril-focused onboarding run, use `-l anduril` so
-# each imported play scopes to anduril (which is a member of every group it
-# needs). Per the unrestricted-safety rule, take the SAFETY PREVIEW without
-# `-l` first (`--check --diff`) and confirm every other host shows changed=0,
-# then apply with `-l anduril`:
-#
-#   # from ansible/
-#   ansible-playbook playbooks/site-anduril.yaml --check --diff      # preview, all hosts
-#   ansible-playbook playbooks/site-anduril.yaml -l anduril --diff   # apply, anduril only
-#
-# anduril is off most of the time and shares earendil's RAM with eregion
-# (CT 142) until the RAM upgrade — stop eregion before booting anduril.
-#
-# Idempotent — safe to re-run.
+# Usage:
+#   ansible-playbook playbooks/site-anduril.yaml --check --diff
+#   ansible-playbook playbooks/site-anduril.yaml
 
 - import_playbook: setup-pseudo-user.yaml
 - import_playbook: setup-debian-base.yaml
-- import_playbook: setup-qemu-guest-agent.yaml
 - import_playbook: distribute-root-ca.yaml
 - import_playbook: install-unattended-upgrades.yaml
 - import_playbook: install-alloy.yaml
-- import_playbook: setup-sunshine.yaml
-- import_playbook: setup-gaming-tools.yaml
-- import_playbook: setup-game-storage.yaml
+- import_playbook: setup-anduril-session.yaml

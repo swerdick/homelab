@@ -1,0 +1,160 @@
+---
+# Host-side prep for the anduril gaming LXC (CT 117) on earendil. The bpg
+# terraform provider can't express any of this (privileged-CT feature flags +
+# bind mounts are root@pam-only via the API token, and raw lxc.* lines aren't in
+# its schema), so it lives here. Companion to setup-amdgpu-host.yaml (which makes
+# the AMD card amdgpu-owned) and the in-guest setup-anduril-session.yaml.
+#
+# What this manages on earendil:
+#   1. The games ZFS dataset (scratch/anduril-games, 600G, on the WD Blue HDD).
+#   2. /etc/pve/lxc/117.conf: the `features` flags + a marked block of raw
+#      device passthrough (GPU/input/uinput/hidraw/snd) + `lxc.mount.auto: sys:rw`.
+#   3. A boot service that releases the framebuffer console from the AMD card so
+#      the container's KWin can take DRM-master on the TV (the host console is
+#      SSH/iGPU; cleanest permanent alternative is BIOS primary=iGPU).
+#   4. hid_steam autoload (Steam Controller gamepad mode).
+#
+# 117.conf changes only take effect on a CT restart; the handler only warns
+# (restarting drops the gaming session) — mirrors setup-earendil-network.yaml.
+# Idempotent. Lives in site-anduril.yaml.
+
+- name: Host-side prep for the anduril gaming LXC
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    anduril_ctid: 117
+    games_dataset: scratch/anduril-games
+    games_quota: 600G
+
+  tasks:
+    # --- games library dataset (WD Blue HDD / scratch pool) ---
+    - name: Check for the games dataset
+      ansible.builtin.command: "zfs list -H -o name {{ games_dataset }}"
+      register: games_ds
+      changed_when: false
+      failed_when: false
+
+    - name: Create the games dataset
+      ansible.builtin.command: "zfs create -o quota={{ games_quota }} {{ games_dataset }}"
+      when: games_ds.rc != 0
+
+    - name: Enforce the games-dataset quota
+      ansible.builtin.command: "zfs set quota={{ games_quota }} {{ games_dataset }}"
+      register: games_quota_set
+      changed_when: false  # zfs set is idempotent; don't report perpetual change
+
+    # --- CT 117 raw config (features + device passthrough + sys:rw) ---
+    - name: Ensure CT features (nesting + keyctl)
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ anduril_ctid }}.conf"
+        regexp: '^features:'
+        line: "features: nesting=1,keyctl=1"
+      notify: Warn CT config changed
+
+    - name: Manage CT device passthrough + sys:rw lines
+      # Shares the host's amdgpu with the container. AMD card only (card0 +
+      # renderD129) so the compositor never picks the iGPU; /dev/kfd for ROCm
+      # (shared with a future AI worker); input/uinput/hidraw for the Steam
+      # Controller + Sunshine-injected devices; snd for HDMI audio. NOT a
+      # blockinfile: PVE folds ALL '#' lines in the conf into the container's
+      # description, so marker comments leak into it (and fight bpg's description
+      # management). lineinfile keeps these as plain lxc.* lines, no '#'.
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ anduril_ctid }}.conf"
+        line: "{{ item }}"
+      loop:
+        - "lxc.cgroup2.devices.allow: c 226:* rwm"
+        - "lxc.cgroup2.devices.allow: c 235:* rwm"
+        - "lxc.cgroup2.devices.allow: c 13:* rwm"
+        - "lxc.cgroup2.devices.allow: c 10:223 rwm"
+        - "lxc.cgroup2.devices.allow: c 240:* rwm"
+        - "lxc.cgroup2.devices.allow: c 116:* rwm"
+        - "lxc.mount.entry: /dev/dri/card0 dev/dri/card0 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/dri/renderD129 dev/dri/renderD129 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/input dev/input none bind,optional,create=dir"
+        - "lxc.mount.entry: /dev/uinput dev/uinput none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/snd dev/snd none bind,optional,create=dir"
+        - "lxc.mount.entry: /dev/hidraw0 dev/hidraw0 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw1 dev/hidraw1 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw2 dev/hidraw2 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw3 dev/hidraw3 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw4 dev/hidraw4 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw5 dev/hidraw5 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw6 dev/hidraw6 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw7 dev/hidraw7 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw8 dev/hidraw8 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/hidraw9 dev/hidraw9 none bind,optional,create=file"
+        - "lxc.mount.auto: sys:rw"
+      notify: Warn CT config changed
+
+    # --- host: free the AMD card's framebuffer console for the guest compositor ---
+    - name: Install the AMD fbcon-release script
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/amd-fbcon-release.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Unbind the framebuffer console so a guest compositor (anduril's KWin)
+          # can take DRM-master on the AMD card. Managed by ansible.
+          for v in /sys/class/vtconsole/vtcon*; do
+            if grep -q "frame buffer device" "$v/name" 2>/dev/null; then
+              echo 0 > "$v/bind" 2>/dev/null || true
+            fi
+          done
+
+    - name: Install the AMD fbcon-release boot service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/amd-fbcon-release.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Release framebuffer console from the AMD GPU (for guest compositor)
+          DefaultDependencies=no
+          After=systemd-udev-settle.service
+          Before=pve-guests.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/amd-fbcon-release.sh
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+    - name: Enable the AMD fbcon-release service
+      ansible.builtin.systemd:
+        name: amd-fbcon-release.service
+        enabled: true
+        daemon_reload: true
+
+    # --- host: hid_steam for the Steam Controller ---
+    - name: Autoload hid_steam at boot (Steam Controller gamepad mode)
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/hid-steam.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible: Steam Controller needs hid_steam for gamepad mode.
+          hid_steam
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Warn CT config changed
+      ansible.builtin.debug:
+        msg: |
+          ─────────────────────────────────────────────────────────────
+          /etc/pve/lxc/{{ anduril_ctid }}.conf changed. Device/feature
+          changes take effect on the NEXT CT restart only:
+              pct reboot {{ anduril_ctid }}
+          (Restarting drops the running gaming session — operator-timed.)
+          ─────────────────────────────────────────────────────────────

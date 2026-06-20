@@ -1,41 +1,13 @@
 ---
-# Host vars for anduril — Kubuntu 26.04 LTS gaming VM (Sunshine/Moonlight).
-# See terraform/descriptions/anduril.md and playbooks/site-anduril.yaml.
+# Host vars for anduril — CT 117, amdgpu-sharing gaming LXC (Steam Big Picture
+# via KWin). See terraform/proxmox/descriptions/anduril.md and
+# playbooks/setup-anduril-session.yaml.
+#
+# The VM-era pins are gone: no Sunshine .deb pin (Steam, not Sunshine, drives
+# this now), no MangoHud NVIDIA-NVML source build, no kernel/NVIDIA holds (an
+# LXC shares the host kernel — there's no in-guest kernel/driver to pin).
 
-# --- Sunshine ------------------------------------------------------------
-# Sunshine ships no apt repo; it's installed from LizardByte's per-release
-# .deb (playbooks/setup-sunshine.yaml). Pin the version explicitly and bump
-# deliberately — confirm the tag still carries a
-# `sunshine-ubuntu-26.04-amd64.deb` asset at
-# https://github.com/LizardByte/Sunshine/releases before bumping.
-# (Verified present in v2026.516.143833 on 2026-05-22.)
-sunshine_deb_version: "v2026.516.143833"
-sunshine_deb_url: "https://github.com/LizardByte/Sunshine/releases/download/{{ sunshine_deb_version }}/sunshine-ubuntu-26.04-amd64.deb"
-
-# --- MangoHud ------------------------------------------------------------
-# Built from upstream source instead of apt because Debian's `mangohud`
-# package is the DFSG variant — it strips the NVIDIA NVML linkage (proprietary
-# library), so the overlay renders but GPU% / VRAM / temp / power all read 0
-# on this NVIDIA-only host. Upstream source build links NVML cleanly and
-# returns real GPU metrics. Confirmed via diagnostic 2026-05-30 (NMS at 60fps
-# with apt mangohud reported 0% GPU; nvidia-smi confirmed actual ~50W draw).
-# Bump deliberately — confirm the tag still has a `*-Source.tar.xz` asset
-# (not -DFSG) at https://github.com/flightlessmango/MangoHud/releases.
-mangohud_version: "0.8.4"
-mangohud_source_url: "https://github.com/flightlessmango/MangoHud/releases/download/v{{ mangohud_version }}/MangoHud-v{{ mangohud_version }}-Source.tar.xz"
-
-# --- Unattended upgrades -------------------------------------------------
-# anduril gets unattended *security* upgrades like the rest of debian_guests,
-# but these package families are held back (Unattended-Upgrade::Package-Blacklist
-# in install-unattended-upgrades.yaml): an unattended kernel/NVIDIA bump can
-# break GPU passthrough, and bumping past nvidia-driver-580 drops the GTX 970's
-# Maxwell arch entirely (590+). A Sunshine bump can change the systemd unit or
-# streaming behaviour mid-session. Bump these deliberately instead (apt + a
-# fresh PBS snapshot first). Entries are regex-matched against package names.
-# NVIDIA is additionally `apt-mark hold`ed during bring-up as belt-and-braces
-# so even a manual `apt upgrade` can't pull 595.
-unattended_upgrade_blacklist:
-  - "linux-"
-  - "nvidia-"
-  - "libnvidia-"
-  - "sunshine"
+# anduril gets unattended security upgrades like the rest of debian_guests.
+# Nothing held back: the session stack (kwin/mesa/steam) is fine to patch, and
+# there's no kernel/driver in the container to protect.
+unattended_upgrade_blacklist: []
