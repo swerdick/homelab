@@ -45,6 +45,17 @@
       register: games_quota_set
       changed_when: false  # zfs set is idempotent; don't report perpetual change
 
+    # The dataset mounts root-owned, but the in-container Steam runs as pseudo
+    # (uid 1000). Privileged CT = 1:1 uid map, so host uid 1000 == container
+    # pseudo; chown the dataset root so Steam can create its library folder
+    # (steamapps/) under /games. Only the top dir — Steam owns everything below.
+    - name: Make the games dataset writable by the session user (uid 1000)
+      ansible.builtin.file:
+        path: "/{{ games_dataset }}"
+        owner: "1000"
+        group: "1000"
+        state: directory
+
     # --- CT 117 raw config (features + device passthrough + sys:rw) ---
     - name: Ensure CT features (nesting + keyctl)
       ansible.builtin.lineinfile:
@@ -57,7 +68,9 @@
       # Shares the host's amdgpu with the container. AMD card only (card0 +
       # renderD129) so the compositor never picks the iGPU; /dev/kfd for ROCm
       # (shared with a future AI worker); input/uinput/hidraw for the Steam
-      # Controller + Sunshine-injected devices; snd for HDMI audio. NOT a
+      # Controller + Sunshine-injected devices; snd for HDMI audio. usb major
+      # (189) + /dev/bus/usb so Steam can drive the Steam Controller's raw-USB
+      # "bootloader" mode (28de:1007, no HID nodes) for firmware updates. NOT a
       # blockinfile: PVE folds ALL '#' lines in the conf into the container's
       # description, so marker comments leak into it (and fight bpg's description
       # management). lineinfile keeps these as plain lxc.* lines, no '#'.
@@ -87,6 +100,8 @@
         - "lxc.mount.entry: /dev/hidraw7 dev/hidraw7 none bind,optional,create=file"
         - "lxc.mount.entry: /dev/hidraw8 dev/hidraw8 none bind,optional,create=file"
         - "lxc.mount.entry: /dev/hidraw9 dev/hidraw9 none bind,optional,create=file"
+        - "lxc.cgroup2.devices.allow: c 189:* rwm"
+        - "lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir"
         - "lxc.mount.auto: sys:rw"
       notify: Warn CT config changed
 
@@ -144,10 +159,32 @@
           # Managed by ansible: Steam Controller needs hid_steam for gamepad mode.
           hid_steam
 
+    # --- host: make Valve/Sony raw-USB nodes writable for the CT user ---
+    - name: Grant the CT user write access to controller USB nodes (firmware DFU)
+      # /dev/bus/usb is bind-mounted from the HOST into the CT (so these are
+      # host-managed nodes, unlike the CT-managed hidraws). Steam (pseudo, uid
+      # 1000 via 1:1 map) needs write access to the Steam Controller's raw-USB
+      # bootloader (28de:1007) to flash firmware. Default usb nodes are root-only
+      # for write; world-rw them for Valve (28de) + Sony (054c). Reload+trigger
+      # so it applies without waiting for a replug.
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-anduril-usb-controllers.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          SUBSYSTEM=="usb", ATTR{idVendor}=="28de", MODE="0666"
+          SUBSYSTEM=="usb", ATTR{idVendor}=="054c", MODE="0666"
+      notify: Reload host udev rules
+
   handlers:
     - name: Reload systemd
       ansible.builtin.systemd:
         daemon_reload: true
+
+    - name: Reload host udev rules
+      ansible.builtin.shell: udevadm control --reload-rules && udevadm trigger --action=add --subsystem-match=usb
+      changed_when: false
 
     - name: Warn CT config changed
       ansible.builtin.debug:

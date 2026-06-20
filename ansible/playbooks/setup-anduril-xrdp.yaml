@@ -1,0 +1,121 @@
+---
+# xrdp admin session for the anduril gaming LXC (CT 117). Gives a real desktop
+# with a working mouse pointer over RDP — for things the controller-only Big
+# Picture session can't do: Steam *desktop* settings (e.g. adding /games as a
+# library folder), Prism Launcher, emulator config, general file management.
+#
+# Why a separate session: the on-TV gaming session is KWin/Wayland holding
+# DRM-master on the AMD card. xrdp uses the xorgxrdp *virtual* framebuffer
+# (llvmpipe, CPU) on a headless X11 display, so the RDP desktop never competes
+# with the gaming session for the GPU and the two coexist.
+#
+# Why XFCE and not Plasma: xrdp needs an X11 session; Plasma 6 is Wayland-first
+# and deprecating its X11 session (slated for removal ~Plasma 6.8). XFCE is the
+# reliable, low-overhead admin DE over RDP.
+#
+# Auth: the rest of the fleet keeps a locked UNIX password (SSH-key + NOPASSWD
+# sudo). anduril is the exception — xrdp authenticates via PAM, so `pseudo` gets
+# a real password (host_vars/anduril/secrets.sops.yaml -> pseudo_rdp_password).
+#
+# Steam is single-instance per user: to use Steam desktop over RDP, stop the
+# gaming session first (`just restart-anduril` won't help — use
+# `systemctl stop anduril-session.service`, then start it again when done).
+#
+# NOTE: as with setup-anduril-session.yaml, this has been applied to the live CT
+# via `pct exec` and faithfully transcribed here; it has not yet been run
+# end-to-end via ansible (the CT isn't SSH-onboarded). Lives in site-anduril.yaml.
+
+- name: Configure xrdp admin desktop in the anduril LXC
+  hosts: anduril
+  become: true
+  gather_facts: false
+
+  vars:
+    session_user: pseudo
+
+  tasks:
+    - name: Install xrdp + xorgxrdp + an XFCE desktop
+      ansible.builtin.apt:
+        update_cache: true
+        name:
+          - xrdp
+          - xorgxrdp
+          - xfce4
+          - xfce4-terminal
+          - dbus-x11
+          - x11-xserver-utils
+
+    - name: Disable light-locker (locks the xrdp session -> black screen)
+      # xfce4 recommends light-locker, which auto-locks the RDP session on
+      # connect (it can't authenticate against the xrdp seat -> black screen).
+      # Neuter its autostart; the kiosk gaming session already disables locking.
+      ansible.builtin.copy:
+        dest: /etc/xdg/autostart/light-locker.desktop
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name=light-locker
+          Hidden=true
+
+    - name: Set the pseudo RDP password (xrdp authenticates via PAM)
+      ansible.builtin.user:
+        name: "{{ session_user }}"
+        password: "{{ pseudo_rdp_password | password_hash('sha512') }}"
+      no_log: true
+
+    - name: Point xrdp's session launcher at XFCE
+      ansible.builtin.copy:
+        dest: /etc/xrdp/startwm.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # Managed by ansible (setup-anduril-xrdp.yaml): force an XFCE session.
+          if [ -r /etc/profile ]; then . /etc/profile; fi
+          if [ -r ~/.profile ]; then . ~/.profile; fi
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          exec startxfce4
+
+    - name: Add xrdp to the ssl-cert group (read the session key)
+      ansible.builtin.user:
+        name: xrdp
+        groups: ssl-cert
+        append: true
+
+    - name: Silence polkit color-profile / package nags in the RDP session
+      # XFCE-over-RDP otherwise pops "Authentication required to create a managed
+      # color device" loops because there's no console seat. Allow these for
+      # any active local session.
+      ansible.builtin.copy:
+        dest: /etc/polkit-1/rules.d/49-anduril-rdp-nopasswd.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          // Managed by ansible: suppress color-manager auth popups under xrdp.
+          polkit.addRule(function(action, subject) {
+            if ((action.id == "org.freedesktop.color-manager.create-device" ||
+                 action.id == "org.freedesktop.color-manager.create-profile" ||
+                 action.id == "org.freedesktop.color-manager.delete-device" ||
+                 action.id == "org.freedesktop.color-manager.delete-profile" ||
+                 action.id == "org.freedesktop.color-manager.modify-device" ||
+                 action.id == "org.freedesktop.color-manager.modify-profile") &&
+                subject.local) {
+              return polkit.Result.YES;
+            }
+          });
+
+    - name: Enable + start xrdp
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - xrdp.service
+        - xrdp-sesman.service
