@@ -1,0 +1,20 @@
+# /etc/rancher/k3s/registries.yaml — managed by ansible/playbooks/setup-k3s-registries.yaml.
+# Each entry under `mirrors:` rewrites containerd image refs through Harbor's
+# proxy-cache projects, transparent to Pod specs (no manifest churn).
+
+mirrors:
+{% for m in k3s_registry_mirrors %}
+  "{{ m.upstream }}":
+    endpoint:
+      - "https://{{ harbor_host }}"
+    rewrite:
+      "^(.*)$": "{{ m.proxy_project }}/$1"
+{% endfor %}
+
+configs:
+  "{{ harbor_host }}":
+    tls:
+      # containerd does NOT read the host trust store — the tirion root CA
+      # has to be referenced explicitly here. Path matches distribute-root-ca.yaml's
+      # Debian destination.
+      ca_file: /usr/local/share/ca-certificates/vingilot-root-ca.crt

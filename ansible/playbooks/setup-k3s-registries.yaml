@@ -1,0 +1,85 @@
+---
+# Templates /etc/rancher/k3s/registries.yaml on every k3s node so that image
+# pulls for upstream registries listed in `k3s_registry_mirrors` transparently
+# resolve through Harbor's proxy-cache projects.
+#
+# Why: removes the single-point-of-failure on upstream registries (rate-limits,
+# outages, supply-chain compromise) and gives Trivy a cached copy of every
+# image we run. See ROADMAP — Harbor as upstream-registry proxy/cache.
+#
+# Idempotency: the template task only fires the appropriate restart handler
+# (k3s on gondor, k3s-agent on workers) when the file content actually
+# changes. No-op re-runs leave the cluster untouched.
+#
+# Staged rollout: `k3s_registry_mirrors` below starts with `dockerhub` only.
+# Validate end-to-end (Pod pull lands in Harbor UI as a cached artifact),
+# then uncomment the remaining upstreams and re-run.
+
+- name: Configure containerd registry mirrors via k3s registries.yaml
+  hosts: gondor:k3s_workers
+  vars:
+    harbor_host: harbor.vingilot.internal
+    # Add an entry per upstream → proxy-cache project mapping. The proxy
+    # project must already exist in Harbor (Admin → Projects, with the
+    # "Proxy Cache" box checked, pointed at the matching registry endpoint).
+    k3s_registry_mirrors:
+      - upstream: docker.io
+        proxy_project: dockerhub
+      - upstream: ghcr.io
+        proxy_project: ghcr
+      - upstream: quay.io
+        proxy_project: quay
+      - upstream: registry.k8s.io
+        proxy_project: registry-k8s
+
+  tasks:
+    - name: Pre-flight — Harbor root CA is present
+      # Without the CA in /usr/local/share/ca-certificates/, containerd will
+      # fail TLS to Harbor and every image pull will break the moment this
+      # config lands. Fail loud before touching the running config.
+      ansible.builtin.stat:
+        path: /usr/local/share/ca-certificates/vingilot-root-ca.crt
+      register: vingilot_ca_stat
+      check_mode: false
+
+    - name: Pre-flight — assert CA is present
+      ansible.builtin.assert:
+        that: vingilot_ca_stat.stat.exists
+        fail_msg: >-
+          /usr/local/share/ca-certificates/vingilot-root-ca.crt is missing on
+          {{ inventory_hostname }}. Run distribute-root-ca.yaml first — otherwise
+          containerd will fail TLS to Harbor and image pulls will break.
+
+    - name: Ensure /etc/rancher/k3s exists
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Template /etc/rancher/k3s/registries.yaml
+      ansible.builtin.template:
+        src: ../templates/k3s-registries.yaml.j2
+        dest: /etc/rancher/k3s/registries.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        # Both handlers are notified; their `when:` guards pick the right
+        # service per host (k3s on gondor, k3s-agent on workers).
+        - Restart k3s (server)
+        - Restart k3s-agent (workers)
+
+  handlers:
+    - name: Restart k3s (server)
+      ansible.builtin.service:
+        name: k3s
+        state: restarted
+      when: inventory_hostname == "gondor"
+
+    - name: Restart k3s-agent (workers)
+      ansible.builtin.service:
+        name: k3s-agent
+        state: restarted
+      when: inventory_hostname in groups['k3s_workers']
