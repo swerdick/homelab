@@ -24,3 +24,5 @@
 - import_playbook: install-alloy.yaml
 - import_playbook: setup-anduril-session.yaml
 - import_playbook: setup-anduril-xrdp.yaml
+- import_playbook: setup-anduril-apps.yaml
+- import_playbook: setup-anduril-sunshine.yaml
