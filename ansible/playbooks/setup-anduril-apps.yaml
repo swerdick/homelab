@@ -1,0 +1,116 @@
+---
+# Desktop apps for the anduril gaming LXC (CT 117): Spotify + Discord.
+#
+# Where these run: the xrdp/XFCE admin session (llvmpipe, software-GL) — that's
+# the session with a usable pointer. They are Electron/Chromium apps, fine on
+# software rendering for browsing/voice/login. They are NOT wired into the
+# controller-only Big Picture TV session (no pointer there); add them as
+# non-Steam shortcuts later if you want them on the couch. See
+# setup-anduril-xrdp.yaml for the two-session split.
+#
+# Packaging choices (this box is apt-pure; Snap is avoided — it's painful in an
+# unprivileged LXC):
+#   - Spotify: official apt repo (repository.spotify.com), so it gets apt upgrade.
+#   - Discord: ships only a rolling .deb (no apt repo). Installed once as a
+#     bootstrap; the client self-updates on launch, so there's nothing for apt
+#     to track. Re-running this play is a no-op once `discord` is present.
+#
+# Verify-before-bump: the Spotify signing key has rotated several times. The
+# current key + repo line were taken from spotify.com/download/linux on
+# 2026-06-24. If `apt update` starts failing with a NO_PUBKEY error, refetch the
+# pubkey_*.asc URL from that page and update the key task below.
+#
+# NOTE: like the sibling anduril plays, transcribed for ansible but not yet run
+# end-to-end via ansible (the CT isn't SSH-onboarded). Lives in site-anduril.yaml.
+
+- name: Install desktop apps (Spotify, Discord) on the anduril LXC
+  hosts: anduril
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Sanity-check that this is a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+        fail_msg: "Expected Debian-family host, got {{ ansible_facts.os_family }}"
+
+    - name: Ensure gnupg is present
+      # apt_repository sanity-checks for gpg even with the signed-by= keyring
+      # syntax. Trixie apt handles https natively (no apt-transport-https).
+      ansible.builtin.apt:
+        name: gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # --- Spotify (official apt repo) ----------------------------------------
+
+    - name: Add the Spotify apt signing key
+      # Armored (.asc) key — modern apt accepts an armored keyring directly via
+      # signed-by=, so no dearmor step is needed. Key fingerprint rotates; see
+      # the header note if apt update later fails with NO_PUBKEY.
+      ansible.builtin.get_url:
+        url: https://download.spotify.com/debian/pubkey_5384CE82BA52C83A.asc
+        dest: /usr/share/keyrings/spotify-archive-keyring.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Add the Spotify apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/spotify-archive-keyring.asc] https://repository.spotify.com stable non-free"
+        state: present
+        filename: spotify
+        update_cache: true
+
+    - name: Install the Spotify client
+      ansible.builtin.apt:
+        name: spotify-client
+        state: present
+
+    # --- Discord (rolling .deb, no apt repo) --------------------------------
+
+    - name: Check whether Discord is already installed
+      # Discord has no apt repo — just a "latest" .deb that self-updates on
+      # launch. Install once; this guard keeps re-runs a clean no-op (no
+      # re-download of the redirect URL each time).
+      ansible.builtin.command: dpkg-query -W discord
+      register: discord_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install Discord from the official .deb
+      # The endpoint 302-redirects to the current versioned .deb; the apt module
+      # downloads it and resolves its dependencies. Runs only when absent.
+      ansible.builtin.apt:
+        deb: https://discord.com/api/download?platform=linux&format=deb
+      when: discord_installed.rc != 0
+
+    # --- KWin window rules: make non-Steam apps behave on the TV -------------
+
+    - name: Force Spotify fullscreen on the TV (KWin window rule)
+      # Launched from Big Picture, Spotify opens as a floating window over Steam,
+      # so Steam doesn't treat it as the focused game and the Steam/Guide button
+      # won't return to the library. Forcing fullscreen makes KWin present it
+      # like a launched game. WM_CLASS verified live as "spotify"/"Spotify";
+      # substring + wmclasscomplete matches the lowercase instance token.
+      # KWin reloads kwinrulesrc on its `reconfigure` D-Bus signal (or session
+      # restart), then applies to the window on next launch.
+      ansible.builtin.copy:
+        dest: /home/pseudo/.config/kwinrulesrc
+        owner: pseudo
+        group: pseudo
+        mode: "0644"
+        content: |
+          [General]
+          count=1
+          rules=1d6f4c8a-5b2e-4a91-bc3d-5e0f7a9b2c01
+
+          [1d6f4c8a-5b2e-4a91-bc3d-5e0f7a9b2c01]
+          Description=Spotify - fullscreen on the TV
+          fullscreen=true
+          fullscreenrule=2
+          wmclass=spotify
+          wmclassmatch=2
+          wmclasscomplete=true
