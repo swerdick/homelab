@@ -61,9 +61,15 @@
           Hidden=true
 
     - name: Set the pseudo RDP password (xrdp authenticates via PAM)
+      # Deterministic salt (derived from the hostname — a salt isn't secret) so
+      # the sha512 hash is stable across runs. Without a fixed salt,
+      # password_hash() picks a random salt every run and the task always
+      # reports `changed`. Rotate the password by editing the SOPS secret and
+      # re-running; the new value then produces a new hash and is applied.
       ansible.builtin.user:
         name: "{{ session_user }}"
-        password: "{{ pseudo_rdp_password | password_hash('sha512') }}"
+        password: "{{ pseudo_rdp_password | password_hash('sha512', inventory_hostname | hash('md5') | truncate(16, true, '')) }}"
+        update_password: always
       no_log: true
 
     - name: Point xrdp's session launcher at XFCE
