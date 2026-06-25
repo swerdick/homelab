@@ -1,0 +1,105 @@
+---
+# Sunshine (game stream host) for the anduril gaming LXC (CT 117), so the TV
+# session can be reached over Moonlight — for couch play and, near-term, to
+# launch+configure games (e.g. the Halo MCC Microsoft sign-in) with a gamepad +
+# on-screen keyboard instead of sitting at the TV.
+#
+# GPU/encode (probed 2026-06-24): AMD RX 9070 XT (radeonsi/gfx1201), Mesa 26.0.3.
+# Sunshine auto-selects its Vulkan video-encode backend on this GPU and finds
+# h264_vulkan / hevc_vulkan / av1_vulkan (VAAPI H.264/HEVC10/AV1 is also present
+# via renderD129 as a fallback). No encoder needs forcing; the old NVENC recipe
+# is dead. KMS capture of the KWin output (HDMI-A-4) was confirmed working inside
+# this privileged CT — the cap_sys_admin raise succeeds.
+#
+# Capture: under KWin/Wayland the only capture backend that works is KMS, which
+# needs CAP_SYS_ADMIN on the sunshine binary (AppImage/Flatpak can't KMS at all —
+# hence the distro .deb). KMS capture from *inside a container* is a known sore
+# spot (the file cap doesn't always raise to effective); anduril being a
+# PRIVILEGED CT (full cap bounding set, 1:1 uid map) is the best case, but this
+# is the gating risk and is validated separately before the session is wired up.
+#
+# SCOPE (v1): install + setcap + input access only. This does NOT launch Sunshine
+# in the session yet — that integration (into anduril-inner.sh) lands once KMS
+# capture is confirmed, so applying this play is non-disruptive to the live
+# gaming session. Lives in site-anduril.yaml AFTER setup-anduril-session.yaml.
+#
+# First-run follow-ups (one-time, via the web UI at https://anduril:47990):
+#   1. Set the Sunshine admin username/password (stored in CT state, not here).
+#   2. Pair Moonlight (enter the PIN the client shows).
+# Input injection relies on the world-rw uinput node + `pseudo` in `input`, both
+# already established by setup-anduril-session.yaml.
+
+- name: Install Sunshine on the anduril gaming LXC
+  hosts: anduril
+  become: true
+  gather_facts: true
+
+  vars:
+    # Bump to roll Sunshine forward (Linux Sunshine does not self-update). Asset
+    # naming: sunshine-ubuntu-<release>-amd64.deb on the matching GitHub release.
+    sunshine_version: "2026.516.143833"
+    sunshine_bin: /usr/bin/sunshine
+    sunshine_conf: /home/pseudo/.config/sunshine/sunshine.conf
+    # The Web UI is reached by hostname/IP on the LAN, not localhost, so
+    # Sunshine's default CSRF origins (localhost/loopback only) reject the
+    # first-run + settings POSTs. Allow the names this CT answers to.
+    sunshine_csrf_origins:
+      - https://anduril:47990
+      - https://anduril.vingilot.internal:47990
+      - https://192.168.1.17:47990
+
+  tasks:
+    - name: Sanity-check Ubuntu (the .deb is release-specific)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Ubuntu"
+        fail_msg: >-
+          Expected Ubuntu (got {{ ansible_facts.distribution }}
+          {{ ansible_facts.distribution_version }}); pick the matching Sunshine
+          asset before running.
+
+    - name: Check whether Sunshine is already installed at the pinned version
+      ansible.builtin.command: dpkg-query -W -f='${Version}' sunshine
+      register: sunshine_installed
+      changed_when: false
+      failed_when: false
+
+    - name: Install Sunshine from the LizardByte release .deb
+      # apt resolves the .deb's dependencies (libva, etc.). Runs only when absent
+      # or a different version is installed, so re-runs are a no-op.
+      ansible.builtin.apt:
+        deb: "https://github.com/LizardByte/Sunshine/releases/download/v{{ sunshine_version }}/sunshine-ubuntu-{{ ansible_facts.distribution_version }}-amd64.deb"
+      when: sunshine_version not in sunshine_installed.stdout
+
+    - name: Read current file capabilities on the Sunshine binary
+      ansible.builtin.command: "getcap {{ sunshine_bin }}"
+      register: sunshine_caps
+      changed_when: false
+
+    - name: Grant CAP_SYS_ADMIN for KMS capture (Wayland/KDE)
+      # Without this, KMS capture of the KWin session fails. Privileged CT only;
+      # the effective-set raise is the thing validated post-install.
+      ansible.builtin.command: "setcap cap_sys_admin+p {{ sunshine_bin }}"
+      when: "'cap_sys_admin' not in sunshine_caps.stdout"
+
+    - name: Ensure the session user can use virtual input devices
+      # Sunshine injects Moonlight input via uinput; LizardByte requires the
+      # `input` group. setup-anduril-session.yaml already adds pseudo to it, so
+      # this is a guard/no-op (and documents the dependency here too).
+      ansible.builtin.user:
+        name: pseudo
+        groups: input
+        append: true
+
+    - name: Allow the LAN origins through Sunshine's CSRF protection
+      # Surgical lineinfile (not a managed whole-file): the rest of sunshine.conf
+      # is owned by Sunshine's first-run + Web UI. Sunshine must be restarted to
+      # reload this (it's launched from the session, so `just restart-anduril`).
+      ansible.builtin.lineinfile:
+        path: "{{ sunshine_conf }}"
+        regexp: '^csrf_allowed_origins\s*='
+        line: "csrf_allowed_origins = {{ sunshine_csrf_origins | join(',') }}"
+        create: true
+        owner: pseudo
+        group: pseudo
+        mode: "0664"
