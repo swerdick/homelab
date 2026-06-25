@@ -261,6 +261,21 @@ tf-keycloak +args:
 tf-keycloak-init:
     cd terraform/keycloak && tofu init -backend-config=backend.hcl
 
+# Harbor app stack — HARBOR_PASSWORD for the local `admin` user. Sourced from
+# the cluster Secret SOPS file (single source of truth: gondor/apps/harbor/
+# harbor-admin.yaml) rather than a duplicate copy in secrets.sops.yaml. If the
+# admin password ever drifts (live rotated, SOPS not updated — see
+# [[project_harbor_admin_seed_only]]), this recipe will fail loud at TF auth
+# time, which is the right signal to re-sync SOPS.
+tf-harbor +args:
+    @cd terraform/harbor && \
+      HARBOR_USERNAME=admin \
+      HARBOR_PASSWORD="$(sops --decrypt --extract '["stringData"]["HARBOR_ADMIN_PASSWORD"]' ../../gondor/apps/harbor/harbor-admin.yaml)" \
+      tofu {{args}}
+
+tf-harbor-init:
+    cd terraform/harbor && tofu init -backend-config=backend.hcl
+
 # --- Grafana ---
 
 # Export every Grafana dashboard tagged 'homelab' to grafana-dashboards/.
