@@ -158,7 +158,7 @@ patch-anduril:
 # the TV), then starts fresh.
 restart-anduril:
     @echo "Restarting the anduril gaming session..."
-    ssh root@earendil 'pct exec 117 -- bash -c "systemctl stop anduril-session.service; pkill -9 -x steam; pkill -9 -x steamwebhelper; sleep 2; systemctl reset-failed anduril-session.service; systemctl start anduril-session.service"'
+    ssh root@earendil 'pct exec 117 -- bash -c "systemctl stop anduril-session.service; sleep 2; systemctl reset-failed anduril-session.service; systemctl start anduril-session.service"'
 
 # Drop anduril into desktop-admin mode: stop the TV gaming session so Steam is
 # free for an xrdp desktop session (Steam is single-instance per user). RDP to
