@@ -1,5 +1,12 @@
 # Anduril Sunshine Stream Recovery Runbook
 
+> **Archived 2026-06-25.** Documents the NVIDIA GTX 970 / Sunshine-VM era of
+> `anduril` (VM 117). That host has since been replatformed to an AMD 9070XT
+> **LXC** (CT 117) with Sunshine running in-container — see
+> `ansible/playbooks/setup-anduril-sunshine.yaml`. The NVIDIA-specific recovery
+> below (`nvidia-smi`, NVENC, `Xid`) no longer applies to the live host; kept
+> for reference.
+
 Recovering Moonlight streaming to anduril (VM 117) when the stream won't start.
 This is a recurring failure with a known root cause and a reliable — if blunt —
 fix. The goal of this runbook is to get you from "it's broken" to "it's
@@ -61,6 +68,7 @@ The GPU has TWO wedge presentations — both go to Recovery A:
 |---|---|---|
 | Stream **won't start**; `Couldn't initialize cuda: CUDA_ERROR_NOT_INITIALIZED` → `Encoder [nvenc] failed` → `Found H.264 encoder: libx264 [software]` | NVENC wedged at startup | Recovery A |
 | Stream was working then **froze mid-use**; `dmesg` shows `NVRM: Xid 31/62/32` (`name=sunshine`) and/or Sunshine logs `CUDA_ERROR_LAUNCH_FAILED` / `Couldn't map GL textures`; `nvidia-smi` now **hangs** | GPU faulted live during the stream | Recovery A |
+| **UEFI/GRUB-time artifacts on the TV** (corrupted color bands under readable boot text); after boot, `nvidia-smi` returns but shows `Fan ERR! Pwr ERR!`, `Disp.A: Off`, no Xid 62 yet OR Xid 62 in `journalctl -k`; `nv_queue` thread pegs ~90% CPU; `systemctl is-system-running` = `degraded`; **a `qm stop/start` produces an identical fresh-boot wedge** | Standby-power wedge — card retains corrupted internal state through warm reboots and even a host `poweroff`, because PCIe standby keeps it alive | Recovery C |
 | Sunshine selects `nvenc` / `h264_nvenc`, no CUDA error, but stream still fails | Sunshine/session issue — GPU is fine | Recovery B |
 | `sunshine` not running, no Plasma session, 48010 not listening | Sunshine didn't come up | Recovery B |
 
@@ -98,6 +106,38 @@ The card must be power-cycled. A VM restart alone will NOT fix it.
    re-check.
 
 4. Connect from Moonlight — it should stream.
+
+## Recovery C — Standby-power wedge (harsher than Recovery A)
+
+Verified 2026-06-01. Symptom set above. Distinguishing tell: **`qm stop/start`
+brings the VM back up with the exact same Xid 62 / Fan-Pwr-ERR / 90%-nv_queue
+state**. The card never lost power, so it never reset.
+
+A normal `poweroff` of earendil is **not enough** — PCIe slot standby (3.3V
+aux) keeps the card's internal microcontroller alive across a soft shutdown.
+
+1. Shut down all guests cleanly, then earendil:
+   ```bash
+   ssh earendil 'sudo poweroff'
+   ```
+2. **At the chassis: flip the PSU rocker switch off** (or unplug the cord).
+   Wait **3–5 minutes** for the 3.3V standby rail and on-card caps to drain.
+3. Flip PSU back on, power earendil on, let all guests come up.
+4. Confirm recovery on anduril:
+   ```bash
+   ssh anduril '
+     nvidia-smi
+     systemctl is-system-running
+     journalctl -k -b 0 --no-pager | grep -iE "xid|nvrm.*err" | head
+   '
+   ```
+   Want: `Fan: 0%`, `Pwr` reads a real wattage, `Disp.A: On`, no `Xid` in
+   current boot, systemctl `running`.
+5. Connect from Moonlight; should stream cleanly.
+
+If after all of this the GPU still wedges within the first session, the card
+is genuinely degrading — not just a stuck state — and replacement (per the
+"only true permanent fix" section) becomes the actionable path.
 
 ## Recovery B — Sunshine/session problem (GPU is fine)
 
