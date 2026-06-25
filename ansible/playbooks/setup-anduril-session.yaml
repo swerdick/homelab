@@ -30,13 +30,22 @@
       register: i386
       changed_when: false
 
+    - name: Read the currently-enabled apt components (deb822 ubuntu.sources)
+      # apt_repository's bare-component shortcut ("universe") is rejected by
+      # current ansible-core ("Invalid repository string"); drive
+      # add-apt-repository directly instead, guarded so it's a clean no-op when
+      # the components are already on the Components: line.
+      ansible.builtin.command: grep '^Components:' /etc/apt/sources.list.d/ubuntu.sources
+      register: ubuntu_components
+      changed_when: false
+      check_mode: false
+
     - name: Enable universe + multiverse repos
-      ansible.builtin.apt_repository:
-        repo: "{{ item }}"
-        state: present
+      ansible.builtin.command: "add-apt-repository -y -n {{ item }}"
       loop:
         - universe
         - multiverse
+      when: item not in ubuntu_components.stdout.split()
 
     - name: Preseed Steam license (non-interactive)
       ansible.builtin.debconf:
@@ -124,6 +133,55 @@
           LockOnResume=false
           Timeout=0
 
+    - name: Disable KDE Wallet (no usable keyboard for the unlock prompt)
+      # Electron apps (Spotify/Discord) reach the Secret Service via
+      # xdg-desktop-portal, which pops a kwallet unlock dialog. On the
+      # controller-only TV that dialog can't be answered (the OSK can't inject
+      # into a KWin window — the VT-less libinput gap), so it blocks the app
+      # every launch. Disable the wallet; Electron safeStorage falls back to
+      # plaintext, which is fine on a single-user kiosk.
+      ansible.builtin.copy:
+        dest: "/home/{{ session_user }}/.config/kwalletrc"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          [Wallet]
+          Enabled=false
+          First Use=false
+
+    - name: Ensure the WirePlumber user config dir exists
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/wireplumber/wireplumber.conf.d"
+        state: directory
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0755"
+
+    - name: Pin the AMD HDMI card profile (WirePlumber drop-in)
+      # WirePlumber parks the HDMI card 'off' whenever it judges the port
+      # unavailable — at boot before the TV EDID is ready, and again when Steam
+      # Big Picture's startup mode-set flaps the HDMI link — which drops the TV
+      # sink and silences audio. Disable auto-profiling for this card and force
+      # the HDMI output profile so the sink is always present and survives flaps.
+      ansible.builtin.copy:
+        dest: "/home/{{ session_user }}/.config/wireplumber/wireplumber.conf.d/51-anduril-hdmi.conf"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          monitor.alsa.rules = [
+            {
+              matches = [ { device.name = "alsa_card.pci-0000_03_00.1" } ]
+              actions = {
+                update-props = {
+                  api.acp.auto-profile = false
+                  device.profile = "output:hdmi-stereo-extra3"
+                }
+              }
+            }
+          ]
+
     - name: Install the session launcher
       ansible.builtin.copy:
         dest: /usr/local/bin/anduril-session.sh
@@ -157,13 +215,28 @@
             sleep 2
             # TV is the only/primary output (disable the DP-3 dummy)
             WAYLAND_DISPLAY=wayland-0 kscreen-doctor output.HDMI-A-4.enable output.HDMI-A-4.priority.1 output.DP-3.disable 2>/dev/null || true
-            # route audio to the AMD HDMI (TV) sink
+            # route audio to the AMD HDMI (TV) sink. The WirePlumber drop-in
+            # (51-anduril-hdmi.conf) pins this card's HDMI profile so the sink is
+            # always present; here we just make it the default.
             for i in $(seq 1 20); do
-              HDMI=$(pactl list short sinks 2>/dev/null | grep -iE "hdmi|03_00.1|Navi" | head -1 | awk '{print $2}')
+              HDMI=$(pactl list short sinks 2>/dev/null | grep -iE "03_00.1" | head -1 | awk '{print $2}')
               [ -n "$HDMI" ] && { pactl set-default-sink "$HDMI" 2>/dev/null; break; }
               sleep 1
             done
           ) &
+          # Game-stream host for Moonlight. Starts only if Sunshine is installed
+          # (setup-anduril-sunshine.yaml), so the session still works without it.
+          # KMS capture needs the live KWin session + wayland output, so it waits
+          # for the socket. Launching it here ties it to the session lifecycle:
+          # it comes up on container boot and on every `just restart-anduril`,
+          # with no separate systemd unit to keep in sync.
+          if command -v sunshine >/dev/null 2>&1; then
+            (
+              for i in $(seq 1 40); do [ -S "${XDG_RUNTIME_DIR}/wayland-0" ] && break; sleep 1; done
+              sleep 3
+              exec env WAYLAND_DISPLAY=wayland-0 sunshine
+            ) &
+          fi
           exec kwin_wayland --xwayland /usr/local/bin/steam-bigpicture.sh
 
     - name: Install the Steam Big Picture launcher
@@ -229,6 +302,34 @@
         - "/home/{{ session_user }}/.steam/debian-installation/steamapps/libraryfolders.vdf"
         - "/home/{{ session_user }}/.steam/debian-installation/config/libraryfolders.vdf"
       when: games_lib_registered.rc != 0
+
+    - name: Relocate the Steam shader cache onto the SSD rootfs (symlink)
+      # The games library (/games) is on the WD Blue HDD. Vulkan shader
+      # pre-caching (Fossilize) is disk-bound there: replaying the downloaded
+      # pipeline cache is seek-heavy and starves the compile (measured ~77% HDD
+      # busy, climbing iowait). The CT rootfs is on the SSD (rpool), so move the
+      # regenerable shadercache there and symlink it back — Steam follows the
+      # link. Symlinking only this subdir (not all of steamapps) does NOT affect
+      # library free-space reporting, so it avoids the >60G-install bug the
+      # whole-steamapps symlink caused. Idempotent: the symlink is the guard;
+      # handles both fresh (no cache yet) and existing (move HDD->SSD) cases.
+      become_user: "{{ session_user }}"
+      ansible.builtin.shell: |
+        set -e
+        SC="/games/steamapps/shadercache"
+        DEST="$HOME/.local/share/steam-shadercache"
+        mkdir -p "$DEST" "/games/steamapps"
+        if [ -L "$SC" ]; then echo "already-linked"; exit 0; fi
+        if [ -d "$SC" ]; then
+          cp -a "$SC"/. "$DEST"/ 2>/dev/null || true
+          rm -rf "$SC"
+        fi
+        ln -s "$DEST" "$SC"
+        echo "relocated"
+      args:
+        executable: /bin/bash
+      register: shadercache_relocate
+      changed_when: "'relocated' in shadercache_relocate.stdout"
 
     - name: Enable seatd + the session boot service
       ansible.builtin.systemd:
