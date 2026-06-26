@@ -8,9 +8,9 @@
 # pointer is unusable (libinput needs a VT), so the controller drives Steam
 # directly via /dev/input + /dev/hidraw. See [[project-anduril-lxc-spike]].
 #
-# NOTE: this play has only been validated as a faithful transcription of a
-# hand-built + reboot-tested container; it has not yet been run end-to-end via
-# ansible (that needs SSH/sudo onboarding of the CT first — setup-pseudo-user.yaml).
+# NOTE: the CT is now SSH/sudo-onboarded; this play verified drift-free against the
+# live container via `--check --diff` (changed=0, 2026-06-25). It was originally
+# transcribed from a hand-built + reboot-tested container.
 # Run order in site-anduril.yaml: after the base/pseudo-user plays.
 
 - name: Configure the anduril in-guest gaming session
@@ -76,6 +76,10 @@
           - pipewire-pulse
           - wireplumber
           - pulseaudio-utils
+          # Steam's controller firmware-update tool needs both hidapi backends;
+          # Kubuntu ships hidraw but not libusb, so the SC2/Puck firmware wizard can
+          # hang on a blank dialog (ValveSoftware/steam-for-linux#13171, Bug 1).
+          - libhidapi-libusb0
 
     - name: Ensure the seat group exists
       ansible.builtin.group:
@@ -158,12 +162,16 @@
         group: "{{ session_user }}"
         mode: "0755"
 
-    - name: Pin the AMD HDMI card profile (WirePlumber drop-in)
-      # WirePlumber parks the HDMI card 'off' whenever it judges the port
-      # unavailable — at boot before the TV EDID is ready, and again when Steam
-      # Big Picture's startup mode-set flaps the HDMI link — which drops the TV
-      # sink and silences audio. Disable auto-profiling for this card and force
-      # the HDMI output profile so the sink is always present and survives flaps.
+    - name: Pin the AMD HDMI profile + disable suspend-on-idle (WirePlumber drop-in)
+      # Two rules for the TV's audio sink:
+      #  1. Profile pin: WirePlumber parks the HDMI card 'off' whenever it judges
+      #     the port unavailable (at boot before the TV EDID is ready, and when Steam
+      #     Big Picture's startup mode-set flaps the HDMI link), dropping the sink.
+      #     Disable auto-profiling + force the HDMI output profile so it survives.
+      #  2. No suspend-on-idle: WirePlumber suspends an idle node after 5s
+      #     (suspend-node.lua; session.suspend-timeout-seconds=0 disables it). In
+      #     this LXC the HDMI sink suspends ~5s in and the resume fails, so audio
+      #     dies until a session restart — the "came back for 5s then dropped" bug.
       ansible.builtin.copy:
         dest: "/home/{{ session_user }}/.config/wireplumber/wireplumber.conf.d/51-anduril-hdmi.conf"
         owner: "{{ session_user }}"
@@ -180,7 +188,24 @@
                 }
               }
             }
+            {
+              matches = [ { node.name = "alsa_output.pci-0000_03_00.1.hdmi-stereo-extra3" } ]
+              actions = {
+                update-props = {
+                  session.suspend-timeout-seconds = 0
+                }
+              }
+            }
           ]
+
+    - name: Remove the obsolete no-suspend drop-in (folded into 51-anduril-hdmi)
+      # An earlier attempt used `wireplumber.settings { node.suspend-timeout-seconds }`
+      # — not a valid WP 0.5 setting (verified live: "Setting ... not found"). The
+      # working form is the per-node property session.suspend-timeout-seconds, now a
+      # rule in 51-anduril-hdmi.conf. Drop the stale no-op file.
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/wireplumber/wireplumber.conf.d/52-anduril-no-suspend.conf"
+        state: absent
 
     - name: Install the session launcher
       ansible.builtin.copy:
@@ -196,6 +221,13 @@
           export XDG_CURRENT_DESKTOP=KDE
           export LIBSEAT_BACKEND=seatd
           export KWIN_DRM_DEVICES=/dev/dri/card0
+          # No direct scanout: when a fullscreen game takes over the display plane
+          # and releases it on exit, the HDMI link flaps — which (a) corrupts
+          # Sunshine's KMS capture (the garbage top-band) and (b) knocks the AMD HDMI
+          # audio card out of WirePlumber, silencing the TV (incl. Steam menu tones)
+          # until a session restart — the every-game-exit audio drop. Forcing KWin to
+          # always composite keeps the output stable across game launch/exit.
+          export KWIN_DRM_NO_DIRECT_SCANOUT=1
           export PATH=/usr/games:/usr/bin:/bin
           exec dbus-run-session -- /usr/local/bin/anduril-inner.sh
 
@@ -234,7 +266,15 @@
             (
               for i in $(seq 1 40); do [ -S "${XDG_RUNTIME_DIR}/wayland-0" ] && break; sleep 1; done
               sleep 3
-              exec env WAYLAND_DISPLAY=wayland-0 sunshine
+              # Respawn loop: a Sunshine crash (e.g. a failed stream whose teardown
+              # hangs -> Fatal, which strands the Moonlight host) otherwise stays
+              # down until the session is restarted. Relaunch with a short backoff so
+              # it self-heals. On session stop systemd kills this subshell with the
+              # cgroup, so the loop can't respawn during shutdown.
+              while true; do
+                env WAYLAND_DISPLAY=wayland-0 sunshine
+                sleep 2
+              done
             ) &
           fi
           exec kwin_wayland --xwayland /usr/local/bin/steam-bigpicture.sh
