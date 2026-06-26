@@ -261,6 +261,39 @@ Pending erebor's trixie upgrade — Alloy via the Grafana apt repo wants newer l
 
 The gaming half of the amdgpu-sharing replatform shipped (see Completed: the gaming LXC + Sunshine, and the input resolution). The remaining half of the original vision is a **second** privileged LXC joined to gondor's k3s as a **GPU worker for AI/ROCm**, sharing the same card: `/dev/kfd` + `/dev/dri` into pods (skip the AMD device plugin), a GPU node label + taint, ROCm; cordon/drain hands the card to the gaming LXC for heavy sessions. Input-independent — unaffected by anything in the gaming-side work. Tradeoff: shared-kernel `amdgpu` trades VM isolation for simplicity (a GPU hang can wedge the host). Plan: `~/.claude/plans/squishy-humming-thunder.md`.
 
+### Anduril emulators (native, in progress)
+
+Bringing the Steam Deck's EmuDeck experience to the gaming LXC as **native** apt/.deb
+emulators (no flatpak/snap — the fleet avoids it, and flatpak-in-a-privileged-LXC +
+no `fuse` feature is the flaky combo). Library lives on the bulk pool in the EmuDeck
+layout `/bulk/games/Emulation/{roms,bios,saves,tools}` (bind-mounted into CT 117 host-side
+as `mp1` in `setup-anduril-lxc.yaml` — `anduril.tf` ignores `mount_point` because bpg
+would ForceNew-rebuild the CT to add one; session user joins `shares`/GID 10000), so
+it survives a CT rebuild.
+`install-anduril-emulators.yaml` installs RetroArch + Dolphin (apt), PCSX2 (extracted
+AppImage, no FUSE), and Eden + optional Citron (staged from
+`Emulation/tools/installers/`, DMCA-volatile so not auto-downloaded). Steam Big-Picture
+integration (non-Steam shortcuts + optional Steam ROM Manager, for SC2 Steam Input) is
+done interactively from the xrdp desktop.
+
+Storage reorg (done 2026-06-25): `/bulk/games` was an unstructured 404G dump; pulled the
+246G tabletop-RPG PDF library out to `/bulk/documents/tabletop-rpg`, consolidated the rest
+into the `Emulation/` tree, all behind a `bulk/games@pre-emulation-reorg-2026-06-25`
+snapshot. Remaining threads:
+
+- **Sort the ROM heap** — `Emulation/roms/` is currently a *flat* pile of ~70 mixed-system
+  files (the old `emulation/games` dump). Emulators run fine against it (RetroArch scans by
+  content hash; standalone emulators open a file directly), but Steam ROM Manager and clean
+  per-system browsing want `roms/<system>/`. Sort by extension (with manual review of the
+  ambiguous folder-based / `.iso` titles); reconcile the duplicate SSBU parked in
+  `Emulation/_inbox/`. Non-blocking polish.
+- **Retire the legacy emulator builds** — stale portable frontends + Switch tooling
+  (Batocera, Recalbox, RetroArch v1.10.1, Jan-2022 libretro cores, SAK; ~26G) are archived
+  under `Emulation/tools/_legacy/`. Revisit once the native stack is validated and delete to
+  reclaim the space.
+- **Retire the safety snapshot** — drop `bulk/games@pre-emulation-reorg-2026-06-25` (and the
+  `bulk/documents@…` companion) once the new setup plays end-to-end.
+
 ### iOS device trust
 
 Each iOS device that wants to access internal HTTPS services needs the `vingilot` root CA in its trust store. Manual procedure: AirDrop the cert, install Profile, toggle on in Certificate Trust Settings. Captured in the CA-rotation runbook; just needs doing per device.

@@ -105,6 +105,21 @@
         - "lxc.mount.auto: sys:rw"
       notify: Warn CT config changed
 
+    - name: Bind-mount the shared games/emulation library into the CT (mp1)
+      # /bulk/games (bulk pool, group `shares`) holds the emulation library
+      # (Emulation/{roms,bios,saves}) so it survives a CT rebuild. bpg can't add this
+      # via the API token — privileged-CT mounts are root@pam-only, and a mount_point
+      # `volume` change ForceNew-replaces the whole CT (would wipe the rootfs). So
+      # it's managed here as a raw mpN line, mirrored by the TF-ignored mount_point
+      # in anduril.tf. mp0 is the Steam library (/games); this is mp1. shared=1
+      # matches the other /bulk/* binds; backup=0 keeps it out of vzdump (the dataset
+      # has its own ZFS backup story).
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ anduril_ctid }}.conf"
+        regexp: '^mp1:'
+        line: "mp1: /bulk/games,mp=/bulk/games,shared=1,backup=0"
+      notify: Warn CT config changed
+
     # --- host: free the AMD card's framebuffer console for the guest compositor ---
     - name: Install the AMD fbcon-release script
       ansible.builtin.copy:
