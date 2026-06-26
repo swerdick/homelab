@@ -167,6 +167,74 @@
       loop_control:
         label: "{{ item.key }}"
 
+    # --- All emulators: force XWayland so Steam Input actually reaches them --------
+    # ROOT CAUSE of "controller detected but unresponsive in emulators" (chased
+    # 2026-06-26): they render on NATIVE WAYLAND, where Steam's overlay + Steam-Input
+    # hook can't attach -> Steam never switches to gamepad mode and writes 0 to the
+    # virtual pad the emulator reads (verified: SC2 streamed 180 KB on hidraw while the
+    # pad got 0 bytes). Native Steam games are unaffected — Steam itself runs on
+    # XWayland. Fix: blank WAYLAND_DISPLAY (+ QT_QPA_PLATFORM=xcb for the Qt UIs) so the
+    # emulator runs under XWayland, where the hook attaches. XWayland is durable — only
+    # the X11 *session* is deprecated, not the X11-app compat layer.
+    - name: Install XWayland-forcing wrappers for the apt emulators (RetroArch, Dolphin)
+      ansible.builtin.copy:
+        dest: "/usr/local/bin/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          exec env WAYLAND_DISPLAY= QT_QPA_PLATFORM=xcb /usr/bin/{{ item }} "$@"
+      loop:
+        - retroarch
+        - dolphin-emu
+
+    - name: Ensure /usr/local/share/applications exists (for the .desktop overrides)
+      ansible.builtin.file:
+        path: /usr/local/share/applications
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Override the apt-emulator .desktop entries to use the XWayland wrapper
+      # /usr/local/share/applications takes precedence over the apt /usr/share copy, so
+      # a Steam shortcut added fresh from the menu picks up the wrapper (a clean
+      # single-path Exec that Steam parses cleanly). An ALREADY-added shortcut instead
+      # needs `WAYLAND_DISPLAY= %command%` in its Steam Launch Options.
+      ansible.builtin.copy:
+        dest: "/usr/local/share/applications/{{ item.id }}.desktop"
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name={{ item.name }}
+          Exec=/usr/local/bin/{{ item.id }} %f
+          Icon={{ item.id }}
+          Terminal=false
+          Categories=Game;Emulator;
+          StartupWMClass={{ item.id }}
+      loop:
+        - { id: retroarch, name: RetroArch }
+        - { id: dolphin-emu, name: "Dolphin Emulator" }
+      loop_control:
+        label: "{{ item.id }}"
+
+    - name: De-classify Sunshine's virtual absolute-pointer as a joystick
+      # Sunshine's "Mouse passthrough (absolute)" exposes ABS axes, so the kernel/udev
+      # tag it a joystick (js0); RetroArch's udev joypad driver then squats port 0 with
+      # it and bumps the real controller up a slot. Clear ID_INPUT_JOYSTICK so joypad
+      # consumers skip it; its mouse/pointer (Moonlight abs input) is unaffected.
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-anduril-emulator-input.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          SUBSYSTEM=="input", ATTRS{name}=="Mouse passthrough (absolute)", ENV{ID_INPUT_JOYSTICK}="0"
+
     - name: Ensure unzip is present (ansible unarchive needs it for .zip)
       ansible.builtin.apt:
         name: unzip
@@ -341,7 +409,10 @@
             mode: "0755"
             content: |
               #!/bin/sh
-              exec /opt/pcsx2/AppRun "$@"
+              # XWayland: Steam's overlay + Steam-Input hook don't attach to native
+              # Wayland clients -> no controller in non-Steam shortcuts (see the
+              # apt-emulator wrapper note above).
+              exec env WAYLAND_DISPLAY= QT_QPA_PLATFORM=xcb /opt/pcsx2/AppRun "$@"
 
         - name: Find the PCSX2 app icon
           ansible.builtin.find:
@@ -422,7 +493,8 @@
             mode: "0755"
             content: |
               #!/bin/sh
-              exec /opt/eden/AppRun "$@"
+              # XWayland (see the apt-emulator wrapper note) — keeps Steam Input working.
+              exec env WAYLAND_DISPLAY= QT_QPA_PLATFORM=xcb /opt/eden/AppRun "$@"
 
         - name: Find the Eden app icon
           ansible.builtin.find:
@@ -505,7 +577,8 @@
             mode: "0755"
             content: |
               #!/bin/sh
-              exec /opt/citron/AppRun "$@"
+              # XWayland (see the apt-emulator wrapper note) — keeps Steam Input working.
+              exec env WAYLAND_DISPLAY= QT_QPA_PLATFORM=xcb /opt/citron/AppRun "$@"
 
         - name: Find the Citron app icon
           ansible.builtin.find:
