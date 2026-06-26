@@ -101,6 +101,7 @@
         - "lxc.mount.entry: /dev/hidraw8 dev/hidraw8 none bind,optional,create=file"
         - "lxc.mount.entry: /dev/hidraw9 dev/hidraw9 none bind,optional,create=file"
         - "lxc.cgroup2.devices.allow: c 189:* rwm"
+        - "lxc.cgroup2.devices.allow: c 166:* rwm"
         - "lxc.mount.entry: /dev/bus/usb dev/bus/usb none bind,optional,create=dir"
         - "lxc.mount.auto: sys:rw"
       notify: Warn CT config changed
@@ -190,6 +191,66 @@
         content: |
           SUBSYSTEM=="usb", ATTR{idVendor}=="28de", MODE="0666"
           SUBSYSTEM=="usb", ATTR{idVendor}=="054c", MODE="0666"
+          ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="28de", ATTR{power/control}="on"
+      notify: Reload host udev rules
+
+    # --- host: let the CT reach the SC2 serial bootloader for firmware flashing ---
+    - name: Install the CT bootloader-tty hotplug injector
+      # The Steam Controller Puck drops into a cdc_acm/ttyACM serial *bootloader*
+      # only DURING a firmware flash (it disconnects + re-enumerates as "Steam
+      # Controller Bootloader"). The CT's /dev is static, so a device that appears
+      # after CT start is invisible inside it and a stale `lxc.mount.entry` can't
+      # capture a runtime node — which is why flashing "from the LXC" failed with
+      # `HardwareUpdateWizard: failed to update dongle: 2`. This host hook mknods the
+      # bootloader tty into the CT's mount namespace on hotplug (major 166 is
+      # cgroup-allowed above) and removes it on unplug. No-op unless a Valve ttyACM
+      # actually appears. Managed by ansible.
+      ansible.builtin.copy:
+        dest: /usr/local/sbin/anduril-ct-bootloader-tty.sh
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/bin/bash
+          # Inject/remove the SC2 serial bootloader tty into the anduril CT (117) at
+          # flash time. Args from udev: <add|remove> <kernel-name> <major> <minor>.
+          # Managed by ansible (setup-anduril-lxc.yaml).
+          set -u
+          action="${1:-}"; dev="${2:-}"; maj="${3:-}"; min="${4:-}"
+          ctid=117
+          [ -n "$dev" ] || exit 0
+          pid="$(lxc-info -n "$ctid" -p -H 2>/dev/null || true)"
+          [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null \
+            || { logger -t anduril-bootloader "no CT $ctid pid; skip $action $dev"; exit 0; }
+          case "$action" in
+            add)
+              [ -n "$maj" ] && [ -n "$min" ] || exit 0
+              if nsenter -t "$pid" -m -- /bin/sh -c "rm -f '/dev/$dev'; mknod -m 0666 '/dev/$dev' c '$maj' '$min'" >/dev/null 2>&1; then
+                logger -t anduril-bootloader "injected /dev/$dev ($maj:$min) into CT $ctid (pid $pid)"
+              else
+                logger -t anduril-bootloader "FAILED to inject /dev/$dev ($maj:$min) into CT $ctid"
+              fi
+              ;;
+            remove)
+              nsenter -t "$pid" -m -- /bin/sh -c "rm -f '/dev/$dev'" >/dev/null 2>&1 || true
+              logger -t anduril-bootloader "removed /dev/$dev from CT $ctid"
+              ;;
+          esac
+          exit 0
+
+    - name: Install the CT bootloader-tty hotplug udev rules
+      # Fire the injector when a Valve (28de) cdc_acm bootloader tty appears/leaves.
+      # On add, match the USB parent's idVendor; on remove the device is already gone
+      # so match the node name only (the script just rm's it from the CT if present).
+      # %M/%m = major/minor of the tty node.
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-anduril-ct-bootloader.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          ACTION=="add",    SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="28de", KERNEL=="ttyACM*", RUN+="/usr/local/sbin/anduril-ct-bootloader-tty.sh add %k %M %m"
+          ACTION=="remove", SUBSYSTEM=="tty", KERNEL=="ttyACM*", RUN+="/usr/local/sbin/anduril-ct-bootloader-tty.sh remove %k %M %m"
       notify: Reload host udev rules
 
   handlers:
