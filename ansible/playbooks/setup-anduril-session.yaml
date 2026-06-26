@@ -208,6 +208,54 @@
         path: "/home/{{ session_user }}/.config/wireplumber/wireplumber.conf.d/52-anduril-no-suspend.conf"
         state: absent
 
+    - name: Install a transparent ("blank") cursor theme for the kiosk
+      # KWin draws its built-in cursor sprite dead-center on this VT-less session and
+      # no pointer ever moves or hides it (libinput enumerates nothing —
+      # [[project-anduril-lxc-spike]]); Steam's Desktop Layout is NOT the source
+      # (tested 2026-06-26, the cursor persisted). Fix: a fully-transparent Xcursor
+      # theme for both KWin (kcminputrc) and Xwayland (XCURSOR_THEME in the launcher).
+      # python3 writes a 1x1 transparent Xcursor (no xcursorgen/imagemagick dep); the
+      # common cursor names symlink to it. Guarded by `creates`.
+      become_user: "{{ session_user }}"
+      ansible.builtin.shell:
+        executable: /bin/bash
+        creates: "/home/{{ session_user }}/.local/share/icons/blank/cursors/left_ptr"
+        cmd: |
+          set -euo pipefail
+          theme="$HOME/.local/share/icons/blank"
+          mkdir -p "$theme/cursors"
+          python3 - "$theme/cursors/left_ptr" <<'PY'
+          import struct, sys
+          sizes = (16, 24, 32, 48, 64)
+          imgs = [struct.pack('<IIIIIIIIII', 36, 0xfffd0002, s, 1, 1, 1, 0, 0, 0, 0) for s in sizes]
+          toc, pos = b'', 16 + len(sizes) * 12
+          for s, im in zip(sizes, imgs):
+              toc += struct.pack('<III', 0xfffd0002, s, pos); pos += len(im)
+          data = b'Xcur' + struct.pack('<III', 16, 0x00010000, len(sizes)) + toc + b''.join(imgs)
+          open(sys.argv[1], 'wb').write(data)
+          PY
+          cd "$theme/cursors"
+          for n in default arrow pointer top_left_arrow text xterm hand1 hand2 \
+                   crosshair watch left_ptr_watch fleur question_arrow \
+                   sb_h_double_arrow sb_v_double_arrow; do
+            ln -sf left_ptr "$n"
+          done
+          printf '[Icon Theme]\nName=blank\nComment=Transparent cursor for the anduril kiosk\n' > "$theme/index.theme"
+
+    - name: Point KWin at the blank cursor theme (kcminputrc)
+      # Belt-and-suspenders to XCURSOR_THEME — KWin also reads the Wayland cursor
+      # theme from here.
+      become_user: "{{ session_user }}"
+      ansible.builtin.copy:
+        dest: "/home/{{ session_user }}/.config/kcminputrc"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          [Mouse]
+          cursorTheme=blank
+          cursorSize=24
+
     - name: Install the session launcher
       ansible.builtin.copy:
         dest: /usr/local/bin/anduril-session.sh
@@ -229,6 +277,14 @@
           # until a session restart — the every-game-exit audio drop. Forcing KWin to
           # always composite keeps the output stable across game launch/exit.
           export KWIN_DRM_NO_DIRECT_SCANOUT=1
+          # Hide the dead-center cursor KWin/Xwayland draw on this pointer-less
+          # session (no input device ever moves or hides it). A fully-transparent
+          # cursor theme (installed by the blank-cursor task) applied to KWin's
+          # Wayland cursor + Xwayland's X cursor. XCURSOR_PATH is explicit so the
+          # ~/.local theme is always found.
+          export XCURSOR_THEME=blank
+          export XCURSOR_SIZE=24
+          export XCURSOR_PATH="$HOME/.local/share/icons:/usr/share/icons"
           export PATH=/usr/games:/usr/bin:/bin
           exec dbus-run-session -- /usr/local/bin/anduril-inner.sh
 
