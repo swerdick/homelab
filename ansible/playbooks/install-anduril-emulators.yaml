@@ -1,0 +1,529 @@
+---
+# Native emulators for the anduril gaming LXC (CT 117). Companion to
+# setup-anduril-session.yaml (the KWin/Steam-Big-Picture TV session) and
+# setup-anduril-xrdp.yaml (the mouse-capable admin desktop where emulators get
+# wired into Steam as non-Steam shortcuts). Lives in site-anduril.yaml.
+#
+# Why native (apt/.deb), not flatpak/EmuDeck/RetroDeck: this box is apt-pure and
+# the fleet avoids flatpak/snap (bubblewrap inside a *privileged* LXC is the
+# historically-flaky combo, and flatpak/AppImage self-mount needs a `fuse=1`
+# feature the CT doesn't carry — features are nesting+keyctl only, see
+# setup-anduril-lxc.yaml). Native emulators use the system Mesa/RADV (the shared
+# AMD 9070 XT) directly and read /bulk/games with no sandbox override.
+#
+# Library lives on the bulk pool (bind-mounted /bulk/games, see anduril.tf) in the
+# standardized EmuDeck layout the Steam Deck already used:
+#   /bulk/games/Emulation/{roms,bios,saves,tools}
+# so the ROM/BIOS/save tree survives a CT rebuild. The session user reaches it by
+# joining `shares` (GID 10000); privileged CT = 1:1, so no idmap.
+#
+# Packaging reality (verified 2026-06-25):
+#   - RetroArch, Dolphin: in apt (universe) -> apt-managed, get upgrades.
+#   - PCSX2: Linux is AppImage/Flatpak only (apt is stale). We extract the
+#     AppImage (no FUSE needed via --appimage-extract) -> /opt + a launcher.
+#   - Eden (Switch, daily driver) + Citron (per-game fallback): AppImages,
+#     extracted (no FUSE) like PCSX2. DMCA-volatile (mirrors 403/451 without
+#     warning — Eden's Gitea blocks scraping and the GitHub mirror was 451 the day
+#     this was written; the .deb many guides mention no longer exists — Linux is
+#     AppImage-only as of v0.2.1). NOT auto-downloaded. Stage the verified build
+#     ONCE onto the durable share and this play installs from there (doubles as the
+#     "keep a copy of the build that works" stash). See the staging note above.
+#
+# STAGING (operator, one-time): drop verified installers into
+#   /bulk/games/Emulation/tools/installers/
+#     Eden*.AppImage      (from stable.eden-emu.dev / git.eden-emu.dev — Eden ships
+#                          Linux as an AppImage, NOT .deb; amd64 build, PGO recommended)
+#     pcsx2*.AppImage      (from pcsx2.net/downloads; or set pcsx2_appimage_url)
+#     citron*.AppImage     (optional fallback)
+# Tasks for an un-staged emulator skip with a warning, so this play is safe to run
+# before staging and idempotent after (re-runs are a no-op once installed).
+#
+# Verify-before-bump: emulator versions move fast. Re-confirm the staged Eden
+# AppImage is the right arch build (amd64/PGO for this Skylake host), and bump
+# pcsx2_appimage_url from pcsx2.net if a pinned build 404s. Per the fleet rule,
+# this play NEVER runs `apt autoremove`
+# (it mis-flags anduril's pinned libs).
+#
+# NOTE: like the sibling anduril plays, authored for ansible but pending an
+# end-to-end run once the CT is SSH-onboarded.
+
+- name: Install native emulators on the anduril LXC
+  hosts: anduril
+  become: true
+  gather_facts: true
+
+  vars:
+    session_user: pseudo
+    emu_root: /bulk/games/Emulation
+    installers_dir: /bulk/games/Emulation/tools/installers
+    # PCSX2 ships rolling AppImage builds (e.g. v2.7.351, May 2026) whose URLs
+    # churn fast — a pinned link 404s within weeks. Default: stage it like the
+    # others (drop pcsx2*.AppImage in installers/). To opt into auto-fetch instead,
+    # set this to a current AppImage URL from pcsx2.net/downloads.
+    pcsx2_appimage_url: ""
+
+  tasks:
+    - name: Sanity-check that this is a Debian-family host
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == "Debian"
+        fail_msg: "Expected Debian-family host, got {{ ansible_facts.os_family }}"
+
+    # --- /bulk/games access: the session user joins `shares` (GID 10000) ---------
+
+    - name: Ensure the shares group (GID 10000) exists
+      # Matches the host/nfs/smb `shares` group. Privileged CT = 1:1 GID map, so
+      # guest GID 10000 == host GID 10000; the session user then reads/writes the
+      # setgid /bulk/games tree (owned root:shares) directly — no flatpak override.
+      ansible.builtin.group:
+        name: shares
+        gid: 10000
+
+    - name: Add the session user to shares (read/write /bulk/games)
+      ansible.builtin.user:
+        name: "{{ session_user }}"
+        groups: shares
+        append: true
+
+    - name: Confirm the emulation library mount is present
+      # /bulk/games is a CT bind-mount (anduril.tf); if it's missing the CT wasn't
+      # restarted after the mount was added. Fail clearly rather than scatter
+      # emulator config into a non-existent path.
+      ansible.builtin.stat:
+        path: "{{ emu_root }}"
+      register: emu_root_stat
+
+    - name: Assert the Emulation tree exists on the bulk mount
+      ansible.builtin.assert:
+        that:
+          - emu_root_stat.stat.exists
+          - emu_root_stat.stat.isdir
+        fail_msg: >-
+          {{ emu_root }} not found. Add the /bulk/games mount_point (anduril.tf),
+          `just tf apply`, then `pct reboot 117` so the bind-mount appears.
+
+    - name: Ensure the standard Emulation subdirs exist
+      ansible.builtin.file:
+        path: "{{ emu_root }}/{{ item }}"
+        state: directory
+        owner: "{{ session_user }}"
+        group: shares
+        mode: "2775"
+      loop:
+        - roms
+        - bios
+        - bios/switch
+        - saves
+        - tools
+        - tools/installers
+
+    # --- apt-native emulators: RetroArch (multi-system) + Dolphin (GC/Wii) -------
+
+    - name: Install apt-native emulators
+      # RetroArch covers the bulk of retro systems (NES->SNES->GB/GBA->Genesis->
+      # PS1->N64->DS) via its cores; Dolphin handles GameCube/Wii (.rvz/.iso).
+      # Cores not packaged are fetched once from RetroArch's in-app Online Updater
+      # (runtime; they land in the user's config dir).
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        name:
+          - retroarch
+          - retroarch-assets
+          - dolphin-emu
+
+    - name: Point RetroArch at the shared library (system/saves/states/roms)
+      # RetroArch reads ~/.config/retroarch/retroarch.cfg. Set just the path keys
+      # so BIOS + saves live on /bulk/games (survive a CT rebuild) and the file
+      # browser opens at the ROM tree. create=true seeds the file if absent;
+      # RetroArch fills in the rest of its defaults on first launch.
+      become_user: "{{ session_user }}"
+      ansible.builtin.lineinfile:
+        path: "/home/{{ session_user }}/.config/retroarch/retroarch.cfg"
+        regexp: '^{{ item.key }} = '
+        line: '{{ item.key }} = "{{ item.value }}"'
+        create: true
+        mode: "0644"
+      loop:
+        - { key: system_directory, value: "{{ emu_root }}/bios" }
+        - { key: savefile_directory, value: "{{ emu_root }}/saves" }
+        - { key: savestate_directory, value: "{{ emu_root }}/saves" }
+        - { key: rgui_browser_directory, value: "{{ emu_root }}/roms" }
+        # Launch fullscreen so Big Picture treats it as the focused game (routes the
+        # Steam Input pad) instead of a floating window. video_windowed_fullscreen is
+        # already true, so this is BORDERLESS fullscreen — a compositor op, no DRM
+        # modeset (which would risk the never-hot-modeset GPU wedge on this box).
+        - { key: video_fullscreen, value: "true" }
+        # The apt retroarch-assets package installs the full menu icon/glyph set
+        # (ozone/xmb/...) here; RetroArch defaults assets_directory to an empty
+        # ~/.config path, which renders menu icons + button glyphs as black squares.
+        - { key: assets_directory, value: "/usr/share/libretro/assets" }
+        # Bring up the RetroArch menu with Start+Select (a combo, so it needs no
+        # hotkey-enable button) — the only controller way out of a running game, for
+        # Quit / Close Content / save states. The Steam overlay is unreliable for
+        # native non-Steam games on Wayland, so this is the dependable exit.
+        # 4 = Start+Select in RetroArch's input_combo_type enum.
+        - { key: input_menu_toggle_gamepad_combo, value: "4" }
+      loop_control:
+        label: "{{ item.key }}"
+
+    - name: Ensure unzip is present (ansible unarchive needs it for .zip)
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+
+    - name: Ensure the RetroArch autoconfig dir exists
+      become_user: "{{ session_user }}"
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/retroarch/autoconfig"
+        state: directory
+        mode: "0755"
+
+    - name: Install RetroArch joypad autoconfig profiles
+      # The apt RetroArch ships NO controller profiles, so a pad shows up as
+      # "connected but not setup" (detected, unmapped). This is the same set the
+      # in-app "Update Controller Profiles" fetches; udev/ includes "Microsoft X-Box
+      # 360 pad" (045e:028e, display "Xbox 360 Controller") — exactly what Steam
+      # Input presents the controller as — so it auto-binds. `creates` = idempotent.
+      become_user: "{{ session_user }}"
+      ansible.builtin.unarchive:
+        src: https://buildbot.libretro.com/assets/frontend/autoconfig.zip
+        dest: "/home/{{ session_user }}/.config/retroarch/autoconfig"
+        remote_src: true
+        creates: "/home/{{ session_user }}/.config/retroarch/autoconfig/udev"
+
+    - name: Ensure the RetroArch cores dir exists
+      become_user: "{{ session_user }}"
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/retroarch/cores"
+        state: directory
+        mode: "0755"
+
+    - name: Install a curated RetroArch core set (libretro buildbot)
+      # The apt RetroArch ships NO cores, so it can't launch anything ("No Core" in
+      # the menu). Pull a default set covering the ROM library from the libretro
+      # buildbot — the same source as the in-app Online Updater -> Core Downloader.
+      # Add more cores later in-app. `creates` keeps each download idempotent.
+      become_user: "{{ session_user }}"
+      ansible.builtin.unarchive:
+        src: "https://buildbot.libretro.com/nightly/linux/x86_64/latest/{{ item }}_libretro.so.zip"
+        dest: "/home/{{ session_user }}/.config/retroarch/cores"
+        remote_src: true
+        creates: "/home/{{ session_user }}/.config/retroarch/cores/{{ item }}_libretro.so"
+      loop:
+        - nestopia            # NES
+        - snes9x              # SNES
+        - gambatte            # Game Boy / Color
+        - mgba                # Game Boy Advance
+        - mupen64plus_next    # Nintendo 64
+        - melonds             # Nintendo DS
+        - citra               # Nintendo 3DS
+        - pcsx_rearmed        # PlayStation 1
+        - ppsspp              # PSP
+        - genesis_plus_gx     # Genesis / Mega Drive / SMS / Game Gear
+        - dosbox_pure         # DOS
+      loop_control:
+        label: "{{ item }}"
+
+    # --- Dolphin (GameCube/Wii): point at the shared ROM tree -------------------
+
+    - name: Ensure Dolphin's config dir exists
+      become_user: "{{ session_user }}"
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/dolphin-emu"
+        state: directory
+        mode: "0755"
+
+    - name: Point Dolphin at the shared ROM tree (recursive scan)
+      # Dolphin reads game folders from Dolphin.ini [General]: ISOPaths = <count>,
+      # ISOPath0..N = dirs, RecursiveISOPaths = recurse. Pre-seeding these makes
+      # Dolphin list the GC/Wii titles (.rvz/.iso) in the flat roms/ heap on first
+      # launch — no in-app "Add folder" step. Dolphin uses spaced `Key = Value`.
+      become_user: "{{ session_user }}"
+      ansible.builtin.ini_file:
+        path: "/home/{{ session_user }}/.config/dolphin-emu/Dolphin.ini"
+        section: General
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: "0644"
+      loop:
+        - { option: ISOPaths, value: "1" }
+        - { option: ISOPath0, value: "{{ emu_root }}/roms" }
+        - { option: RecursiveISOPaths, value: "True" }
+      loop_control:
+        label: "{{ item.option }}"
+
+    # --- Eden (Switch): add the shared ROM tree as a game directory -------------
+
+    - name: Point Eden at the shared ROM tree (game directory)
+      # Eden (Yuzu fork) stores game dirs in qt-config.ini [UI] as
+      # Paths\gamedirs\<n>\path, gated by Paths\gamedirs\size. A fresh config has 3
+      # virtual entries (SDMC/UserNAND/SysNAND); append ours as #4 and bump size.
+      # no_extra_spaces matches Qt's `key=value` (spaces wouldn't parse). Eden
+      # rewrites this file on exit but preserves the entry once read. Fragile by
+      # nature (live-rewritten Qt config) — if it doesn't take, add the folder via
+      # Eden's UI (+ button); it can't corrupt the emulator, only the game list.
+      become_user: "{{ session_user }}"
+      ansible.builtin.ini_file:
+        path: "/home/{{ session_user }}/.config/eden/qt-config.ini"
+        section: UI
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        no_extra_spaces: true
+        mode: "0644"
+      loop:
+        - { option: 'Paths\gamedirs\size', value: "4" }
+        - { option: 'Paths\gamedirs\4\path', value: "{{ emu_root }}/roms" }
+        - { option: 'Paths\gamedirs\4\deep_scan', value: "true" }
+        - { option: 'Paths\gamedirs\4\expanded', value: "true" }
+      loop_control:
+        label: "{{ item.option }}"
+
+    # --- PCSX2 (PS2): AppImage, extracted so it runs without a FUSE feature ------
+
+    - name: Look for a staged PCSX2 AppImage (overrides the pinned URL)
+      ansible.builtin.find:
+        paths: "{{ installers_dir }}"
+        patterns: "pcsx2*.AppImage"
+      register: pcsx2_staged
+
+    - name: Fetch the pinned PCSX2 AppImage (when none staged and a URL is set)
+      ansible.builtin.get_url:
+        url: "{{ pcsx2_appimage_url }}"
+        dest: "{{ installers_dir }}/pcsx2.AppImage"
+        mode: "0755"
+      when:
+        - pcsx2_staged.files | length == 0
+        - pcsx2_appimage_url | length > 0
+      register: pcsx2_fetch
+
+    - name: Resolve the PCSX2 AppImage path
+      ansible.builtin.set_fact:
+        pcsx2_appimage: >-
+          {{ (pcsx2_staged.files | map(attribute='path') | first)
+             if pcsx2_staged.files | length > 0
+             else (installers_dir + '/pcsx2.AppImage'
+                   if pcsx2_fetch is defined and not pcsx2_fetch.skipped | default(false)
+                   else '') }}
+
+    - name: Install PCSX2 (extract AppImage -> /opt, no FUSE needed)
+      # --appimage-extract self-unpacks via the AppImage's bundled runtime, so it
+      # works without /dev/fuse (the CT has no fuse=1 feature). We unpack to a
+      # versionless /opt path and expose AppRun on PATH. Guarded on the binary
+      # being absent so re-runs are a no-op.
+      when: pcsx2_appimage | length > 0
+      block:
+        - name: Stat the PCSX2 install
+          ansible.builtin.stat:
+            path: /opt/pcsx2/AppRun
+          register: pcsx2_bin
+
+        - name: Extract PCSX2 (AppImage -> /opt/pcsx2, no FUSE)
+          when: not pcsx2_bin.stat.exists
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              rm -rf /opt/pcsx2 /tmp/pcsx2-extract
+              mkdir -p /tmp/pcsx2-extract && cd /tmp/pcsx2-extract
+              cp "{{ pcsx2_appimage }}" ./pcsx2.AppImage && chmod +x ./pcsx2.AppImage
+              ./pcsx2.AppImage --appimage-extract >/dev/null
+              # readlink -f: some AppImages extract squashfs-root as a symlink to
+              # AppDir/ (move the real dir); harmless for plain-dir extracts.
+              mv "$(readlink -f squashfs-root)" /opt/pcsx2
+              rm -rf /tmp/pcsx2-extract
+          changed_when: true
+
+        - name: Install the PCSX2 launcher
+          # Wrapper, not symlink — AppRun resolves its libs from dirname($0); a
+          # symlink in /usr/local/bin would break that. exec by real path.
+          ansible.builtin.copy:
+            dest: /usr/local/bin/pcsx2
+            mode: "0755"
+            content: |
+              #!/bin/sh
+              exec /opt/pcsx2/AppRun "$@"
+
+        - name: Find the PCSX2 app icon
+          ansible.builtin.find:
+            paths: /opt/pcsx2
+            patterns: ['*.svg', '*.png']
+          register: pcsx2_icon
+
+        - name: Install a PCSX2 .desktop entry (XFCE menu + Steam add-game list)
+          ansible.builtin.copy:
+            dest: /usr/share/applications/pcsx2.desktop
+            mode: "0644"
+            content: |
+              [Desktop Entry]
+              Type=Application
+              Name=PCSX2
+              GenericName=PlayStation 2 Emulator
+              Exec=/usr/local/bin/pcsx2 %f
+              Icon={{ (pcsx2_icon.files | map(attribute='path') | first) | default('applications-games', true) }}
+              Terminal=false
+              Categories=Game;Emulator;
+              StartupWMClass=pcsx2
+
+    # --- Eden (Switch, daily) + Citron (fallback): staged-only, DMCA-volatile ----
+
+    - name: Look for a staged Eden AppImage
+      ansible.builtin.find:
+        paths: "{{ installers_dir }}"
+        patterns: "[Ee]den*.AppImage"
+      register: eden_staged
+
+    - name: Warn if Eden is not staged
+      ansible.builtin.debug:
+        msg: >-
+          No Eden*.AppImage in {{ installers_dir }}. Eden ships Linux as an AppImage
+          (not .deb) — grab the amd64 build (PGO recommended) from
+          stable.eden-emu.dev / git.eden-emu.dev, drop it there, and re-run.
+          Skipping the Switch emulator for now.
+      when: eden_staged.files | length == 0
+
+    - name: Install Eden (extract AppImage -> /opt, no FUSE) + link keys
+      # Eden's Linux build is an AppImage; --appimage-extract self-unpacks via the
+      # bundled runtime, so it runs without /dev/fuse (the CT has no fuse feature).
+      # Newest staged file wins. Guarded on the launcher so re-runs are a no-op.
+      when: eden_staged.files | length > 0
+      block:
+        - name: Stat the Eden install
+          # Guard on the real binary, not /usr/local/bin/eden — a prior botched run
+          # can leave that as a dangling symlink, which stat would report as
+          # exists=true and wrongly skip the repair.
+          ansible.builtin.stat:
+            path: /opt/eden/AppRun
+          register: eden_bin
+
+        - name: Extract Eden (AppImage -> /opt/eden, no FUSE)
+          when: not eden_bin.stat.exists
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              src="{{ (eden_staged.files | sort(attribute='mtime') | last).path }}"
+              rm -rf /opt/eden /tmp/eden-extract
+              mkdir -p /tmp/eden-extract && cd /tmp/eden-extract
+              cp "$src" ./eden.AppImage && chmod +x ./eden.AppImage
+              ./eden.AppImage --appimage-extract >/dev/null
+              # Eden's AppImage (sharun) extracts to AppDir/ plus a squashfs-root
+              # symlink -> ./AppDir; readlink -f moves the real dir (and still works
+              # for AppImages that extract squashfs-root as a plain dir).
+              mv "$(readlink -f squashfs-root)" /opt/eden
+              rm -rf /tmp/eden-extract
+          changed_when: true
+
+        - name: Install the Eden launcher
+          # NOT a symlink: this sharun AppRun derives its libs from dirname($0)
+          # (APPDIR=$(cd "${0%/*}"...)), so a /usr/local/bin/eden symlink makes it
+          # hunt for /usr/local/bin/bin/eden. A wrapper execs AppRun by its real path
+          # so $0 — and APPDIR — resolve to /opt/eden. Idempotent (copy).
+          ansible.builtin.copy:
+            dest: /usr/local/bin/eden
+            mode: "0755"
+            content: |
+              #!/bin/sh
+              exec /opt/eden/AppRun "$@"
+
+        - name: Find the Eden app icon
+          ansible.builtin.find:
+            paths: /opt/eden
+            patterns: ['*.svg', '*.png']
+          register: eden_icon
+
+        - name: Install an Eden .desktop entry (XFCE menu + Steam add-game list)
+          # AppImage-extracted apps have no apt-provided .desktop, so they don't show
+          # up in the menu or Steam's "Add a Non-Steam Game" list the way the apt
+          # RetroArch/Dolphin do. Point Exec at the wrapper; icon from the AppDir.
+          ansible.builtin.copy:
+            dest: /usr/share/applications/eden.desktop
+            mode: "0644"
+            content: |
+              [Desktop Entry]
+              Type=Application
+              Name=Eden
+              GenericName=Nintendo Switch Emulator
+              Exec=/usr/local/bin/eden %f
+              Icon={{ (eden_icon.files | map(attribute='path') | first) | default('applications-games', true) }}
+              Terminal=false
+              Categories=Game;Emulator;
+              StartupWMClass=eden
+
+        - name: Link the dumped Switch keys into Eden's data dir
+          # Eden reads keys from ~/.local/share/eden/keys regardless of packaging.
+          # Symlink the canonical copy on /bulk/games so a rootfs rebuild doesn't
+          # lose them. Firmware is imported in-app (Eden -> Install Firmware) from
+          # {{ emu_root }}/bios/switch. Verify-before: confirm this data-dir path
+          # against the installed Eden version if keys aren't detected.
+          become_user: "{{ session_user }}"
+          block:
+            - name: Ensure the Eden keys dir exists
+              ansible.builtin.file:
+                path: "/home/{{ session_user }}/.local/share/eden/keys"
+                state: directory
+                mode: "0755"
+            - name: Link prod.keys into Eden
+              ansible.builtin.file:
+                src: "{{ emu_root }}/bios/switch/prod.keys"
+                dest: "/home/{{ session_user }}/.local/share/eden/keys/prod.keys"
+                state: link
+                force: true
+
+    - name: Look for a staged Citron AppImage (optional fallback)
+      ansible.builtin.find:
+        paths: "{{ installers_dir }}"
+        patterns: "citron*.AppImage"
+      register: citron_staged
+
+    - name: Install Citron (extract AppImage -> /opt, no FUSE needed)
+      when: citron_staged.files | length > 0
+      block:
+        - name: Stat the Citron install
+          ansible.builtin.stat:
+            path: /opt/citron/AppRun
+          register: citron_bin
+
+        - name: Extract Citron (AppImage -> /opt/citron, no FUSE)
+          when: not citron_bin.stat.exists
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              src="{{ (citron_staged.files | sort(attribute='mtime') | last).path }}"
+              rm -rf /opt/citron /tmp/citron-extract
+              mkdir -p /tmp/citron-extract && cd /tmp/citron-extract
+              cp "$src" ./citron.AppImage && chmod +x ./citron.AppImage
+              ./citron.AppImage --appimage-extract >/dev/null
+              # readlink -f: some AppImages extract squashfs-root as a symlink to
+              # AppDir/ (move the real dir); harmless for plain-dir extracts.
+              mv "$(readlink -f squashfs-root)" /opt/citron
+              rm -rf /tmp/citron-extract
+          changed_when: true
+
+        - name: Install the Citron launcher
+          # Wrapper, not symlink — AppRun resolves its libs from dirname($0).
+          ansible.builtin.copy:
+            dest: /usr/local/bin/citron
+            mode: "0755"
+            content: |
+              #!/bin/sh
+              exec /opt/citron/AppRun "$@"
+
+        - name: Find the Citron app icon
+          ansible.builtin.find:
+            paths: /opt/citron
+            patterns: ['*.svg', '*.png']
+          register: citron_icon
+
+        - name: Install a Citron .desktop entry (XFCE menu + Steam add-game list)
+          ansible.builtin.copy:
+            dest: /usr/share/applications/citron.desktop
+            mode: "0644"
+            content: |
+              [Desktop Entry]
+              Type=Application
+              Name=Citron
+              GenericName=Nintendo Switch Emulator
+              Exec=/usr/local/bin/citron %f
+              Icon={{ (citron_icon.files | map(attribute='path') | first) | default('applications-games', true) }}
+              Terminal=false
+              Categories=Game;Emulator;
+              StartupWMClass=citron

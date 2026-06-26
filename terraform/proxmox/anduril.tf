@@ -76,6 +76,26 @@ resource "proxmox_virtual_environment_container" "anduril" {
     backup = false
   }
 
+  # Shared emulation + game library on the bulk pool (ZFS `bulk/games`, group
+  # `shares`/GID 10000), bind-mounted at the same path host/nfs/smb use so the
+  # ROM/BIOS/save tree (/bulk/games/Emulation/...) survives a CT rebuild. Privileged
+  # CT = 1:1 GID map, so the session user just joins `shares`
+  # (install-anduril-emulators.yaml); no idmap.
+  #
+  # HOST-MANAGED, not applied by TF: bpg marks a mount_point `volume` as ForceNew,
+  # so adding this to the *existing* CT plans a destroy/recreate (would wipe the
+  # rootfs — though bind-mounted datasets like the Steam games survive). Like the
+  # device passthrough + features, the bind mount is created host-side as `mp1` in
+  # setup-anduril-lxc.yaml, and TF ignores mount_point (lifecycle below). This block
+  # stays as desired-state documentation — what a fresh `pct create` would get. The
+  # Steam-games mp0 above is likewise host-created + imported, not TF-applied.
+  mount_point {
+    volume = "/bulk/games"
+    path   = "/bulk/games"
+    shared = true
+    backup = false
+  }
+
   startup {
     order      = 10
     down_delay = -1
@@ -92,6 +112,11 @@ resource "proxmox_virtual_environment_container" "anduril" {
       # features (nesting/keyctl) are set host-side by ansible — root@pam-only
       # on a privileged CT, so the TF token can't manage them.
       features,
+      # mount_point: bpg ForceNew on `volume` would destroy/recreate the CT to add
+      # a bind mount (and privileged-CT mounts are root@pam-only anyway). Bind
+      # mounts are created host-side (mp0/mp1 in setup-anduril-lxc.yaml); TF ignores
+      # them so a new mount never plans a rebuild.
+      mount_point,
     ]
   }
 }
