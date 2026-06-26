@@ -21,9 +21,9 @@
 # gaming session first (`just restart-anduril` won't help — use
 # `systemctl stop anduril-session.service`, then start it again when done).
 #
-# NOTE: as with setup-anduril-session.yaml, this has been applied to the live CT
-# via `pct exec` and faithfully transcribed here; it has not yet been run
-# end-to-end via ansible (the CT isn't SSH-onboarded). Lives in site-anduril.yaml.
+# NOTE: the CT is now SSH-onboarded; this play verified drift-free against the live
+# CT via `--check --diff` (changed=0, 2026-06-25). Originally applied via `pct exec`
+# and transcribed here. Lives in site-anduril.yaml.
 
 - name: Configure xrdp admin desktop in the anduril LXC
   hosts: anduril

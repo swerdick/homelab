@@ -20,8 +20,8 @@
 # 2026-06-24. If `apt update` starts failing with a NO_PUBKEY error, refetch the
 # pubkey_*.asc URL from that page and update the key task below.
 #
-# NOTE: like the sibling anduril plays, transcribed for ansible but not yet run
-# end-to-end via ansible (the CT isn't SSH-onboarded). Lives in site-anduril.yaml.
+# NOTE: the CT is now SSH-onboarded; this play verified drift-free against the live
+# CT via `--check --diff` (changed=0, 2026-06-25). Lives in site-anduril.yaml.
 
 - name: Install desktop apps (Spotify, Discord) on the anduril LXC
   hosts: anduril
