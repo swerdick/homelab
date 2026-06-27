@@ -87,30 +87,8 @@
         deb: https://discord.com/api/download?platform=linux&format=deb
       when: discord_installed.rc != 0
 
-    # --- KWin window rules: make non-Steam apps behave on the TV -------------
-
-    - name: Force Spotify fullscreen on the TV (KWin window rule)
-      # Launched from Big Picture, Spotify opens as a floating window over Steam,
-      # so Steam doesn't treat it as the focused game and the Steam/Guide button
-      # won't return to the library. Forcing fullscreen makes KWin present it
-      # like a launched game. WM_CLASS verified live as "spotify"/"Spotify";
-      # substring + wmclasscomplete matches the lowercase instance token.
-      # KWin reloads kwinrulesrc on its `reconfigure` D-Bus signal (or session
-      # restart), then applies to the window on next launch.
-      ansible.builtin.copy:
-        dest: /home/pseudo/.config/kwinrulesrc
-        owner: pseudo
-        group: pseudo
-        mode: "0644"
-        content: |
-          [General]
-          count=1
-          rules=1d6f4c8a-5b2e-4a91-bc3d-5e0f7a9b2c01
-
-          [1d6f4c8a-5b2e-4a91-bc3d-5e0f7a9b2c01]
-          Description=Spotify - fullscreen on the TV
-          fullscreen=true
-          fullscreenrule=2
-          wmclass=spotify
-          wmclassmatch=2
-          wmclasscomplete=true
+    # KWin window rules used to live here (a Spotify-fullscreen rule), but the TV
+    # session now runs everything INSIDE gamescope (setup-anduril-session.yaml),
+    # so Spotify fullscreens within gamescope itself and the rule is moot. The only
+    # KWin-managed window left is the gamescope session window, whose fullscreen
+    # rule is owned by setup-anduril-session.yaml.

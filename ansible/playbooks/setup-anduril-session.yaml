@@ -288,6 +288,16 @@
           export PATH=/usr/games:/usr/bin:/bin
           exec dbus-run-session -- /usr/local/bin/anduril-inner.sh
 
+    - name: Enable systemd linger for the session user
+      # The kiosk runs as a SYSTEM service (anduril-session.service), so it has no
+      # systemd --user instance of its own — historically why anduril-inner.sh
+      # hand-started PipeWire. linger keeps user@1000 (and its PipeWire/WirePlumber)
+      # running at boot regardless of login, so the kiosk AND any xrdp/ssh login
+      # share ONE PipeWire instead of two fighting over the HDMI card. Idempotent.
+      ansible.builtin.command:
+        cmd: loginctl enable-linger {{ session_user }}
+        creates: "/var/lib/systemd/linger/{{ session_user }}"
+
     - name: Install the inner session (audio + output + kwin->steam)
       ansible.builtin.copy:
         dest: /usr/local/bin/anduril-inner.sh
@@ -296,9 +306,14 @@
         mode: "0755"
         content: |
           #!/bin/bash
-          /usr/bin/pipewire &
-          /usr/bin/wireplumber &
-          /usr/bin/pipewire-pulse &
+          # Use the per-user PipeWire (systemd --user) — do NOT start a second manual
+          # stack. Running both (this kiosk's manual stack + the --user services any
+          # pseudo login/xrdp/ssh session auto-starts) put two pipewire/wireplumber
+          # instances on /run/user/1000 fighting over the AMD HDMI card → TV audio
+          # silently dropped. `loginctl enable-linger` (task above) keeps user@1000
+          # and its PipeWire up for this system-service session; here we just make
+          # sure the stack is started before the routing below.
+          systemctl --user start pipewire.socket pipewire-pulse.socket wireplumber.service 2>/dev/null || true
           (
             for i in $(seq 1 40); do [ -S "${XDG_RUNTIME_DIR}/wayland-0" ] && break; sleep 1; done
             sleep 2
@@ -311,6 +326,20 @@
               HDMI=$(pactl list short sinks 2>/dev/null | grep -iE "03_00.1" | head -1 | awk '{print $2}')
               [ -n "$HDMI" ] && { pactl set-default-sink "$HDMI" 2>/dev/null; break; }
               sleep 1
+            done
+          ) &
+          # Audio self-heal watchdog: if the AMD HDMI card ever drops out of PipeWire
+          # (kernel still lists "HDA ATI HDMI" but the alsa_card is gone from PW),
+          # restart the SINGLE systemd-managed wireplumber to re-add it. systemctl
+          # restart (not the old pkill + manual respawn) can't leave duplicate
+          # wireplumbers. On session stop systemd kills this subshell with the cgroup.
+          (
+            while true; do
+              sleep 8
+              if grep -q "HDA ATI HDMI" /proc/asound/cards 2>/dev/null \
+                 && ! pactl list short cards 2>/dev/null | grep -q "alsa_card.pci-0000_03_00.1"; then
+                systemctl --user restart wireplumber.service 2>/dev/null || true
+              fi
             done
           ) &
           # Game-stream host for Moonlight. Starts only if Sunshine is installed
@@ -344,7 +373,49 @@
         mode: "0755"
         content: |
           #!/bin/bash
-          exec steam -gamepadui
+          # Run Steam INSIDE gamescope so Steam Input's emulated "As Mouse" pointer
+          # reaches games via gamescope's libei/EIS socket. KWin does NOT honor the
+          # XTEST pointer-warp Steam Input uses on the bare desktop (keys/scroll/clicks
+          # land, cursor motion does not) -- gamescope-with-libei is the transport that
+          # fixes it. Per-game gamescope (Steam OUTSIDE) does NOT work: Steam Input then
+          # injects into the outer KWin, not the game's gamescope (gamescope #1307).
+          # VALIDATED 2026-06-27: SC2 right-trackpad fully drives Stellaris's cursor.
+          #   -e                  : Steam mode + focus for the nested gamepad UI (#1365)
+          #   --backend sdl       : nested fullscreen on KDE Plasma 6 Wayland (#1356)
+          #   --force-grab-cursor : route relative pointer motion into the game (#1428)
+          #   --xwayland-count 2 + STEAM_MULTIPLE_XWAYLANDS=1 : Steam + game each get one
+          # Prereq: gamescope must be built with libei (libeis.so linked) -- verified.
+          # Couch-readable UI on the 4K panel: lower each game's render res via its Steam
+          # resolution property; gamescope upscales to -W/-H.
+          exec env STEAM_MULTIPLE_XWAYLANDS=1 gamescope \
+            -e -f --backend sdl -W 3840 -H 2160 -r 60 --xwayland-count 2 --force-grab-cursor \
+            -- steam -gamepadui
+
+    - name: Force the gamescope session window fullscreen on the TV (KWin rule)
+      # A Steam client update can knock the gamescope SDL window out of fullscreen
+      # (KWin re-decorates it as a normal window -> windowed Big Picture). Everything
+      # now runs INSIDE gamescope, so it's the only window KWin manages -- force it
+      # fullscreen + borderless by matching ANY title (titlematch=3 = regex). Applied
+      # at KWin startup, so `just restart-anduril` picks it up. Supersedes the old
+      # per-app Spotify rule (Spotify now fullscreens within gamescope itself).
+      ansible.builtin.copy:
+        dest: "/home/{{ session_user }}/.config/kwinrulesrc"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          [General]
+          count=1
+          rules=2e7a5d9b-6c3f-4b02-cd4e-6f1a8b0c3d12
+
+          [2e7a5d9b-6c3f-4b02-cd4e-6f1a8b0c3d12]
+          Description=Force the gamescope session window fullscreen + borderless on the TV
+          fullscreen=true
+          fullscreenrule=2
+          noborder=true
+          noborderrule=2
+          title=.*
+          titlematch=3
 
     - name: Bootstrap Steam non-interactively (skip the first-run zenity prompt)
       # The Ubuntu steam wrapper pops a zenity "Install Steam?" dialog on first
