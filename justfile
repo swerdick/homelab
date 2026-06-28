@@ -160,6 +160,9 @@ restart-anduril:
     @echo "Restarting the anduril gaming session..."
     ssh root@earendil 'pct exec 117 -- bash -c "systemctl stop anduril-session.service; sleep 2; systemctl reset-failed anduril-session.service; systemctl start anduril-session.service"'
 
+# `just stop-steam` aliases this — stop the TV Steam for desktop/SRM/emulator work.
+alias stop-steam := anduril-desktop-mode
+
 # Drop anduril into desktop-admin mode: stop the TV gaming session so Steam is
 # free for an xrdp desktop session (Steam is single-instance per user). RDP to
 # the CT as `pseudo` for desktop Steam / Prism / emulator config, then run
