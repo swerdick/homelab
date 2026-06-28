@@ -828,3 +828,27 @@
           Terminal=false
           Categories=Game;Utility;
           StartupWMClass=steam-rom-manager
+
+    - name: Ensure the SRM userData dir exists (for the seeded config)
+      become_user: "{{ session_user }}"
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/steam-rom-manager/userData"
+        state: directory
+        mode: "0755"
+
+    - name: Seed the SRM parser config + settings (rebuild reproducibility)
+      # 12 parsers (RetroArch cores, PCSX2, Eden, ...) + app settings, captured from
+      # the live SRM. force=false seeds a rebuilt CT without clobbering live GUI edits
+      # -- re-export these files to update. The committed copy has SRM's SteamGridDB
+      # nsfw/humor filter toggles stripped (SRM restores them as defaults on load).
+      become_user: "{{ session_user }}"
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/files/anduril/{{ item.src }}"
+        dest: "/home/{{ session_user }}/.config/steam-rom-manager/userData/{{ item.dest }}"
+        force: false
+        mode: "0644"
+      loop:
+        - { src: srm-userConfigurations.json, dest: userConfigurations.json }
+        - { src: srm-userSettings.json, dest: userSettings.json }
+      loop_control:
+        label: "{{ item.dest }}"

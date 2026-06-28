@@ -1,0 +1,1074 @@
+[
+  {
+    "parserType": "Glob",
+    "configTitle": "nintendo 64",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/n64",
+    "steamCategories": [
+      "n64"
+    ],
+    "executableArgs": "-L \"mupen64plus_next_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(z64|n64|v64)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178258949920569191",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "gba",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/gba",
+    "steamCategories": [
+      "gba"
+    ],
+    "executableArgs": "-L \"mgba_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.gba"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259400879078857",
+    "disabled": false,
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "psp",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/psp",
+    "steamCategories": [
+      "psp"
+    ],
+    "executableArgs": "-L \"ppsspp_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(iso|cso|chd)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259408592426193",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "snes",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/snes",
+    "steamCategories": [
+      "snes"
+    ],
+    "executableArgs": "-L \"snes9x_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(sfc|smc)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259413901825206",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "dos",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/dos",
+    "steamCategories": [
+      "dos"
+    ],
+    "executableArgs": "-L \"dosbox_pure_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "**/${title}.@(zip|dosz|iso|cue|chd|m3u8)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259420703414250",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "psx",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/psx",
+    "steamCategories": [
+      "ps1"
+    ],
+    "executableArgs": "-L \"pcsx_rearmed_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(cue|chd|pbp|m3u)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259432144837547",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "nds",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/nds",
+    "steamCategories": [
+      "nds"
+    ],
+    "executableArgs": "-L \"melonds_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.nds"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259549150410468",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "gb",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/gb",
+    "steamCategories": [
+      "gb"
+    ],
+    "executableArgs": "-L \"gambatte_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.gb"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259560283710029",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "n3ds",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/n3ds",
+    "steamCategories": [
+      "n3ds"
+    ],
+    "executableArgs": "-L \"citra_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(3ds|cci|cxi|cia)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178259566854921681",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "gbc",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/gbc",
+    "steamCategories": [
+      "gbc"
+    ],
+    "executableArgs": "-L \"gambatte_libretro.so\" \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.gbc"
+    },
+    "executable": {
+      "path": "/usr/local/bin/retroarch",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178261017713763805",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "ps2",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/ps2",
+    "steamCategories": [
+      "ps2"
+    ],
+    "executableArgs": "-batch -fullscreen -- \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(cue|chd|pbp|m3u|iso)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/pcsx2",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178261121112149987",
+    "version": 25
+  },
+  {
+    "parserType": "Glob",
+    "configTitle": "switch",
+    "steamDirectory": "${steamdirglobal}",
+    "romDirectory": "/bulk/games/Emulation/roms/switch",
+    "steamCategories": [
+      "switch"
+    ],
+    "executableArgs": "-f -g \"${filepath}\"",
+    "executableModifier": "",
+    "startInDirectory": "",
+    "titleModifier": "",
+    "fetchControllerTemplatesButton": null,
+    "removeControllersButton": null,
+    "steamInputEnabled": "1",
+    "imageProviders": [
+      "sgdb",
+      "steamCDN"
+    ],
+    "onlineImageQueries": [
+      "${fuzzyTitle}"
+    ],
+    "imagePool": "",
+    "drmProtect": false,
+    "userAccounts": {
+      "specifiedAccounts": [
+        "Global"
+      ]
+    },
+    "parserInputs": {
+      "glob": "${title}.@(nsp|xci|nsz|xcz)"
+    },
+    "executable": {
+      "path": "/usr/local/bin/eden",
+      "shortcutPassthrough": false,
+      "appendArgsToExecutable": false
+    },
+    "titleFromVariable": {
+      "limitToGroups": [],
+      "caseInsensitiveVariables": false,
+      "skipFileIfVariableWasNotFound": false
+    },
+    "fuzzyMatch": {
+      "replaceDiacritics": true,
+      "removeCharacters": true,
+      "removeBrackets": true
+    },
+    "controllers": {
+      "ps4": null,
+      "ps5": null,
+      "ps5_edge": null,
+      "xbox360": null,
+      "xboxone": null,
+      "xboxelite": null,
+      "switch_joycon_left": null,
+      "switch_joycon_right": null,
+      "switch_pro": null,
+      "neptune": null,
+      "steamcontroller_gordon": null
+    },
+    "imageProviderAPIs": {
+      "sgdb": {
+        "styles": [],
+        "stylesHero": [],
+        "stylesLogo": [],
+        "stylesIcon": [],
+        "imageMotionTypes": [
+          "static"
+        ],
+        "sizes": [],
+        "sizesHero": [],
+        "sizesTall": null,
+        "sizesIcon": []
+      }
+    },
+    "defaultImage": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "localImages": {
+      "tall": null,
+      "long": null,
+      "hero": null,
+      "logo": null,
+      "icon": null
+    },
+    "parserId": "178262105390019356",
+    "version": 25
+  }
+]
