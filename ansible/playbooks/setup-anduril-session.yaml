@@ -288,6 +288,20 @@
           export PATH=/usr/games:/usr/bin:/bin
           exec dbus-run-session -- /usr/local/bin/anduril-inner.sh
 
+    - name: Read the current timezone
+      ansible.builtin.command: timedatectl show -p Timezone --value
+      register: anduril_tz
+      changed_when: false
+
+    - name: Set the box timezone to the user's local zone (the TV clock must read local)
+      # Deliberate exception to the UTC-everywhere infra standard: anduril is a
+      # user-facing TV box, so the Steam/desktop on-screen clock must read LOCAL time,
+      # not UTC. The absolute clock stays correct (the LXC shares the host's synced
+      # clock); this only moves the displayed zone.
+      ansible.builtin.command: timedatectl set-timezone America/New_York
+      when: anduril_tz.stdout != "America/New_York"
+      changed_when: true
+
     - name: Enable systemd linger for the session user
       # The kiosk runs as a SYSTEM service (anduril-session.service), so it has no
       # systemd --user instance of its own — historically why anduril-inner.sh
