@@ -59,8 +59,10 @@
     # PCSX2 ships rolling AppImage builds (e.g. v2.7.351, May 2026) whose URLs
     # churn fast — a pinned link 404s within weeks. Default: stage it like the
     # others (drop pcsx2*.AppImage in installers/). To opt into auto-fetch instead,
-    # set this to a current AppImage URL from pcsx2.net/downloads.
-    pcsx2_appimage_url: ""
+    # set this to a current AppImage URL. We pin the latest STABLE GitHub release
+    # (nightlies churn/404 within weeks; stable tags are durable -- verified
+    # 2026-06-27). Bump when a newer stable ships; a staged pcsx2*.AppImage wins.
+    pcsx2_appimage_url: "https://github.com/PCSX2/pcsx2/releases/download/v2.6.3/pcsx2-v2.6.3-linux-appimage-x64-Qt.AppImage"
 
   tasks:
     - name: Sanity-check that this is a Debian-family host
@@ -131,6 +133,26 @@
           - retroarch
           - retroarch-assets
           - dolphin-emu
+
+    # The BIOS/firmware/asset files must live DIRECTLY in {{ emu_root }}/bios (the
+    # system_directory set below). A "BIOS pack" zip that carries its own bios/
+    # subfolder extracts to {{ emu_root }}/bios/bios, where no core finds anything
+    # (PSX silently drops to HLE, PPSSPP loses its fonts -- chased 2026-06-27).
+    # Flag that loudly rather than let it masquerade as missing BIOS.
+    - name: Detect a double-nested BIOS pack
+      ansible.builtin.stat:
+        path: "{{ emu_root }}/bios/bios"
+      register: bios_nested
+
+    - name: Warn if the BIOS pack is nested one level too deep
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: {{ emu_root }}/bios/bios exists -- the BIOS pack is one level too
+          deep and cores will not find their files. Flatten it: move the contents of
+          {{ emu_root }}/bios/bios up into {{ emu_root }}/bios.
+      when:
+        - bios_nested.stat.exists
+        - bios_nested.stat.isdir
 
     - name: Point RetroArch at the shared library (system/saves/states/roms)
       # RetroArch reads ~/.config/retroarch/retroarch.cfg. Set just the path keys
@@ -235,9 +257,14 @@
         content: |
           SUBSYSTEM=="input", ATTRS{name}=="Mouse passthrough (absolute)", ENV{ID_INPUT_JOYSTICK}="0"
 
-    - name: Ensure unzip is present (ansible unarchive needs it for .zip)
+    - name: Ensure ROM tools are present (unzip for .zip; chdman for CHD)
+      # unzip: ansible unarchive needs it for .zip. mame-tools: provides `chdman`,
+      # used to convert CD-based PS2/PSX rips (raw bin/cue, which PCSX2 cannot
+      # ingest) into .chd -- a single compressed image PCSX2/RetroArch load cleanly.
       ansible.builtin.apt:
-        name: unzip
+        name:
+          - unzip
+          - mame-tools
         state: present
 
     - name: Ensure the RetroArch autoconfig dir exists
@@ -290,6 +317,64 @@
         - ppsspp              # PSP
         - genesis_plus_gx     # Genesis / Mega Drive / SMS / Game Gear
         - dosbox_pure         # DOS
+      loop_control:
+        label: "{{ item }}"
+
+    # --- Hardened-kernel fix: clear exec-stack flag on cores that won't load -----
+    # Some libretro buildbot cores ship with PT_GNU_STACK marked executable. This
+    # PVE kernel refuses to load such a shared object ("cannot enable executable
+    # stack as shared object requires: Invalid argument"), so the core won't open
+    # and its whole system is dead -- melonds/NDS hit this 2026-06-27. Clearing the
+    # flag (what `execstack -c` does, but execstack isn't packaged on Trixie) lets
+    # it load. Re-downloading a core reintroduces the flag, so this re-clears each
+    # run; the helper reports 'changed' only when it actually flips a bit.
+    - name: Install the exec-stack clearing helper
+      ansible.builtin.copy:
+        dest: /usr/local/bin/clear-execstack
+        owner: root
+        group: root
+        mode: "0755"
+        content: |
+          #!/usr/bin/env python3
+          # Clear the PT_GNU_STACK executable bit on an ELF shared object (no extra
+          # packages; equivalent to `execstack -c`). Idempotent: prints 'cleared'
+          # only when it flips the X bit, else already-clear / missing / no-gnu-stack.
+          import struct, sys, os
+          p = sys.argv[1]
+          if not os.path.exists(p):
+              print("missing"); sys.exit(0)
+          d = bytearray(open(p, "rb").read())
+          if d[:4] != b"\x7fELF":
+              print("not-elf"); sys.exit(0)
+          is64 = d[4] == 2
+          en = "<" if d[5] == 1 else ">"
+          phoff = struct.unpack_from(en + ("Q" if is64 else "I"), d, 0x20 if is64 else 0x1c)[0]
+          phesz, phnum = struct.unpack_from(en + "HH", d, 0x36 if is64 else 0x2a)
+          foff = 4 if is64 else 24
+          hit = cleared = False
+          for i in range(phnum):
+              o = phoff + i * phesz
+              if struct.unpack_from(en + "I", d, o)[0] == 0x6474e551:
+                  hit = True
+                  fo = o + foff
+                  fl = struct.unpack_from(en + "I", d, fo)[0]
+                  if fl & 1:
+                      struct.pack_into(en + "I", d, fo, fl & ~1)
+                      cleared = True
+          print("cleared" if cleared else "already-clear" if hit else "no-gnu-stack")
+          if cleared:
+              open(p, "wb").write(d)
+
+    - name: Clear exec-stack flag on cores the hardened kernel rejects
+      become_user: "{{ session_user }}"
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/clear-execstack
+          /home/{{ session_user }}/.config/retroarch/cores/{{ item }}_libretro.so
+      register: execstack_fix
+      changed_when: execstack_fix.stdout == "cleared"
+      loop:
+        - melonds            # NDS -- ships with an executable stack this kernel denies
       loop_control:
         label: "{{ item }}"
 
@@ -434,6 +519,69 @@
               Terminal=false
               Categories=Game;Emulator;
               StartupWMClass=pcsx2
+
+        - name: Point PCSX2 at the shared BIOS (skip the first-run wizard on rebuild)
+          # PCSX2 keeps its own BIOS folder (XDG ~/.config/PCSX2), separate from
+          # RetroArch's system dir. Pin it at the shared pack + pre-select the US PS2
+          # BIOS so a rebuilt CT boots PS2 without the setup wizard. PCSX2 live-rewrites
+          # this ini but preserves these keys once set.
+          become_user: "{{ session_user }}"
+          ansible.builtin.ini_file:
+            path: "/home/{{ session_user }}/.config/PCSX2/inis/PCSX2.ini"
+            section: "{{ item.section }}"
+            option: "{{ item.option }}"
+            value: "{{ item.value }}"
+            mode: "0644"
+          loop:
+            - { section: Folders, option: Bios, value: "{{ emu_root }}/bios" }
+            - { section: Filenames, option: BIOS, value: "scph39001.bin" }
+          loop_control:
+            label: "{{ item.section }}/{{ item.option }}"
+
+        - name: Seed the PCSX2 controller binding (SDL pad -> DualShock2)
+          # Captured from PCSX2's "Automatic Mapping" of the Steam-Input pad (a generic
+          # SDL Xbox layout) so the controller survives a rootfs rebuild without
+          # re-mapping. CAVEAT: bound to device index SDL-0; if the pad enumerates
+          # elsewhere on a rebuild, re-run Automatic Mapping in PCSX2 -> Controllers.
+          become_user: "{{ session_user }}"
+          ansible.builtin.ini_file:
+            path: "/home/{{ session_user }}/.config/PCSX2/inis/PCSX2.ini"
+            section: Pad1
+            option: "{{ item.option }}"
+            value: "{{ item.value }}"
+            mode: "0644"
+          loop:
+            - { option: Type, value: DualShock2 }
+            - { option: AxisScale, value: "1.33" }
+            - { option: Up, value: SDL-0/DPadUp }
+            - { option: Right, value: SDL-0/DPadRight }
+            - { option: Down, value: SDL-0/DPadDown }
+            - { option: Left, value: SDL-0/DPadLeft }
+            - { option: Triangle, value: SDL-0/FaceNorth }
+            - { option: Circle, value: SDL-0/FaceEast }
+            - { option: Cross, value: SDL-0/FaceSouth }
+            - { option: Square, value: SDL-0/FaceWest }
+            - { option: Select, value: SDL-0/Back }
+            - { option: Start, value: SDL-0/Start }
+            - { option: L1, value: SDL-0/LeftShoulder }
+            - { option: L2, value: "SDL-0/+LeftTrigger" }
+            - { option: R1, value: SDL-0/RightShoulder }
+            - { option: R2, value: "SDL-0/+RightTrigger" }
+            - { option: L3, value: SDL-0/LeftStick }
+            - { option: R3, value: SDL-0/RightStick }
+            - { option: LUp, value: "SDL-0/-LeftY" }
+            - { option: LRight, value: "SDL-0/+LeftX" }
+            - { option: LDown, value: "SDL-0/+LeftY" }
+            - { option: LLeft, value: "SDL-0/-LeftX" }
+            - { option: RUp, value: "SDL-0/-RightY" }
+            - { option: RRight, value: "SDL-0/+RightX" }
+            - { option: RDown, value: "SDL-0/+RightY" }
+            - { option: RLeft, value: "SDL-0/-RightX" }
+            - { option: Analog, value: SDL-0/Guide }
+            - { option: LargeMotor, value: SDL-0/LargeMotor }
+            - { option: SmallMotor, value: SDL-0/SmallMotor }
+          loop_control:
+            label: "{{ item.option }}"
 
     # --- Eden (Switch, daily) + Citron (fallback): staged-only, DMCA-volatile ----
 
@@ -600,3 +748,83 @@
               Terminal=false
               Categories=Game;Emulator;
               StartupWMClass=citron
+
+    # --- ROM library skeleton + Steam ROM Manager --------------------------------
+    - name: Lay down the per-system ROM library skeleton
+      # SRM, RetroArch, and the standalone emulators all expect ROMs grouped by SYSTEM
+      # (EmuDeck shortnames), ONE FILE PER GAME -- not a folder per ROM. Saves/states
+      # live centrally in each emulator's config dir, never beside the ROM. Drop ROMs
+      # into the matching folder; flatten any existing per-game folders into these.
+      become_user: "{{ session_user }}"
+      ansible.builtin.file:
+        path: "{{ emu_root }}/roms/{{ item }}"
+        state: directory
+        group: shares
+        mode: "0775"
+      loop: [nes, snes, n64, gb, gbc, gba, nds, n3ds, genesis, gamegear, mastersystem, psx, ps2, psp, dos, gc, wii, switch]
+
+    - name: Stat the Steam ROM Manager install
+      ansible.builtin.stat:
+        path: /opt/srm/AppRun
+      register: srm_bin
+
+    - name: Install Steam ROM Manager (AppImage -> /opt, no FUSE)
+      # SRM bulk-adds one non-Steam shortcut per ROM (emulator as target, ROM as arg) +
+      # box art from SteamGridDB. No apt repo; the .deb's postinst installs an AppArmor
+      # profile, which a container CANNOT manage (apparmor_parser: Access denied) -> dpkg
+      # fails -- so extract-and-run the AppImage like the other emulators (no FUSE, no
+      # apparmor). VERIFY-BEFORE-BUMP: latest tag at
+      # github.com/SteamGridDB/steam-rom-manager/releases.
+      when: not srm_bin.stat.exists
+      block:
+        - name: Download the Steam ROM Manager AppImage
+          ansible.builtin.get_url:
+            url: "https://github.com/SteamGridDB/steam-rom-manager/releases/download/v2.5.34/Steam-ROM-Manager-2.5.34.AppImage"
+            dest: /tmp/srm.AppImage
+            mode: "0755"
+        - name: Extract Steam ROM Manager (AppImage -> /opt/srm, no FUSE)
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              rm -rf /opt/srm /tmp/srm-extract
+              mkdir -p /tmp/srm-extract && cd /tmp/srm-extract
+              /tmp/srm.AppImage --appimage-extract >/dev/null
+              mv "$(readlink -f squashfs-root)" /opt/srm
+              # SRM's squashfs extracts non-world-traversable; the desktop user runs
+              # the wrapper, so make /opt/srm readable/traversable by all.
+              chmod -R a+rX /opt/srm
+              rm -rf /tmp/srm-extract /tmp/srm.AppImage
+          changed_when: true
+
+    - name: Install the Steam ROM Manager launcher
+      # Electron's Chromium sandbox needs userns (constrained in a privileged LXC) ->
+      # --no-sandbox. Run SRM from the xrdp/KDE desktop session (it's a GUI): configure
+      # parsers once, then Generate -> Save to Steam (enable its kill/restart-Steam
+      # option so it can safely write shortcuts.vdf). Parsers target /usr/bin/retroarch
+      # -L <core> for RetroArch systems, and the /usr/local/bin/<emu> XWayland wrappers
+      # for Dolphin/PCSX2/Eden/Citron.
+      ansible.builtin.copy:
+        dest: /usr/local/bin/steam-rom-manager
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          # APPDIR must be set explicitly: the extracted electron-builder AppRun derives
+          # its binary path from $APPDIR, which is unset when run by path (not as a
+          # mounted AppImage) -> it looks for /steam-rom-manager at the root and fails.
+          # --disable-gpu: the xrdp desktop has only software GL (llvmpipe); Electron's
+          # GPU process otherwise crashes the X session. --no-sandbox: LXC userns.
+          exec env APPDIR=/opt/srm /opt/srm/AppRun --no-sandbox --disable-gpu --disable-dev-shm-usage "$@"
+
+    - name: Install a Steam ROM Manager .desktop entry (xrdp menu + Steam add-game list)
+      ansible.builtin.copy:
+        dest: /usr/share/applications/steam-rom-manager.desktop
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name=Steam ROM Manager
+          Exec=/usr/local/bin/steam-rom-manager
+          Icon=applications-games
+          Terminal=false
+          Categories=Game;Utility;
+          StartupWMClass=steam-rom-manager
