@@ -688,6 +688,25 @@
                 state: link
                 force: true
 
+        - name: Seed the Eden controller binding (Player 1, from captured map)
+          # Re-applies the SDL->Pro Controller map captured from a working Eden setup
+          # (files/anduril/eden-controls-player1.ini) so the pad works after a rebuild
+          # without re-mapping. guid 03000000de28... is the stable Steam virtual
+          # controller. Eden live-rewrites qt-config.ini but preserves these once set.
+          # CAVEAT: if the pad enumerates with a different guid post-rebuild, just
+          # re-run Eden -> Controls -> auto-map and re-capture the file.
+          become_user: "{{ session_user }}"
+          ansible.builtin.ini_file:
+            path: "/home/{{ session_user }}/.config/eden/qt-config.ini"
+            section: Controls
+            option: "{{ item.split('=', 1)[0] }}"
+            value: "{{ item.split('=', 1)[1] }}"
+            no_extra_spaces: true
+            mode: "0644"
+          loop: "{{ lookup('file', playbook_dir + '/files/anduril/eden-controls-player1.ini').splitlines() | select('match', '^player_0_') | list }}"
+          loop_control:
+            label: "{{ item.split('=', 1)[0] }}"
+
     - name: Look for a staged Citron AppImage (optional fallback)
       ansible.builtin.find:
         paths: "{{ installers_dir }}"
