@@ -29,10 +29,15 @@ resource "proxmox_backup_job" "nightly_guests" {
   compress       = "zstd"
   mode           = "snapshot"
   notes_template = "{{guestname}}"
+  # Local dir target on scratch/backups (300G quota). The fat guests
+  # (140 gondor ~16G, 117 anduril ~20G+) blew past the quota under the
+  # old 7d/4w/6m policy — and because vzdump only prunes a guest after a
+  # *successful* run, the guests too big to fit never pruned themselves,
+  # so stale copies snowballed. 3 dailies + 2 weeklies keeps recent
+  # restore points local; deeper history lives in B2 via aglarond restic.
   prune_backups = {
-    keep-daily   = "7"
-    keep-monthly = "6"
-    keep-weekly  = "4"
+    keep-daily  = "3"
+    keep-weekly = "2"
   }
   lifecycle {
     ignore_changes = [fleecing]
