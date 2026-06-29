@@ -72,6 +72,11 @@
           - libgl1-mesa-dri:i386
           - vulkan-tools
           - vainfo
+          # In-session perf overlay (per-core CPU vs GPU load + frametime) for
+          # tuning emulators/games — loaded globally via MANGOHUD=1 in the session
+          # launcher. Plain apt package on AMD (the NVIDIA-NVML source build that
+          # got setup-gaming-tools dropped from this site is retired).
+          - mangohud
           - pipewire
           - pipewire-pulse
           - wireplumber
@@ -256,6 +261,59 @@
           cursorTheme=blank
           cursorSize=24
 
+    - name: Ensure the MangoHud config dir exists
+      ansible.builtin.file:
+        path: "/home/{{ session_user }}/.config/MangoHud"
+        state: directory
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0755"
+
+    - name: Install the MangoHud overlay config (diagnostic preset)
+      # Global perf overlay, read by every app launched with MANGOHUD=1 (set in
+      # anduril-session.sh). The point of the panel: a single CPU core pegged at
+      # 100% with the GPU idle = CPU/single-thread-bound emulation (the i7-6700K
+      # ceiling); GPU maxed = drop the Eden resolution. Starts visible for tuning;
+      # uncomment no_display for hidden-until-Shift_R+F12.
+      become_user: "{{ session_user }}"
+      ansible.builtin.copy:
+        dest: "/home/{{ session_user }}/.config/MangoHud/MangoHud.conf"
+        owner: "{{ session_user }}"
+        group: "{{ session_user }}"
+        mode: "0644"
+        content: |
+          ### anduril MangoHud — diagnostic overlay. Toggle key: Left Shift + F12.
+          ### (Steam Input's paddle binding sends LEFT Shift, so match that here.)
+          ### Uncomment no_display to start hidden (reveal with the toggle key).
+          # no_display
+          toggle_hud=Shift_L+F12
+
+          # Show only the AMD 9070 XT (PCI 03:00.0). Without this, MangoHud also lists
+          # the idle i7-6700K iGPU (Intel HD 530, PCI 00:02.0) as a confusing all-zero
+          # "GPU0". (If a future MangoHud wants gpu_list instead, the AMD is the active
+          # one -- swap accordingly.)
+          pci_dev=0000:03:00.0
+
+          # CPU-vs-GPU bottleneck panel
+          fps
+          frametime=1
+          frame_timing=1
+          gpu_stats
+          gpu_load_change
+          gpu_temp
+          gpu_core_clock
+          vram
+          cpu_stats
+          cpu_load_change
+          cpu_temp
+          core_load
+          ram
+          throttling_status
+
+          position=top-left
+          font_size=28
+          background_alpha=0.4
+
     - name: Install the session launcher
       ansible.builtin.copy:
         dest: /usr/local/bin/anduril-session.sh
@@ -285,6 +343,13 @@
           export XCURSOR_THEME=blank
           export XCURSOR_SIZE=24
           export XCURSOR_PATH="$HOME/.local/share/icons:/usr/share/icons"
+          # Load the MangoHud overlay into every Vulkan/Xwayland app in the session
+          # (Eden, RetroArch, native games) with no per-game launch args — the
+          # elegant alternative to a per-shortcut `mangohud %command%`. Shown by
+          # default for tuning; toggle with Shift_R+F12, or set no_display in
+          # MangoHud.conf to start hidden. Eden runs under Xwayland, so the X11
+          # toggle key reaches it.
+          export MANGOHUD=1
           export PATH=/usr/games:/usr/bin:/bin
           exec dbus-run-session -- /usr/local/bin/anduril-inner.sh
 
