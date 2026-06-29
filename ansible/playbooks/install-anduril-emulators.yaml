@@ -257,14 +257,16 @@
         content: |
           SUBSYSTEM=="input", ATTRS{name}=="Mouse passthrough (absolute)", ENV{ID_INPUT_JOYSTICK}="0"
 
-    - name: Ensure ROM tools are present (unzip for .zip; chdman for CHD)
+    - name: Ensure ROM + mod tools are present (unzip, chdman, rsync)
       # unzip: ansible unarchive needs it for .zip. mame-tools: provides `chdman`,
       # used to convert CD-based PS2/PSX rips (raw bin/cue, which PCSX2 cannot
       # ingest) into .chd -- a single compressed image PCSX2/RetroArch load cleanly.
+      # rsync: mirrors the staged TOTK mod set into Eden's load dir (task below).
       ansible.builtin.apt:
         name:
           - unzip
           - mame-tools
+          - rsync
         state: present
 
     - name: Ensure the RetroArch autoconfig dir exists
@@ -871,3 +873,26 @@
         - { src: srm-userSettings.json, dest: userSettings.json }
       loop_control:
         label: "{{ item.dest }}"
+
+    # --- TOTK (Eden) performance + visual mods ------------------------------------
+    - name: Deploy the curated TOTK (Eden) mod set — mirror staging into the load dir
+      # The set is staged on the bulk pool (DMCA-volatile mod hosts -> staged, not
+      # auto-downloaded) and mirrored 1:1 into Eden's load dir, so the staging dir is
+      # the single source of truth: add/remove a mod by changing the staging set, and
+      # --delete keeps the load dir from accumulating stale mods. Current set, ported
+      # from the user's proven Steam Deck 1.1.2 config: DynamicFPS 1.5.4 Main + 60fps
+      # companion, Shadows-512x (perf), Disable Quality Reduction (checkerboard), Island
+      # Fix, UI Blackscreen Fix, plus a VisualFixes pchtxt (disable FSR + DOF + lens
+      # flare -- GPU-side, fps-safe). Deliberately NOT staged: LOD Improvement (adds draw
+      # calls -> costs FPS on the CPU-bound i7-6700K) and the Sweetmini 1008p res mod
+      # (Eden's own scaler renders sharper on the 4K TV). Toggle individual mods in Eden
+      # -> Properties -> Add-Ons. See [[project_anduril_emulation_cpu_bound]].
+      become_user: "{{ session_user }}"
+      ansible.builtin.shell:
+        cmd: >
+          mkdir -p "/home/{{ session_user }}/.local/share/eden/load/0100F2C0115B6000" &&
+          rsync -ai --delete
+          "{{ emu_root }}/tools/mods/totk/"
+          "/home/{{ session_user }}/.local/share/eden/load/0100F2C0115B6000/"
+      register: totk_mods_sync
+      changed_when: totk_mods_sync.stdout | trim | length > 0
