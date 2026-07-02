@@ -7,6 +7,7 @@ resources:
   - library-pvc.yaml
   - bulk-photos-pv.yaml
   - bulk-media-pv.yaml
-  - tirion-ca-configmap.yaml
+  # (immich-tirion-ca ConfigMap is generated at the apps root from
+  #  _shared/tirion-ca.crt - see kubernetes/apps/kustomization.yaml)
   - immich.yaml
   - immich-route.yaml

@@ -7,3 +7,36 @@ resources:
   - auto-water
   - harbor
   - keycloak
+
+# Tirion root CA (public cert — intentionally unencrypted; the private key
+# never leaves tirion). Single source of truth: _shared/tirion-ca.crt,
+# stamped into each consuming namespace below — on CA rotation refresh that
+# ONE file (see runbooks/CA-rotation.md). Generators live HERE because
+# per-app kustomizations can't load ../_shared (kustomize load restriction),
+# and disableNameSuffixHash because the names are referenced inside
+# HelmRelease values, which kustomize cannot rewrite.
+# Consumers: immich (NODE_EXTRA_CA_CERTS), grafana (auth.generic_oauth
+# tls_client_ca), harbor (chart-level caBundleSecretName — the chart only
+# accepts a Secret, hence the odd shape out). trust-manager deliberately
+# deferred until the consumer count grows (Jellyfin SSO will be a 4th).
+configMapGenerator:
+  - name: immich-tirion-ca
+    namespace: immich
+    files:
+      - ca.crt=_shared/tirion-ca.crt
+    options:
+      disableNameSuffixHash: true
+  - name: grafana-tirion-ca
+    namespace: monitoring
+    files:
+      - ca.crt=_shared/tirion-ca.crt
+    options:
+      disableNameSuffixHash: true
+secretGenerator:
+  - name: harbor-tirion-ca
+    namespace: harbor
+    type: Opaque
+    files:
+      - ca.crt=_shared/tirion-ca.crt
+    options:
+      disableNameSuffixHash: true

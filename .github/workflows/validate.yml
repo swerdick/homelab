@@ -49,8 +49,9 @@ jobs:
       - name: Assert all Secrets and ansible vars are SOPS-encrypted
         run: |
           fail=0
-          # Public certs deliberately committed as plain Secrets (no private material):
-          allowlist="kubernetes/apps/harbor/tirion-ca-secret.yaml"
+          # Public certs deliberately committed as plain Secrets (none right now -
+          # the harbor CA Secret is kustomize-generated since the CA single-sourcing):
+          allowlist=""
           while IFS= read -r f; do
             case " $allowlist " in *" $f "*) continue ;; esac
             if ! grep -q '^sops:' "$f" || ! grep -q 'ENC\[AES256_GCM' "$f"; then
