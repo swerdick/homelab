@@ -22,7 +22,10 @@ metadata:
 spec:
   interval: 10m0s
   path: ./kubernetes
-  prune: true
+  # TEMPORARY (apps-promotion step 1/3): GC disarmed while the apps tree
+  # moves from this Kustomization to a dedicated one — per the Flux FAQ
+  # procedure for moving resources between Kustomizations. Restored in 3/3.
+  prune: false
   sourceRef:
     kind: GitRepository
     name: flux-system
