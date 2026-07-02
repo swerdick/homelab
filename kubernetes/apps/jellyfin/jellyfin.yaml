@@ -15,6 +15,7 @@ metadata:
   namespace: jellyfin
 spec:
   interval: 30m
+  timeout: 5m
   releaseName: jellyfin
   chart:
     spec:

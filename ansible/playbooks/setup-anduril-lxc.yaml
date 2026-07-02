@@ -30,6 +30,9 @@
 
   tasks:
     # --- games library dataset (WD Blue HDD / scratch pool) ---
+    # Deliberately a command trio, NOT community.general.zfs: the module
+    # compares extra_zfs_properties against `zfs get -p` (bytes), so a
+    # human-friendly "600G" reports changed on every run.
     - name: Check for the games dataset
       ansible.builtin.command: "zfs list -H -o name {{ games_dataset }}"
       register: games_ds

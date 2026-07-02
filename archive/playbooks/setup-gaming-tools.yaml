@@ -1,4 +1,11 @@
 ---
+# ARCHIVED 2026-07: VM-era playbook retired by the LXC replatform. The
+# MangoHud source build here is NVIDIA/NVML-specific; the gaming LXC (CT 117,
+# AMD) gets apt mangohud via the session/emulator plays instead. Running this
+# against the LXC would REMOVE the working mangohud — do not run. Known defect
+# at archive time: `mangohud_version` is undefined (post-replatform it never
+# completed a run). Kept for reference alongside archive/runbooks/.
+#
 # Gaming-specific userland tooling for anduril (the Kubuntu gaming VM).
 #
 # Kept separate from:
