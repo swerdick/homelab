@@ -179,7 +179,7 @@ spec:
                 - path: /mnt/external/bulk-media
                   readOnly: true
         # tirion root CA for Keycloak OIDC TLS (see NODE_EXTRA_CA_CERTS above).
-        # ConfigMap from tirion-ca-configmap.yaml; mounted read-only, server pod only.
+        # ConfigMap generated at the apps root from _shared/tirion-ca.crt; mounted read-only, server pod only.
         tirion-ca:
           enabled: true
           type: configMap

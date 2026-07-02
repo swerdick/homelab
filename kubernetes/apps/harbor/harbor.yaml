@@ -48,8 +48,8 @@ spec:
 
     # Inject the tirion root CA into core/jobservice/registry/trivy trust stores
     # so Harbor can validate Keycloak's internal-CA cert during OIDC discovery +
-    # token exchange. Secret defined in tirion-ca-secret.yaml (public cert,
-    # intentionally not SOPS-encrypted — see that file's comment for the why).
+    # token exchange. Secret generated at the apps root from _shared/tirion-ca.crt
+    # (public cert, intentionally not SOPS-encrypted; single source for all apps).
     caBundleSecretName: harbor-tirion-ca
 
     # TLS terminates at the Gateway; Harbor runs plain HTTP behind it.

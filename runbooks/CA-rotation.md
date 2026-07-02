@@ -239,6 +239,15 @@ echo | openssl s_client -connect erebor.vingilot.internal:8007 -servername erebo
 
 The ClusterIssuer in `kubernetes/infrastructure/instances/cert-manager/clusterissuer.yaml` has the old CA cert inlined in its `caBundle:` field. This needs updating to the new root.
 
+Also refresh the per-app trust copy consumed by the kustomize generators in `kubernetes/apps/kustomization.yaml`:
+
+```bash
+cp ansible/files/vingilot-root-ca.crt kubernetes/apps/_shared/tirion-ca.crt
+# immich-tirion-ca / grafana-tirion-ca / harbor-tirion-ca regenerate on the
+# next apps reconcile; restart the consuming pods to load the new bundle
+# (generator names are stable, so there is no automatic rollout).
+```
+
 ```bash
 # Source of truth for the root cert is already in this repo at
 # ansible/files/vingilot-root-ca.crt — refreshed in step 2a above.

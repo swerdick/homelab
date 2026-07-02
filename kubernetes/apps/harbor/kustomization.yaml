@@ -6,6 +6,7 @@ resources:
   - postgres-podmonitor.yaml
   - valkey.yaml
   - harbor-admin.yaml
-  - tirion-ca-secret.yaml
+  # (harbor-tirion-ca Secret is generated at the apps root from
+  #  _shared/tirion-ca.crt - see kubernetes/apps/kustomization.yaml)
   - harbor.yaml
   - harbor-route.yaml
