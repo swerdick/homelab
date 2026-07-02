@@ -1,13 +1,14 @@
 # Terraform (OpenTofu)
 
-Two independent stacks — each with its own state, backend key, and provider, run separately:
+Three independent stacks — each with its own state, backend key, and provider, run separately:
 
 | Stack | Path | Manages | Provider | State key |
 |---|---|---|---|---|
 | **proxmox** | `terraform/proxmox/` | PVE topology on `earendil` — guests, storage, backup jobs, datacenter options | `bpg/proxmox` | `homelab/terraform.tfstate` |
 | **keycloak** | `terraform/keycloak/` | Keycloak realm/client config — OIDC clients for in-cluster apps | `keycloak/keycloak` | `homelab/keycloak.tfstate` |
+| **harbor** | `terraform/harbor/` | Harbor registry config — proxy-cache projects/registries for upstream registries | `goharbor/harbor` | `homelab/harbor.tfstate` |
 
-Both use the same S3 bucket (`vingilot-homelab-tfstate`, `us-east-2`) with separate keys, so state and blast radius are isolated. Splitting also means each stack only loads and authenticates *its own* provider — a proxmox change never needs the Keycloak secret, and vice versa. Pairs with `ansible/` (in-guest + host config) and `kubernetes/` (cluster workloads).
+All three use the same S3 bucket (`vingilot-homelab-tfstate`, `us-east-2`) with separate keys, so state and blast radius are isolated. Splitting also means each stack only loads and authenticates *its own* provider — a proxmox change never needs the Keycloak secret, and vice versa. Pairs with `ansible/` (in-guest + host config) and `kubernetes/` (cluster workloads).
 
 ## Day-to-day
 
@@ -22,17 +23,21 @@ just tf-keycloak plan
 just tf-keycloak apply
 just tf-keycloak output -raw immich_oidc_client_secret
 
+# Harbor registry config
+just tf-harbor plan
+just tf-harbor apply
+
 # Re-init a stack after a backend/provider change (one-time per checkout):
-just tf-proxmox-init   /   just tf-keycloak-init
+just tf-proxmox-init / just tf-keycloak-init / just tf-harbor-init
 ```
 
-Each `just tf-<stack>` recipe decrypts only that stack's secrets from SOPS and exports them for the single `tofu` invocation (proxmox: `PROXMOX_VE_API_TOKEN` + `TF_VAR_pbs_main_password`; keycloak: `KEYCLOAK_CLIENT_SECRET`). Secrets never land in the parent shell's persistent env.
+Each `just tf-<stack>` recipe decrypts only that stack's secrets from SOPS and exports them for the single `tofu` invocation (proxmox: `PROXMOX_VE_API_TOKEN` + `TF_VAR_pbs_main_password`; keycloak: `KEYCLOAK_CLIENT_SECRET`; harbor: `HARBOR_USERNAME`/`HARBOR_PASSWORD`, extracted from the cluster's SOPS Secret `kubernetes/apps/harbor/harbor-admin.yaml` — single source of truth). Secrets never land in the parent shell's persistent env.
 
 ---
 
 ## proxmox stack
 
-In scope: the LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`, `eregion`), the `gondor` k3s VM, the `anduril` VM (GPU passthrough); storage (`backups` local vzdump dir, `main` PBS on erebor, `scratch-zfs`); the four backup jobs; datacenter options (`keyboard`, `mac_prefix`). Out of scope: `local`/`local-zfs` (auto-created by the PVE installer), the discarded Debian cloudinit template, network bridges (`vmbr0`).
+In scope: the LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`, `eregion`), the `gondor` k3s VM, the `anduril` gaming LXC (CT 117, shared `amdgpu`); storage (`backups` local vzdump dir, `main` PBS on erebor, `scratch-zfs`); the four backup jobs; datacenter options (`keyboard`, `mac_prefix`). Out of scope: `local`/`local-zfs` (auto-created by the PVE installer), the discarded Debian cloudinit template, network bridges (`vmbr0`).
 
 ### Adding a resource via import
 
@@ -64,9 +69,15 @@ In scope: the LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`, `eregion`), th
 
 ## keycloak stack
 
-Manages Keycloak realm config as code. Currently: the **Immich** OIDC client in the `vingilot` realm. The realm itself is hand-created (not TF-managed) — clients reference it by `realm_id = "vingilot"`, which avoids churning a `keycloak_realm` resource's many settings. New app clients are a ~15-line `keycloak_openid_client` block in `keycloak.tf` + `just tf-keycloak apply`.
+Manages Keycloak realm config as code. Currently: the **Immich**, **Grafana**, and **Harbor** OIDC clients (plus their group-membership mappers) in the `vingilot` realm. The realm itself is hand-created (not TF-managed) — clients reference it by `realm_id = "vingilot"`, which avoids churning a `keycloak_realm` resource's many settings. New app clients are a ~15-line `keycloak_openid_client` block in `keycloak.tf` + `just tf-keycloak apply`.
 
 **Provider auth** is the client-credentials grant via a dedicated `terraform` service-account client in Keycloak's **master** realm — created once in the UI, granted the master `admin` role, with its secret stored in SOPS under `keycloak_terraform_client_secret`. Because the provider authenticates on every invocation, that secret must be present or `just tf-keycloak` fails at provider auth.
+
+---
+
+## harbor stack
+
+Manages Harbor's registry-side config as code: one proxy-cache project + registry endpoint per upstream (Docker Hub, ghcr, quay, registry.k8s.io), so containerd on the k3s nodes pulls through Harbor (`ansible/playbooks/setup-k3s-registries.yaml` wires the mirror config). **Provider auth** is the Harbor admin user; `just tf-harbor` extracts the password from the cluster's SOPS Secret per-invocation, so rotating it in one place covers both the chart and this stack.
 
 ---
 
@@ -101,5 +112,6 @@ aws s3api get-bucket-encryption --bucket vingilot-homelab-tfstate
 
 - `proxmox/` — the PVE infra stack: `_versions/_providers/_variables/_backend.tf` + `backend.hcl` scaffolding, one `*.tf` per guest, `_imports.tf` (staging for in-flight imports; empty when idle), `descriptions/` (sidecar markdown for PVE "Notes" runbooks).
 - `keycloak/` — the Keycloak stack: same scaffolding + `keycloak.tf` (the app clients).
-- `scripts/bootstrap-s3-bucket.sh` — one-time bucket creation + hardening (idempotent), shared by both stacks.
+- `harbor/` — the Harbor stack: same scaffolding + `harbor.tf` (proxy-cache projects/registries).
+- `scripts/bootstrap-s3-bucket.sh` — one-time bucket creation + hardening (idempotent), shared by all stacks.
 - each stack's `.terraform.lock.hcl` — provider version pins; **committed for reproducibility** (not gitignored).
