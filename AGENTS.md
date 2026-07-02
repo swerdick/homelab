@@ -18,14 +18,16 @@ The balance: don't propose hacky homelab shortcuts that would hurt the resume an
 |----------|-----------------------------------------------|
 | earendil | Proxmox VE host                               |
 | gondor   | Debian VM running k3s + Flux                  |
-| anduril  | Bazzite gaming VM (GPU passthrough)           |
+| anduril  | Ubuntu gaming LXC (CT 117) — Steam on the shared AMD GPU |
 | tirion   | LXC running step-ca (internal CA)             |
 | nfs      | LXC serving NFS shares                        |
 | smb      | LXC serving Samba shares                      |
 | aglarond | LXC shipping restic backups to Backblaze      |
 | erebor   | LXC running Proxmox Backup Server             |
+| eregion  | LXC running the PaperMC Minecraft server (LAN) |
+| samwise  | Raspberry Pi 5 — k3s ARM worker, tailscale subnet router, WoL sender |
 
-`gondor` and `anduril` share GPU resources — gondor is shut down sometimes so anduril can run. Components that depend on the cluster (Prometheus, Grafana, anything in `kubernetes/`) should tolerate gondor being unavailable.
+`earendil` shuts down nightly, taking every guest (gondor included) with it — anything consuming cluster services or metrics should tolerate that window. `anduril` no longer competes with gondor for the GPU: it shares the host's AMD card via `amdgpu` (no passthrough claim).
 
 ## Hardware
 
@@ -34,13 +36,13 @@ Single physical machine (earendil) hosting everything:
 - **CPU**: Intel Core i7-6700K (Skylake, 4C/8T, 4.0 GHz base)
 - **RAM**: 48 GB DDR4 (46.9 GiB usable), 4 DIMMs — a **mixed kit**: 2× 16 GB Corsair `CMK32GX4M2E3200C16` (rated 3200) + 2× 8 GB Corsair `CMK16GX4M2B3000C15` (rated 3000), all running at JEDEC **2133 MT/s**. **XMP: evaluated and declined.** The two kits have different rated speeds, timings, and densities, so a stable rated profile is uncertain (XMP would target the lower common denominator at best, or fail to POST), and earendil is the always-on hypervisor — RAM instability is a homelab-wide blast radius, Postgres/CNPG corruption included. The only RAM-speed-sensitive workload is CPU-bound gaming on anduril (k3s/containers are capacity/IO/CPU-bound, indifferent to DDR4 speed), and that gain is a few fps at most. Left at JEDEC 2133 deliberately — do not re-pitch XMP without this context.
 - **Motherboard**: MSI Z170A Gaming M7 (MS-7976)
-- **GPU**: Nvidia GeForce GTX 970 — passed through to anduril for Moonlight game streaming
+- **GPU**: AMD Radeon RX 9070 XT (PCI 03:00) — host-owned `amdgpu`, shared into the anduril gaming LXC (CT 117); the GTX 970 passthrough era ended June 2026. The i7-6700K's HD 530 iGPU is also present.
 - **Storage**:
   - Samsung 850 EVO 250 GB SATA SSD — `rpool` (PVE root, LXC/VM disks)
   - Seagate ST2000DM005 2 TB HDD + WD WD10EZES 1 TB HDD — combined into the `bulk` and `scratch` zpools (~1.76 TB and ~900 GB usable)
 - **Optical**: LG WH16NS40 16× Blu-ray writer
 
-16 GB is tight for the size of the fleet — VM sizing matters: gondor at 10 GB is the heaviest, others kept under 1 GB where possible.
+48 GB fits the fleet comfortably — gondor (20 GB) and the anduril CT (12 GB) are the heavyweights; the utility LXCs stay under 1 GB.
 
 ## Tooling: prefer justfile recipes
 
@@ -59,7 +61,7 @@ If a workflow you'd repeat is missing, propose adding a recipe rather than runni
 
 - `kubernetes/` — k8s manifests deployed via Flux (`apps/`, `infrastructure/`)
 - `ansible/` — playbooks targeting bare hosts/LXCs/VMs (community.sops vars plugin enabled)
-- `<hostname>/` — host-specific scripts/notes (e.g. `earendil/`, `tirion/`)
+- `<hostname>/` — host-specific scripts/notes (e.g. `earendil/`)
 - `runbooks/` — written-down procedures for things not yet automated
 
 ## Secrets
@@ -72,6 +74,7 @@ If a workflow you'd repeat is missing, propose adding a recipe rather than runni
   - Edit later with `sops <path>` (opens decrypted in `$EDITOR`).
 - The `community.sops.sops` Ansible vars plugin auto-decrypts `*.sops.yaml` files under `group_vars/` and `host_vars/` at playbook time.
 - Never paste decrypted secrets into commits, comments, or PR descriptions.
+- **Public certs are deliberately NOT encrypted** (the tirion root CA is public material, served on every TLS handshake — only private material is secret). CI's sops-guardrail enforces the boundary: every `kind: Secret` must be SOPS-encrypted; the CA travels as a plain `.crt` consumed by kustomize generators.
 
 ## DNS
 

@@ -4,7 +4,7 @@
 k3s_version := "v1.34.6+k3s1"
 
 # All Debian-based LXCs on earendil
-debian_lxcs := "120 121 130 131 141"
+debian_lxcs := "120 121 130 131 141 142"
 
 # List all available recipes
 default:
@@ -127,26 +127,20 @@ patch-earendil:
     @echo "Patching earendil (Proxmox host)..."
     ssh root@earendil 'apt update && apt -y dist-upgrade && apt -y autoremove'
 
-# Patch everything always-on that takes apt: Proxmox host, all LXCs, gondor VM.
-# anduril (Kubuntu gaming VM) is off most of the time and patched on demand.
+# Patch everything apt-based except the gaming CT: Proxmox host, all Debian
+# LXCs, gondor VM. anduril (CT 117) is deliberately separate — see patch-anduril.
 patch-all: patch-earendil patch-lxcs patch-gondor
     @echo
     @echo "All always-on apt hosts patched."
-    @echo "Reminder: anduril is off most of the time — run 'just patch-anduril' while it's running (stop eregion first)."
+    @echo "Reminder: run 'just patch-anduril' separately (kept out so a live gaming session never gets yanked)."
 
-# Patch the Kubuntu gaming VM (anduril) — only works while the VM is running.
-# anduril is off most of the time and shares earendil's RAM with eregion until
-# the RAM upgrade, so stop eregion (pct stop 142) before booting it.
-#
-# Security updates already land unattended; this is the deliberate full
-# `apt upgrade`. NVIDIA is `apt-mark hold`ed (so 595 — which drops the GTX
-# 970's Maxwell arch — can never be pulled) and Sunshine isn't in any apt
-# repo, so neither moves here. The kernel is only held from *unattended*
-# upgrades (host_vars/anduril), so this WILL bump it — take a fresh PBS
-# snapshot first if a passthrough-breaking kernel regression would hurt, and
-# reboot deliberately afterward (GPU cold-start is the reliability bar).
+# Patch the anduril gaming LXC (CT 117 — always-on, shares the host kernel).
+# Security updates land unattended; this is the deliberate full `apt upgrade`.
+# LXC = no kernel or NVIDIA stack inside (the VM-era holds are gone), so
+# autoremove is safe here. Kept out of patch-all so a live gaming session
+# never gets yanked mid-play — run between sessions.
 patch-anduril:
-    @echo "Patching anduril (Kubuntu)..."
+    @echo "Patching anduril (gaming CT)..."
     ssh anduril 'sudo bash -c "export DEBIAN_FRONTEND=noninteractive && apt update && apt -y upgrade && apt -y autoremove && apt clean"'
 
 # Cleanly restart the anduril gaming session (KWin + Steam Big Picture) in CT 117.
@@ -227,9 +221,10 @@ dump-pve-configs:
 
 # --- OpenTofu / Terraform ---
 
-# Two independent stacks, each with its own state, backend key, and providers:
+# Three independent stacks, each with its own state, backend key, and providers:
 #   terraform/proxmox/  — PVE host + guests + storage + backup jobs (bpg/proxmox)
 #   terraform/keycloak/ — Keycloak realm/client config (keycloak/keycloak)
+#   terraform/harbor/   — Harbor proxy-cache projects/registries (goharbor/harbor)
 #
 # Each recipe decrypts only the secrets ITS stack needs from SOPS and exports
 # them per-invocation, then runs `tofu` from that stack's dir. Splitting the

@@ -118,4 +118,4 @@ If the age key is ever compromised:
 - **`k9s`** — general Kubernetes browsing including Flux CRDs
 - **Capacitor Next** — optional browser UI: `brew install gimlet-io/capacitor/capacitor && capacitor`
 
-The in-cluster Capacitor was tried and removed due to Flux 2.8 API compatibility issues. See `docs/UI-EXPERIMENTS.md` for the full story.
+The in-cluster Capacitor was tried and removed due to Flux 2.8 API compatibility issues.

@@ -15,13 +15,14 @@ GitOps-managed where it makes sense:
 |----------|-------------|-----------------------------------------------|
 | earendil | debian host | Proxmox VE host                               |
 | gondor   | debian VM   | k3s + Flux cluster                            |
-| anduril  | bazzite VM  | gaming VM streaming via Moonlight             |
+| anduril  | ubuntu LXC  | gaming — Steam on the TV + Sunshine/Moonlight |
 | tirion   | debian LXC  | step-ca (internal CA at `vingilot.internal`)  |
 | nfs      | debian LXC  | NFS shares                                    |
 | smb      | debian LXC  | Samba shares                                  |
 | erebor   | debian LXC  | Proxmox Backup Server                         |
 | aglarond | debian LXC  | restic shipping backups to Backblaze          |
 | eregion  | debian LXC  | PaperMC Minecraft server (LAN)                |
+| samwise  | raspberry pi| k3s ARM worker, tailscale subnet router, WoL  |
 
 ## Ansible playbooks
 
@@ -39,14 +40,14 @@ Inventory groups (`alloy`, `debian_guests`, `root_hosts`, `sudo_hosts`, etc.) ar
 
 ## Terraform (OpenTofu)
 
-The Proxmox-level topology — LXC/VM definitions, bind mounts, network — is managed under [`terraform/`](terraform/) using OpenTofu + the `bpg/proxmox` provider. Currently covers the five LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`) and the `gondor` k3s VM. `anduril` is queued for a follow-up that depends on a host-side ansible playbook for GPU passthrough prereqs.
+The Proxmox-level topology — LXC/VM definitions, bind mounts, network — is managed under [`terraform/`](terraform/) using OpenTofu + the `bpg/proxmox` provider. Currently covers the LXCs (`nfs`, `smb`, `erebor`, `aglarond`, `tirion`, `eregion`, `anduril`) and the `gondor` k3s VM.
 
 ```sh
 just tf-proxmox plan      # preview against live PVE
 just tf-proxmox apply
 ```
 
-`terraform/` is split into two independent stacks — **proxmox** (PVE topology, this section) and **keycloak** (OIDC client config; see `terraform/README.md`) — each with its own state and a `just tf-<stack>` wrapper that decrypts only its secrets from SOPS per-invocation. State lives in the `vingilot-homelab-tfstate` S3 bucket (hardened — see `terraform/README.md`). The fresh-rebuild flow is `just tf-proxmox apply` → `ansible-playbook ...` → data restore from PBS/restic.
+`terraform/` is split into three independent stacks — **proxmox** (PVE topology, this section), **keycloak** (OIDC client config), and **harbor** (registry proxy-cache config; see `terraform/README.md`) — each with its own state and a `just tf-<stack>` wrapper that decrypts only its secrets from SOPS per-invocation. State lives in the `vingilot-homelab-tfstate` S3 bucket (hardened — see `terraform/README.md`). The fresh-rebuild flow is `just tf-proxmox apply` → `ansible-playbook ...` → data restore from PBS/restic.
 
 The PVE config snapshots under [`earendil/pve-configs/`](earendil/pve-configs/) remain as a documentation + audit reference for the resources TF now owns; revisit them after a full DR drill.
 
