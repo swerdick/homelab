@@ -78,7 +78,7 @@
         shell: /usr/sbin/nologin
         create_home: false
 
-    - name: Ensure {{ steppath }} exists with correct ownership
+    - name: Ensure correct ownership of the step base directory {{ steppath }}
       ansible.builtin.file:
         path: "{{ steppath }}"
         state: directory

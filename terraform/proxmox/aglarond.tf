@@ -4,7 +4,7 @@
 # recovery steps) — visible in PVE web UI.
 
 resource "proxmox_virtual_environment_container" "aglarond" {
-  node_name    = "earendil"
+  node_name = "earendil"
   # vm_id intentionally omitted — derived from the import ID. Setting it
   # in config alongside an import block doesn't suppress the state-fill diff.
   unprivileged = true

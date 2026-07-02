@@ -1,0 +1,10 @@
+# Config for the gitleaks job in .github/workflows/validate.yml.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "SOPS-encrypted values are ciphertext, not leaked credentials"
+regexTarget = "line"
+regexes = [
+  '''ENC\[AES256_GCM,data:''',
+]

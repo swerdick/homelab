@@ -41,8 +41,17 @@
 # reminder; rebooting earendil drops every guest, so timing is a
 # deliberate operator decision.
 
-- import_playbook: pin-proxmox-kernel.yaml
-- import_playbook: setup-amdgpu-host.yaml
-- import_playbook: setup-anduril-lxc.yaml
-- import_playbook: setup-earendil-network.yaml
-- import_playbook: setup-terraform-pve-access.yaml
+- name: Manage the boot-kernel pin
+  import_playbook: pin-proxmox-kernel.yaml
+
+- name: Configure host amdgpu GPU sharing
+  import_playbook: setup-amdgpu-host.yaml
+
+- name: Prepare the anduril LXC (host side)
+  import_playbook: setup-anduril-lxc.yaml
+
+- name: Pin the uplink NIC + Wake-on-LAN
+  import_playbook: setup-earendil-network.yaml
+
+- name: Provision Terraform PVE access
+  import_playbook: setup-terraform-pve-access.yaml

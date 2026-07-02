@@ -1,7 +1,7 @@
 .idea
 .claude/settings.local.json
 .claude
-.DS_STORE
+.DS_Store
 *.bak
 
 # OpenTofu / Terraform. `.terraform.lock.hcl` is intentionally NOT ignored
@@ -12,3 +12,17 @@ terraform/**/*.tfstate.*
 terraform/**/*.tfvars
 terraform/**/crash.log
 terraform/**/crash.*.log
+
+# Belt-and-suspenders: none of these are generated in-tree (the SOPS age key
+# lives in ~/.config/sops/age/, kubeconfig in ~/.kube/), but a stray copy must
+# never be committable. In-repo CA public certs use `.crt` deliberately.
+*.agekey
+*.key
+*.pem
+*.p12
+*.pfx
+kubeconfig*
+id_rsa*
+id_ed25519*
+.env
+.env.*

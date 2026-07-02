@@ -1,0 +1,15 @@
+---
+# Lint gate, enforced by .github/workflows/validate.yml. Run locally with:
+#   cd ansible && ANSIBLE_VARS_ENABLED=host_group_vars ansible-lint --profile basic playbooks/
+# (the env var keeps the community.sops vars plugin from attempting decryption)
+profile: basic
+
+skip_list:
+  # `systemctl is-active` / `apt-get indextargets` probes with
+  # `changed_when: false` are deliberate read-only checks the systemd/apt
+  # modules can't express. Suppressed wholesale — the pattern is house style.
+  - command-instead-of-module
+  # Two known-long lines can't be wrapped: a udev rule inside a `content: |`
+  # block (setup-anduril-lxc.yaml — udev has no sane line continuation) and a
+  # templated release URL (setup-anduril-sunshine.yaml — URLs can't fold).
+  - yaml[line-length]

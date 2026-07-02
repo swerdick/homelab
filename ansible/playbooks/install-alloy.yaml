@@ -2,7 +2,8 @@
 # Alloy talks to https://prometheus.vingilot.internal, so the homelab root CA
 # must be trusted on every host first. The CA playbook is os-family aware and
 # safe to re-run.
-- import_playbook: distribute-root-ca.yaml
+- name: Distribute the homelab root CA first
+  import_playbook: distribute-root-ca.yaml
 
 - name: Install Grafana Alloy on all hosts
   hosts: alloy
