@@ -36,6 +36,12 @@ Alternative considered: **Tailscale SSH** (deliberately left off when Tailscale 
 
 The private-key-marker pre-commit hook lives at `~/.config/git/hooks/pre-commit` on thorondor. Should be tracked somewhere — chezmoi-style dotfiles repo would be the natural home. "Future weekend" project.
 
+### Kyverno — admission-time enforcement of the house conventions
+
+CI now validates what is *in git* (encryption, pins, build validity); nothing enforces runtime conventions at admission — resource requests/limits on every workload, no `:latest` images, the per-app-namespace pattern. Kyverno as a HelmRelease closes that gap and completes the arc: validated in CI, enforced at admission (a stray `kubectl apply` cannot dodge it).
+
+Roll out audit-first: policies in `Audit` mode, PolicyReports reviewed via Grafana, then promote the few worth hard-enforcing to `Enforce`. Audit-first matters on a one-person cluster — enforce-mode can fight you mid-incident, and the report data shows which rules would actually fire before anything blocks.
+
 ## Observability
 
 ### Cert expiration alerting
@@ -125,7 +131,9 @@ Server pod currently runs as `runAsUser: 0` with `supplementalGroups: [10000]` f
 
 ### CNPG cluster backups (barman → Backblaze)
 
-The Immich Postgres cluster is currently durability-insured only by gondor's PBS snapshots — crash-consistent at best, since PBS doesn't quiesce the database. CNPG has first-class barman-cloud support; pointing it at the Backblaze bucket aglarond already uses gives application-consistent base backups + continuous WAL archiving. Pre-flight: confirm aglarond's Backblaze creds are valid via a no-op `restic check` first, otherwise debugging happens during the wrong session. Configuration lives on the `Cluster` CR (`spec.backup.barmanObjectStore`) plus a `ScheduledBackup` CR for the cadence. Applies cluster-wide, not just to Immich — any future CNPG cluster benefits.
+Verified 2026-07-02: all four clusters (immich/harbor/keycloak/auto-water) have an **empty `spec.backup`** — the operator backs up nothing — and every PG PVC is on `nfs-scratch`, so the actual bytes live on earendil's scratch pool *outside* gondor's PBS image. Real protection today is whatever covers the scratch dataset: filesystem-level, crash-consistent for a live database, and short-horizon since the 3d/2w retention trim. Higher urgency than this entry originally implied.
+
+Barman-cloud ships base backups + a continuous WAL archive straight from the postgres pods to B2's S3 endpoint (aglarond/restic uninvolved — parallel streams). Use a **separate bucket + bucket-scoped application key** so the in-cluster credential can't touch the restic repo and vice versa; both tools manage their own object lifecycle — never share a prefix. Encryption: TLS in transit + SSE-B2 at rest (`data.encryption`/`wal.encryption: AES256`); that's server-side (B2 holds keys), unlike restic's client-side model — if key custody matters, complement with a low-cadence `pg_dump` CronJob into a restic-covered path. Config: SOPS Secret for the key, per-`Cluster` backup stanza + `ScheduledBackup`, `retentionPolicy` sized to the bucket. Pre-flight per the verify-docs rule: recent CNPG releases are migrating from in-tree `spec.backup.barmanObjectStore` to the Barman Cloud CNPG-I plugin — confirm which shape the running operator wants. Applies cluster-wide; WAL archiving takes RPO from "last snapshot" to minutes.
 
 ### Auto-watering on samwise (k3s workload + GPIO)
 
@@ -162,6 +170,12 @@ The poller's retry buffer — readings held while the CNPG sink is unreachable (
 User's own app — currently developed elsewhere, wants a stable in-cluster deployment as a real "production"-feeling target. Standard shape: HelmRelease in a `vibeseeker` namespace, HTTPRoute at `vibeseeker.vingilot.internal` (or whatever public hostname makes sense via Cloudflare Tunnel), CNPG-backed Postgres if it needs persistent state, image pulled from the local registry (see CI/CD section) or upstream until that lands. Image probably built by self-hosted GHA runners — three of the CI/CD items below are natural preconditions if the goal is full local dev-loop.
 
 ## CI/CD & developer infrastructure
+
+### Renovate — automated dependency PRs against the CI gates
+
+The validate workflow now gates exactly the surface Renovate feeds: 11 pinned chart ranges, pinned GitHub Action tags, three stacks of tofu provider constraints + committed lockfiles, and the sha256-pinned k3s installer. Renovate turns each upstream bump into a PR that flux-local validates *before* merge — chart values-schema breakage (the kps-major problem) gets caught in CI instead of at reconcile time.
+
+Start with the hosted app (free for public repos, zero infra); revisit self-hosted only if the git-mirror/runners items land. Expected config work: group chart patch bumps to keep PR noise down, leave kps majors manual (its pin comment says why), and a custom regex manager for the k3s installer sha256 plus the `k3s_version` lockstep across justfile/host_vars/install script.
 
 ### Self-hosted GitHub Actions runners
 
@@ -236,6 +250,12 @@ Steps:
 5. Reallocate the freed RAM to gondor — gives ML headroom on Immich and breathing room for future apps
 
 ~30-45 min once the targets are clear.
+
+## Resilience & recovery
+
+### DR game day — time the fresh-rebuild flow for real
+
+The README claims the rebuild flow (S3 state → `just tf-proxmox apply` → site playbooks → PBS/restic restore); nothing has proven it end-to-end or timed it. Run a deliberate drill — a sacrificial guest first, the full fleet on a quiet weekend if that goes well — and write down wall-clock, surprises, and gaps (likely suspects: the age-key bootstrap path, CA chain ordering, k3s join order, anything with a manual router-DNS step). Findings land as fixes plus a dated "last drill: N hours" line in the README — the single most credible durability claim the repo can make. Sequence after the CNPG barman item so the database story is part of the drill instead of a known hole.
 
 ## Network & DNS
 
