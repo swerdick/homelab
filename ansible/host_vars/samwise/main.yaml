@@ -5,7 +5,7 @@
 # host_vars/gondor.yaml first via a deliberate server-upgrade procedure,
 # then bump this file, then re-run install-k3s-agent.yaml.
 #
-# The legacy fallbacks (gondor/bootstrap/install-k3s.sh + `just bootstrap-gondor`
+# The legacy fallbacks (kubernetes/bootstrap/install-k3s.sh + `just bootstrap-gondor`
 # + the justfile top-line `k3s_version :=`) are pending retirement once
 # install-k3s-server.yaml has been validated on the live cluster.
 k3s_version: v1.34.6+k3s1

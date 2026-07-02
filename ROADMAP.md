@@ -61,7 +61,7 @@ The recent dashboard parameterization (`$datasource` variable from commit `d71ac
 100 - avg(rate(node_cpu_seconds_total{instance="$host",job="integrations/unix",mode="idle"}[$__rate_interval])) * 100
 ```
 
-**Broader audit needed**: walk every panel in `gondor/apps/observability/dashboards/*.json` against the allowlist + drop rules in `templates/config.alloy.j2` (lines 73-107). Specifically check for queries that filter `mode`, `fstype`, or `device` with regex/inequalities — those are the three labels we drop on. Other panels in `homelab-host-overview` looked OK on a quick read, but `homelab-hardware`, `homelab-flux`, and `homelab-workload` haven't been spot-checked end-to-end against the cloud view.
+**Broader audit needed**: walk every panel in `kubernetes/apps/observability/dashboards/*.json` against the allowlist + drop rules in `templates/config.alloy.j2` (lines 73-107). Specifically check for queries that filter `mode`, `fstype`, or `device` with regex/inequalities — those are the three labels we drop on. Other panels in `homelab-host-overview` looked OK on a quick read, but `homelab-hardware`, `homelab-flux`, and `homelab-workload` haven't been spot-checked end-to-end against the cloud view.
 
 Probably 30-60 min: open each dashboard on the Grafana Cloud side with a known-online host selected, identify any "No data" panels, fix the queries to be allowlist-compatible, re-`just dump-grafana` (or whatever the export ritual is), commit.
 
@@ -178,7 +178,7 @@ Single-failure-domain risk: GitHub disappearing (account suspension, outage, pol
 
 **Design — mirror as primary, not backup:**
 
-- **k3s Deployment in `git-mirror` namespace** (not LXC). A tiny image — `openssh-server` or similar — exposes `git+ssh://` for Flux to clone from. PVC-backed bare-repo storage, NetworkPolicy locks the SSH endpoint to in-cluster traffic. Manifests live in `gondor/apps/git-mirror/` so Flux reconciles its own dependency (chicken-and-egg only on initial deploy, irrelevant forever after).
+- **k3s Deployment in `git-mirror` namespace** (not LXC). A tiny image — `openssh-server` or similar — exposes `git+ssh://` for Flux to clone from. PVC-backed bare-repo storage, NetworkPolicy locks the SSH endpoint to in-cluster traffic. Manifests live in `kubernetes/apps/git-mirror/` so Flux reconciles its own dependency (chicken-and-egg only on initial deploy, irrelevant forever after).
 - **GitHub App auth, not SSH keys.** Register one fine-grained App (`Contents: Read` on the repos we mirror), mount its private key as a SOPS Secret, mint a 1h installation token at *fetch time* via JWT → `/app/installations/<id>/access_tokens` (~30-line Python helper in a ConfigMap). No long-lived token at rest in the cluster, no SSH key proliferation, revocable from the GitHub UI.
 - **Flux's `GitRepository` points at the mirror by default** (not GitHub). Failure-mode story collapses: "GitHub down" becomes a non-event (mirror keeps serving last-fetched state); "mirror down" overlaps with "Flux down" since both run on gondor, an already-accepted SPOF.
 - **CronJob fetches from GitHub every ~10 min** as background warmth. Smart fetch script (below) handles outage-time pushes safely.

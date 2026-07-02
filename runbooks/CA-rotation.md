@@ -237,7 +237,7 @@ echo | openssl s_client -connect erebor.vingilot.internal:8007 -servername erebo
 
 ### 3c. cert-manager ClusterIssuer (k3s on gondor)
 
-The ClusterIssuer in `gondor/infrastructure/instances/cert-manager/clusterissuer.yaml` has the old CA cert inlined in its `caBundle:` field. This needs updating to the new root.
+The ClusterIssuer in `kubernetes/infrastructure/instances/cert-manager/clusterissuer.yaml` has the old CA cert inlined in its `caBundle:` field. This needs updating to the new root.
 
 ```bash
 # Source of truth for the root cert is already in this repo at
@@ -249,21 +249,21 @@ cat ansible/files/vingilot-root-ca.crt | head -1
 base64 -i ansible/files/vingilot-root-ca.crt | tr -d '\n'
 # Copy that string
 
-# Edit gondor/infrastructure/instances/cert-manager/clusterissuer.yaml
+# Edit kubernetes/infrastructure/instances/cert-manager/clusterissuer.yaml
 # Replace the value of caBundle: with the new base64 string
 ```
 
 Validate locally before pushing:
 
 ```bash
-just validate gondor/infrastructure/instances/cert-manager
+just validate kubernetes/infrastructure/instances/cert-manager
 # Expect: clusterissuer.cert-manager.io/tirion configured (server dry run)
 ```
 
 Commit and push:
 
 ```bash
-git add gondor/infrastructure/instances/cert-manager/clusterissuer.yaml
+git add kubernetes/infrastructure/instances/cert-manager/clusterissuer.yaml
 git commit -m "chore(cert-manager): update caBundle for tirion CA rotation"
 git push
 just reconcile

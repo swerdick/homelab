@@ -5,8 +5,8 @@ creation_rules:
   - path_regex: ansible/.*\.sops\.ya?ml$
     age: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
 
-  # All Kubernetes Secret YAML files under gondor/ get encrypted with this age key.
+  # All Kubernetes Secret YAML files under kubernetes/ get encrypted with this age key.
   # Only the data: and stringData: fields are encrypted (not metadata, kind, etc.)
-  - path_regex: gondor/.*\.ya?ml$
+  - path_regex: kubernetes/.*\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn

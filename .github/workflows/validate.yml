@@ -33,11 +33,11 @@ jobs:
       - uses: fluxcd/flux2/action@v2.9.0
       - uses: allenporter/flux-local/action/test@8.3.0
         with:
-          path: gondor
+          path: kubernetes
           enable-helm: true
           sources: flux-system
 
-  # Every kind:Secret under gondor/ must be SOPS-encrypted, except the
+  # Every kind:Secret under kubernetes/ must be SOPS-encrypted, except the
   # documented public-CA allowlist. Every ansible secrets file must follow the
   # *.sops.yaml convention (that suffix is what the sops vars plugin decrypts)
   # and actually be encrypted.
@@ -50,14 +50,14 @@ jobs:
         run: |
           fail=0
           # Public certs deliberately committed as plain Secrets (no private material):
-          allowlist="gondor/apps/harbor/tirion-ca-secret.yaml"
+          allowlist="kubernetes/apps/harbor/tirion-ca-secret.yaml"
           while IFS= read -r f; do
             case " $allowlist " in *" $f "*) continue ;; esac
             if ! grep -q '^sops:' "$f" || ! grep -q 'ENC\[AES256_GCM' "$f"; then
               echo "::error file=$f::kind: Secret without SOPS encryption"
               fail=1
             fi
-          done < <(grep -rl '^kind: Secret$' gondor/ --include='*.yaml')
+          done < <(grep -rl '^kind: Secret$' kubernetes/ --include='*.yaml')
           while IFS= read -r f; do
             case "$f" in *.sops.yaml) ;; *)
               echo "::error file=$f::secrets file not named *.sops.yaml (vars plugin will not decrypt it)"

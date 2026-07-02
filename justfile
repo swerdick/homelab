@@ -1,4 +1,4 @@
-# Lockstep with gondor/bootstrap/install-k3s.sh and
+# Lockstep with kubernetes/bootstrap/install-k3s.sh and
 # ansible/host_vars/samwise/main.yaml — bump all three together until the
 # "refactor install-k3s.sh to ansible" ROADMAP item collapses them.
 k3s_version := "v1.34.6+k3s1"
@@ -13,7 +13,7 @@ default:
 # --- Bootstrap ---
 
 bootstrap-gondor:
-    ssh gondor 'K3S_VERSION={{k3s_version}} bash -s' < gondor/bootstrap/install-k3s.sh
+    ssh gondor 'K3S_VERSION={{k3s_version}} bash -s' < kubernetes/bootstrap/install-k3s.sh
 
 # Pre-flight check that Flux can install on the current cluster
 flux-check:
@@ -27,7 +27,7 @@ bootstrap-flux:
         echo "Generate at https://github.com/settings/tokens (classic, scope: repo)"; \
         exit 1; \
     fi
-    bash gondor/bootstrap/bootstrap-flux.sh
+    bash kubernetes/bootstrap/bootstrap-flux.sh
 
 # --- Day-to-day ---
 
@@ -82,7 +82,7 @@ validate path:
 
 # Encrypt a Kubernetes Secret YAML in place using SOPS+age.
 # The .sops.yaml at the repo root configures which fields get encrypted
-# (currently: data: and stringData: under any gondor/*.yaml).
+# (currently: data: and stringData: under any kubernetes/*.yaml).
 #
 # Workflow for adding a new encrypted Secret:
 #   1. Write a plaintext Secret manifest with actual values
@@ -265,7 +265,7 @@ tf-keycloak-init:
     cd terraform/keycloak && tofu init -backend-config=backend.hcl
 
 # Harbor app stack — HARBOR_PASSWORD for the local `admin` user. Sourced from
-# the cluster Secret SOPS file (single source of truth: gondor/apps/harbor/
+# the cluster Secret SOPS file (single source of truth: kubernetes/apps/harbor/
 # harbor-admin.yaml) rather than a duplicate copy in secrets.sops.yaml. If the
 # admin password ever drifts (live rotated, SOPS not updated — see
 # [[project_harbor_admin_seed_only]]), this recipe will fail loud at TF auth
@@ -273,7 +273,7 @@ tf-keycloak-init:
 tf-harbor +args:
     @cd terraform/harbor && \
       HARBOR_USERNAME=admin \
-      HARBOR_PASSWORD="$(sops --decrypt --extract '["stringData"]["HARBOR_ADMIN_PASSWORD"]' ../../gondor/apps/harbor/harbor-admin.yaml)" \
+      HARBOR_PASSWORD="$(sops --decrypt --extract '["stringData"]["HARBOR_ADMIN_PASSWORD"]' ../../kubernetes/apps/harbor/harbor-admin.yaml)" \
       tofu {{args}}
 
 tf-harbor-init:
