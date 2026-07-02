@@ -18,6 +18,7 @@ metadata:
   namespace: monitoring
 spec:
   interval: 30m
+  timeout: 5m
   releaseName: loki
   chart:
     spec:

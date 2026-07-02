@@ -130,10 +130,15 @@
       check_mode: false
 
     - name: Download the official k3s installer
+      # checksum pins the installer *script* — supply-chain tripwire, not a
+      # version pin. Fails loud on upstream change: review the new script,
+      # refresh with `curl -sfL https://get.k3s.io | shasum -a 256`, and
+      # keep in lockstep with install-k3s-server.yaml.
       ansible.builtin.get_url:
         url: https://get.k3s.io
         dest: /tmp/k3s-install.sh
         mode: "0755"
+        checksum: "sha256:d264d4d43f7c5a27b44de0075513fb22dfb02d0b7cd33ba7a3838cb822f4729c"
       when: k3s_agent_active.stdout != "active"
 
     - name: Install and start k3s-agent (joins the cluster)

@@ -15,10 +15,14 @@ metadata:
   namespace: monitoring
 spec:
   interval: 30m
+  timeout: 10m
   chart:
     spec:
       chart: kube-prometheus-stack
-      version: "*"  # see note below
+      # Patch/minor bumps flow automatically; a major bump is a deliberate
+      # edit — kps majors routinely carry CRD and values breakage.
+      # Major 87 verified current 2026-07-01 (87.5.0 live on the cluster).
+      version: ">=87.0.0 <88.0.0"
       sourceRef:
         kind: HelmRepository
         name: prometheus-community
@@ -28,7 +32,7 @@ spec:
   upgrade:
     crds: CreateReplace
   values:
-    # Sized conservatively for the 10GB gondor VM
+    # Sized conservatively for the 20GB gondor VM
     prometheus:
       prometheusSpec:
         # Accept Prometheus remote_write pushes from external collectors
