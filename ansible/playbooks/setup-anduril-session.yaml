@@ -221,6 +221,7 @@
       # theme for both KWin (kcminputrc) and Xwayland (XCURSOR_THEME in the launcher).
       # python3 writes a 1x1 transparent Xcursor (no xcursorgen/imagemagick dep); the
       # common cursor names symlink to it. Guarded by `creates`.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.shell:
         executable: /bin/bash
@@ -250,6 +251,7 @@
     - name: Point KWin at the blank cursor theme (kcminputrc)
       # Belt-and-suspenders to XCURSOR_THEME — KWin also reads the Wayland cursor
       # theme from here.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.copy:
         dest: "/home/{{ session_user }}/.config/kcminputrc"
@@ -275,6 +277,7 @@
       # 100% with the GPU idle = CPU/single-thread-bound emulation (the i7-6700K
       # ceiling); GPU maxed = drop the Eden resolution. Starts visible for tuning;
       # uncomment no_display for hidden-until-Shift_R+F12.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.copy:
         dest: "/home/{{ session_user }}/.config/MangoHud/MangoHud.conf"
@@ -501,6 +504,7 @@
       # run (un-clickable here — desktop pointer is dead). Auto-accept via a
       # throwaway zenity stub so the wrapper downloads + extracts the client.
       # Guarded: only runs until the bootstrap exists.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.shell: |
         set -e
@@ -560,6 +564,7 @@
       # library free-space reporting, so it avoids the >60G-install bug the
       # whole-steamapps symlink caused. Idempotent: the symlink is the guard;
       # handles both fresh (no cache yet) and existing (move HDD->SSD) cases.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.shell: |
         set -e

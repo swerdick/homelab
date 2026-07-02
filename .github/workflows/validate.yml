@@ -1,0 +1,125 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  schedule:
+    # Weekly full-history secret sweep (Mon 04:00 UTC). PR/push runs already
+    # scan, but a schedule catches rule updates against old commits.
+    - cron: "0 4 * * 1"
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Builds every Flux Kustomization the way kustomize-controller would and
+  # templates each HelmRelease against its chart (catches values-schema drift
+  # and broken kustomizations before Flux sees them). SOPS-encrypted Secret
+  # values are ignored by design — content isn't needed to validate.
+  # `sources: flux-system` scopes discovery to Kustomizations backed by this
+  # repo; without it the external auto-water GitRepository aborts discovery
+  # and ZERO tests run (verified locally — exit 0, "no tests ran").
+  flux-local:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: allenporter/flux-local/action/test@8.3.0
+        with:
+          path: gondor
+          enable-helm: true
+          sources: flux-system
+
+  # Every kind:Secret under gondor/ must be SOPS-encrypted, except the
+  # documented public-CA allowlist. Every ansible secrets file must follow the
+  # *.sops.yaml convention (that suffix is what the sops vars plugin decrypts)
+  # and actually be encrypted.
+  sops-guardrail:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Assert all Secrets and ansible vars are SOPS-encrypted
+        run: |
+          fail=0
+          # Public certs deliberately committed as plain Secrets (no private material):
+          allowlist="gondor/apps/harbor/tirion-ca-secret.yaml"
+          while IFS= read -r f; do
+            case " $allowlist " in *" $f "*) continue ;; esac
+            if ! grep -q '^sops:' "$f" || ! grep -q 'ENC\[AES256_GCM' "$f"; then
+              echo "::error file=$f::kind: Secret without SOPS encryption"
+              fail=1
+            fi
+          done < <(grep -rl '^kind: Secret$' gondor/ --include='*.yaml')
+          while IFS= read -r f; do
+            case "$f" in *.sops.yaml) ;; *)
+              echo "::error file=$f::secrets file not named *.sops.yaml (vars plugin will not decrypt it)"
+              fail=1 ;;
+            esac
+          done < <(find ansible -name 'secrets*.yaml' -o -name 'secrets*.yml')
+          while IFS= read -r f; do
+            if ! grep -q '^sops:' "$f"; then
+              echo "::error file=$f::*.sops.yaml file is not actually encrypted"
+              fail=1
+            fi
+          done < <(find ansible -name '*.sops.yaml')
+          exit "$fail"
+
+  # Tripwire, not cleanup — history was audited clean 2026-07-01. Full-history
+  # scan (fetch-depth: 0) on every run; .gitleaks.toml allowlists SOPS
+  # ciphertext. No GITLEAKS_LICENSE needed on a personal account.
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ANSIBLE_VARS_ENABLED overrides ansible.cfg's vars_plugins_enabled so the
+  # community.sops vars plugin never loads — no decryption is attempted in CI;
+  # encrypted values pass through as inert ENC[...] strings. Collections are
+  # installed so syntax-check can resolve community.*/ansible.posix modules.
+  # ansible-lint floats: a new release may add rules — treat new failures as
+  # advisories to fix or (with rationale) add to ansible/.ansible-lint.
+  ansible-lint:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    env:
+      ANSIBLE_VARS_ENABLED: host_group_vars
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install ansible-lint
+      - run: ansible-galaxy collection install -r requirements.yaml
+      - run: ansible-lint --nocolor --profile basic playbooks/
+
+  # fmt + validate only — no backend init, no credentials, no state access.
+  # tofu version floats (validate has no state-format exposure).
+  tofu:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [proxmox, keycloak, harbor]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_wrapper: false
+      - run: tofu -chdir=terraform/${{ matrix.stack }} fmt -check -diff
+      - run: tofu -chdir=terraform/${{ matrix.stack }} init -backend=false
+      - run: tofu -chdir=terraform/${{ matrix.stack }} validate

@@ -69,4 +69,3 @@
       # immediate-restart of the timer is needed.
       ansible.builtin.systemd:
         daemon_reload: true
-

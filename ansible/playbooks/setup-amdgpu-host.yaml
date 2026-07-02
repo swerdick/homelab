@@ -121,7 +121,7 @@
       # Privileged LXCs map 1:1, so the in-container video/render groups must
       # use these host GIDs to access /dev/dri/card* and /dev/dri/renderD128.
       # Captured here for reference by the spike + the gaming-session play.
-      ansible.builtin.shell: "getent group render video"
+      ansible.builtin.command: "getent group render video"
       register: gpu_gids
       changed_when: false
       check_mode: false

@@ -17,13 +17,32 @@
 #   ansible-playbook playbooks/site-anduril.yaml --check --diff
 #   ansible-playbook playbooks/site-anduril.yaml
 
-- import_playbook: setup-pseudo-user.yaml
-- import_playbook: setup-debian-base.yaml
-- import_playbook: distribute-root-ca.yaml
-- import_playbook: install-unattended-upgrades.yaml
-- import_playbook: install-alloy.yaml
-- import_playbook: setup-anduril-session.yaml
-- import_playbook: setup-anduril-xrdp.yaml
-- import_playbook: setup-anduril-apps.yaml
-- import_playbook: install-anduril-emulators.yaml
-- import_playbook: setup-anduril-sunshine.yaml
+- name: Create the pseudo admin user
+  import_playbook: setup-pseudo-user.yaml
+
+- name: Apply the Debian base config
+  import_playbook: setup-debian-base.yaml
+
+- name: Distribute the homelab root CA
+  import_playbook: distribute-root-ca.yaml
+
+- name: Configure unattended upgrades
+  import_playbook: install-unattended-upgrades.yaml
+
+- name: Install the Alloy collector
+  import_playbook: install-alloy.yaml
+
+- name: Configure the gaming session (KWin + Steam Big Picture)
+  import_playbook: setup-anduril-session.yaml
+
+- name: Configure the xrdp admin desktop
+  import_playbook: setup-anduril-xrdp.yaml
+
+- name: Install desktop apps (Spotify, Discord)
+  import_playbook: setup-anduril-apps.yaml
+
+- name: Install the emulation stack
+  import_playbook: install-anduril-emulators.yaml
+
+- name: Install Sunshine game streaming
+  import_playbook: setup-anduril-sunshine.yaml

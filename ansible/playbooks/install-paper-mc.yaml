@@ -58,7 +58,7 @@
         state: absent
         purge: true
 
-    - name: Create '{{ paper_user }}' system user
+    - name: Create the Paper system user {{ paper_user }}
       ansible.builtin.user:
         name: "{{ paper_user }}"
         system: true
@@ -66,7 +66,7 @@
         shell: /usr/sbin/nologin
         create_home: false
 
-    - name: Ensure {{ paper_home }} exists with correct ownership
+    - name: Ensure correct ownership of the Paper home {{ paper_home }}
       ansible.builtin.file:
         path: "{{ paper_home }}"
         state: directory
@@ -170,7 +170,7 @@
 
     # --- Plugins ---------------------------------------------------------
 
-    - name: Ensure {{ paper_home }}/plugins exists
+    - name: Ensure the plugins dir exists under {{ paper_home }}
       ansible.builtin.file:
         path: "{{ paper_home }}/plugins"
         state: directory

@@ -159,6 +159,7 @@
       # so BIOS + saves live on /bulk/games (survive a CT rebuild) and the file
       # browser opens at the ROM tree. create=true seeds the file if absent;
       # RetroArch fills in the rest of its defaults on first launch.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.lineinfile:
         path: "/home/{{ session_user }}/.config/retroarch/retroarch.cfg"
@@ -270,6 +271,7 @@
         state: present
 
     - name: Ensure the RetroArch autoconfig dir exists
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.file:
         path: "/home/{{ session_user }}/.config/retroarch/autoconfig"
@@ -282,6 +284,7 @@
       # in-app "Update Controller Profiles" fetches; udev/ includes "Microsoft X-Box
       # 360 pad" (045e:028e, display "Xbox 360 Controller") — exactly what Steam
       # Input presents the controller as — so it auto-binds. `creates` = idempotent.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.unarchive:
         src: https://buildbot.libretro.com/assets/frontend/autoconfig.zip
@@ -290,6 +293,7 @@
         creates: "/home/{{ session_user }}/.config/retroarch/autoconfig/udev"
 
     - name: Ensure the RetroArch cores dir exists
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.file:
         path: "/home/{{ session_user }}/.config/retroarch/cores"
@@ -301,6 +305,7 @@
       # the menu). Pull a default set covering the ROM library from the libretro
       # buildbot — the same source as the in-app Online Updater -> Core Downloader.
       # Add more cores later in-app. `creates` keeps each download idempotent.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.unarchive:
         src: "https://buildbot.libretro.com/nightly/linux/x86_64/latest/{{ item }}_libretro.so.zip"
@@ -368,6 +373,7 @@
               open(p, "wb").write(d)
 
     - name: Clear exec-stack flag on cores the hardened kernel rejects
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.command:
         cmd: >-
@@ -383,6 +389,7 @@
     # --- Dolphin (GameCube/Wii): point at the shared ROM tree -------------------
 
     - name: Ensure Dolphin's config dir exists
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.file:
         path: "/home/{{ session_user }}/.config/dolphin-emu"
@@ -394,8 +401,9 @@
       # ISOPath0..N = dirs, RecursiveISOPaths = recurse. Pre-seeding these makes
       # Dolphin list the GC/Wii titles (.rvz/.iso) in the flat roms/ heap on first
       # launch — no in-app "Add folder" step. Dolphin uses spaced `Key = Value`.
+      become: true
       become_user: "{{ session_user }}"
-      ansible.builtin.ini_file:
+      community.general.ini_file:
         path: "/home/{{ session_user }}/.config/dolphin-emu/Dolphin.ini"
         section: General
         option: "{{ item.option }}"
@@ -418,6 +426,7 @@
       # rewrites this file on exit but preserves the entry once read. Fragile by
       # nature (live-rewritten Qt config) — if it doesn't take, add the folder via
       # Eden's UI (+ button); it can't corrupt the emulator, only the game list.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.ini_file:
         path: "/home/{{ session_user }}/.config/eden/qt-config.ini"
@@ -527,6 +536,7 @@
           # RetroArch's system dir. Pin it at the shared pack + pre-select the US PS2
           # BIOS so a rebuilt CT boots PS2 without the setup wizard. PCSX2 live-rewrites
           # this ini but preserves these keys once set.
+          become: true
           become_user: "{{ session_user }}"
           ansible.builtin.ini_file:
             path: "/home/{{ session_user }}/.config/PCSX2/inis/PCSX2.ini"
@@ -545,6 +555,7 @@
           # SDL Xbox layout) so the controller survives a rootfs rebuild without
           # re-mapping. CAVEAT: bound to device index SDL-0; if the pad enumerates
           # elsewhere on a rebuild, re-run Automatic Mapping in PCSX2 -> Controllers.
+          become: true
           become_user: "{{ session_user }}"
           ansible.builtin.ini_file:
             path: "/home/{{ session_user }}/.config/PCSX2/inis/PCSX2.ini"
@@ -676,6 +687,7 @@
           # lose them. Firmware is imported in-app (Eden -> Install Firmware) from
           # {{ emu_root }}/bios/switch. Verify-before: confirm this data-dir path
           # against the installed Eden version if keys aren't detected.
+          become: true
           become_user: "{{ session_user }}"
           block:
             - name: Ensure the Eden keys dir exists
@@ -697,6 +709,7 @@
           # controller. Eden live-rewrites qt-config.ini but preserves these once set.
           # CAVEAT: if the pad enumerates with a different guid post-rebuild, just
           # re-run Eden -> Controls -> auto-map and re-capture the file.
+          become: true
           become_user: "{{ session_user }}"
           ansible.builtin.ini_file:
             path: "/home/{{ session_user }}/.config/eden/qt-config.ini"
@@ -776,6 +789,7 @@
       # (EmuDeck shortnames), ONE FILE PER GAME -- not a folder per ROM. Saves/states
       # live centrally in each emulator's config dir, never beside the ROM. Drop ROMs
       # into the matching folder; flatten any existing per-game folders into these.
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.file:
         path: "{{ emu_root }}/roms/{{ item }}"
@@ -851,6 +865,7 @@
           StartupWMClass=steam-rom-manager
 
     - name: Ensure the SRM userData dir exists (for the seeded config)
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.file:
         path: "/home/{{ session_user }}/.config/steam-rom-manager/userData"
@@ -861,7 +876,8 @@
       # 12 parsers (RetroArch cores, PCSX2, Eden, ...) + app settings, captured from
       # the live SRM. force=false seeds a rebuilt CT without clobbering live GUI edits
       # -- re-export these files to update. The committed copy has SRM's SteamGridDB
-      # nsfw/humor filter toggles stripped (SRM restores them as defaults on load).
+      # content/humor filter toggles stripped (SRM restores them as defaults on load).
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/files/anduril/{{ item.src }}"
@@ -887,6 +903,7 @@
       # calls -> costs FPS on the CPU-bound i7-6700K) and the Sweetmini 1008p res mod
       # (Eden's own scaler renders sharper on the 4K TV). Toggle individual mods in Eden
       # -> Properties -> Add-Ons. See [[project_anduril_emulation_cpu_bound]].
+      become: true
       become_user: "{{ session_user }}"
       ansible.builtin.shell:
         cmd: >
