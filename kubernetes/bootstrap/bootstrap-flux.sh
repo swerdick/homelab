@@ -7,7 +7,7 @@ set -euo pipefail
 
 GITHUB_USER="${GITHUB_USER:-swerdick}"
 GITHUB_REPO="${GITHUB_REPO:-homelab}"
-CLUSTER_NAME="${CLUSTER_NAME:-gondor}"
+FLUX_PATH="${FLUX_PATH:-kubernetes}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 
 if [[ -z "${GITHUB_TOKEN:-}" ]]; then
@@ -24,7 +24,7 @@ echo "Bootstrapping Flux..."
 echo "  owner:    ${GITHUB_USER}"
 echo "  repo:     ${GITHUB_REPO}"
 echo "  branch:   ${GITHUB_BRANCH}"
-echo "  path:     ${CLUSTER_NAME}"
+echo "  path:     ${FLUX_PATH}"
 echo
 
 # Note: --personal works for both new and existing repos.
@@ -34,7 +34,7 @@ flux bootstrap github \
   --owner="${GITHUB_USER}" \
   --repository="${GITHUB_REPO}" \
   --branch="${GITHUB_BRANCH}" \
-  --path="${CLUSTER_NAME}" \
+  --path="${FLUX_PATH}" \
   --personal \
   --components-extra=image-reflector-controller,image-automation-controller
 

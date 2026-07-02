@@ -1,6 +1,6 @@
 # Tirion root CA for the monitoring namespace — mounted into the Grafana pod so
 # Go's TLS trusts Keycloak's tirion-signed cert during OIDC. Same PEM as
-# gondor/apps/immich/tirion-ca-configmap.yaml; per-namespace pattern until
+# kubernetes/apps/immich/tirion-ca-configmap.yaml; per-namespace pattern until
 # trust-manager lands (see project_in_cluster_internal_ca_trust memory).
 #
 # Public cert — safe in git. Source: the `tirion` ClusterIssuer's spec.acme.caBundle.

@@ -3,7 +3,7 @@
 collections:
   # Provides the sops vars plugin, which transparently decrypts any
   # `*.sops.yaml` file under group_vars/ or host_vars/ at playbook time.
-  # Requires the `sops` binary on the controller (already in use for gondor/).
+  # Requires the `sops` binary on the controller (already in use for kubernetes/).
   - name: community.sops
 
   # Provides the `zfs` module (used by setup-k3s-pv-storage.yaml).

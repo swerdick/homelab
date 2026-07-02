@@ -7,7 +7,7 @@ Two independent stacks — each with its own state, backend key, and provider, r
 | **proxmox** | `terraform/proxmox/` | PVE topology on `earendil` — guests, storage, backup jobs, datacenter options | `bpg/proxmox` | `homelab/terraform.tfstate` |
 | **keycloak** | `terraform/keycloak/` | Keycloak realm/client config — OIDC clients for in-cluster apps | `keycloak/keycloak` | `homelab/keycloak.tfstate` |
 
-Both use the same S3 bucket (`vingilot-homelab-tfstate`, `us-east-2`) with separate keys, so state and blast radius are isolated. Splitting also means each stack only loads and authenticates *its own* provider — a proxmox change never needs the Keycloak secret, and vice versa. Pairs with `ansible/` (in-guest + host config) and `gondor/` (cluster workloads).
+Both use the same S3 bucket (`vingilot-homelab-tfstate`, `us-east-2`) with separate keys, so state and blast radius are isolated. Splitting also means each stack only loads and authenticates *its own* provider — a proxmox change never needs the Keycloak secret, and vice versa. Pairs with `ansible/` (in-guest + host config) and `kubernetes/` (cluster workloads).
 
 ## Day-to-day
 

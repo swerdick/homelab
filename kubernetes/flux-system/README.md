@@ -1,16 +1,16 @@
 # Flux on gondor
 
-Flux 2.8 is bootstrapped on this cluster, syncing from this repository at path `./gondor`.
+Flux 2.8 is bootstrapped on this cluster, syncing from this repository at path `./kubernetes`.
 
 ## Bootstrap from scratch
 
 If gondor needs to be rebuilt and Flux needs to be re-bootstrapped against this repository:
 
-1. Install k3s and confirm cluster is reachable (see `gondor/bootstrap/install-k3s.sh`)
+1. Install k3s and confirm cluster is reachable (see `kubernetes/bootstrap/install-k3s.sh`)
 2. Install the Flux CLI on thorondor: `brew install fluxcd/tap/flux`
-3. Run the bootstrap process documented in `gondor/bootstrap/bootstrap-flux.sh`
-4. Swap to GitHub App auth using `gondor/bootstrap/setup-github-app-auth.sh`
-5. Set up SOPS decryption using `gondor/bootstrap/setup-sops.sh`
+3. Run the bootstrap process documented in `kubernetes/bootstrap/bootstrap-flux.sh`
+4. Swap to GitHub App auth using `kubernetes/bootstrap/setup-github-app-auth.sh`
+5. Set up SOPS decryption using `kubernetes/bootstrap/setup-sops.sh`
 6. Force a reconcile: `flux reconcile source git flux-system`
 
 ## Authentication (GitHub App)
@@ -62,13 +62,13 @@ GitHub App private keys should be rotated periodically (e.g., yearly) and immedi
 
 ## Encryption (SOPS+age)
 
-All Flux Kustomizations in this repo are configured with `decryption.provider: sops`, referencing a Secret named `sops-age` in the `flux-system` namespace. This Secret holds the age private key that decrypts SOPS-encrypted manifests under `gondor/`.
+All Flux Kustomizations in this repo are configured with `decryption.provider: sops`, referencing a Secret named `sops-age` in the `flux-system` namespace. This Secret holds the age private key that decrypts SOPS-encrypted manifests under `kubernetes/`.
 
 The same configuration is on every Flux Kustomization (`flux-system`, `infrastructure-controllers`, `infrastructure-instances`) — each Kustomization independently fetches and decrypts its own resources, so the `decryption:` block must be present on each.
 
 ### Encrypting a new Secret
 
-The repo's `.sops.yaml` configures SOPS to encrypt `data:` and `stringData:` fields in any YAML under `gondor/`. To create a new encrypted Secret:
+The repo's `.sops.yaml` configures SOPS to encrypt `data:` and `stringData:` fields in any YAML under `kubernetes/`. To create a new encrypted Secret:
 
 ```bash
 # Write the plaintext Secret manifest
@@ -87,8 +87,8 @@ EOF
 sops --encrypt --in-place /tmp/grafana-admin.yaml
 
 # Commit the encrypted result
-mv /tmp/grafana-admin.yaml gondor/apps/observability/secrets/
-git add gondor/apps/observability/secrets/grafana-admin.yaml
+mv /tmp/grafana-admin.yaml kubernetes/apps/observability/secrets/
+git add kubernetes/apps/observability/secrets/grafana-admin.yaml
 git commit -m "feat(grafana): set admin password Secret"
 ```
 

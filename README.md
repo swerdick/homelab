@@ -5,7 +5,7 @@ and side projects of my own development
 
 GitOps-managed where it makes sense:
 
-- **k3s + Flux** for cluster workloads (Grafana, Prometheus, cert-manager, Traefik via the Gateway API, etc.) under [`gondor/`](gondor/)
+- **k3s + Flux** for cluster workloads (Grafana, Prometheus, cert-manager, Traefik via the Gateway API, etc.) under [`kubernetes/`](kubernetes/)
 - **Ansible** for bare-host configuration (TLS trust store, Alloy collectors, unattended-upgrades, step-ca on tirion) under [`ansible/`](ansible/)
 - **SOPS + age** for in-repo secrets
 

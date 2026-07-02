@@ -10,7 +10,7 @@
 #        -c grafana -- grafana cli admin reset-admin-password '<new>'
 #      (or: change it in the Grafana UI)
 #   2. Update this Secret to match:
-#      sops gondor/apps/observability/grafana-admin.yaml
+#      sops kubernetes/apps/observability/grafana-admin.yaml
 #   3. git commit + push (no reconcile needed; the Secret is seed-only).
 apiVersion: v1
 kind: Secret

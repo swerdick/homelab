@@ -12,7 +12,7 @@ terraform:
 
 k8s:
   - changed-files:
-      - any-glob-to-any-file: "gondor/**"
+      - any-glob-to-any-file: "kubernetes/**"
 
 documentation:
   - changed-files:

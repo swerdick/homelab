@@ -69,7 +69,7 @@ resource "keycloak_openid_client" "grafana" {
 }
 
 # Retrieve with `just tf-keycloak output -raw grafana_oidc_client_secret` →
-# SOPS-encrypt into gondor/apps/observability/grafana-oauth.yaml under key
+# SOPS-encrypt into kubernetes/apps/observability/grafana-oauth.yaml under key
 # `client_secret`; the Grafana chart picks it up via envValueFrom on
 # GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET.
 output "grafana_oidc_client_secret" {

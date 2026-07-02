@@ -14,7 +14,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./gondor/infrastructure/controllers
+  path: ./kubernetes/infrastructure/controllers
   prune: true
   wait: true
   decryption:
@@ -37,7 +37,7 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./gondor/infrastructure/instances
+  path: ./kubernetes/infrastructure/instances
   prune: true
   wait: true
   dependsOn:

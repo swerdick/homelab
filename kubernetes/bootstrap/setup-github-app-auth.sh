@@ -10,7 +10,7 @@
 # - You've created a GitHub App and installed it on the repo
 # - You have the App ID, Installation ID, and downloaded private key
 #
-# Reference: see gondor/flux-system/README.md for the full procedure.
+# Reference: see kubernetes/flux-system/README.md for the full procedure.
 
 set -euo pipefail
 
@@ -75,7 +75,7 @@ echo "    flux get sources git -A"
 echo "    kubectl logs -n flux-system deployment/source-controller --tail=20 | grep -iE 'auth|error'"
 echo
 echo "POST-CHECKLIST:"
-echo "  [ ] Update gondor/flux-system/gotk-sync.yaml to include 'provider: github' and HTTPS url"
+echo "  [ ] Update kubernetes/flux-system/gotk-sync.yaml to include 'provider: github' and HTTPS url"
 echo "      (drift detection will revert the live patch otherwise)"
 echo "  [ ] Revoke the old PAT at https://github.com/settings/tokens"
 echo "  [ ] Securely delete the local .pem file: rm -P ${GITHUB_APP_PRIVATE_KEY_PATH}"

@@ -25,7 +25,7 @@ The balance: don't propose hacky homelab shortcuts that would hurt the resume an
 | aglarond | LXC shipping restic backups to Backblaze      |
 | erebor   | LXC running Proxmox Backup Server             |
 
-`gondor` and `anduril` share GPU resources — gondor is shut down sometimes so anduril can run. Components that depend on the cluster (Prometheus, Grafana, anything in `gondor/`) should tolerate gondor being unavailable.
+`gondor` and `anduril` share GPU resources — gondor is shut down sometimes so anduril can run. Components that depend on the cluster (Prometheus, Grafana, anything in `kubernetes/`) should tolerate gondor being unavailable.
 
 ## Hardware
 
@@ -57,7 +57,7 @@ If a workflow you'd repeat is missing, propose adding a recipe rather than runni
 
 ## Repo layout
 
-- `gondor/` — k8s manifests deployed via Flux (`apps/`, `infrastructure/`)
+- `kubernetes/` — k8s manifests deployed via Flux (`apps/`, `infrastructure/`)
 - `ansible/` — playbooks targeting bare hosts/LXCs/VMs (community.sops vars plugin enabled)
 - `<hostname>/` — host-specific scripts/notes (e.g. `earendil/`, `tirion/`)
 - `runbooks/` — written-down procedures for things not yet automated
@@ -66,7 +66,7 @@ If a workflow you'd repeat is missing, propose adding a recipe rather than runni
 
 - **Plaintext-only secrets** (passwords pseudo just needs to remember): **Bitwarden**.
 - **In-repo secrets**: SOPS + age, configured via `.sops.yaml`.
-  - `gondor/**/*.yaml` — encrypts only `data:` / `stringData:` (k8s Secret manifests).
+  - `kubernetes/**/*.yaml` — encrypts only `data:` / `stringData:` (k8s Secret manifests).
   - `ansible/**/*.sops.yaml` — encrypts every value (plain Ansible vars files).
   - Encrypt with `just sops-encrypt <path>` or `sops --encrypt --in-place <path>`.
   - Edit later with `sops <path>` (opens decrypted in `$EDITOR`).
@@ -93,13 +93,13 @@ Internal CA: **step-ca on `tirion`**. cert-manager `ClusterIssuer` named `tirion
 - Commit style: conventional-ish (`feat:`, `fix:`, `chore(scope):`, `refactor:`, `test:`). Match the tone in `git log`.
 - **Always pause for human review before `git commit` or `git push`**, even when prior approval to "commit as we go" was given. The user wants to inspect staged changes first.
 - **Ansible playbooks must be safely runnable unrestricted.** `-l <host>` is a development convenience, not a safety mechanism — a future edit could forget it. After any template/var/task change, preview with `ansible-playbook --check --diff playbooks/<name>.yaml` (no `-l`) and inspect the PLAY RECAP: every host that isn't the intended target must show `changed=0`. Drift caught: a Jinja conditional with stray surrounding whitespace once made `config.alloy` render with a one-line diff on every host, which would have triggered a fleet-wide alloy restart cascade. Move blank lines *inside* the conditional, gate task-level work with `when:`, and verify before applying.
-- Cluster changes flow through Flux — don't `kubectl apply` directly to gondor for things that should be in `gondor/`. Edit the manifest, commit, push, `just reconcile`.
+- Cluster changes flow through Flux — don't `kubectl apply` directly to gondor for things that should be in `kubernetes/`. Edit the manifest, commit, push, `just reconcile`.
 - **When deploying a new service to gondor (or anywhere else), search for current installation documentation online before drafting manifests.** Don't rely on memory for chart versions, values structure, deployment modes, or required fields — they drift fast (the Loki chart jumped from 6.x to 13.x in months, with breaking values changes; landing on a stale constraint silently rendered an empty install before we caught it). Fetch the project's official install docs *and* the chart's current `values.yaml` from `main` (or the specific tagged release) before writing the HelmRelease.
 - **Tag every Grafana dashboard you build with `homelab`.** The `just backup-grafana` recipe filters `?tag=homelab` to skip the ~30 dashboards auto-shipped by kube-prometheus-stack — anything you create without that tag won't be backed up to git, and won't survive a Grafana DB wipe.
 - **New OIDC apps map permissions to the two existing Keycloak groups, never to per-app local users.** `homelab-admins` → that app's full-admin role (Grafana `GrafanaAdmin`, Harbor `sysadmin_flag`, Immich Admin, etc.); `homelab-readonly` → its read-only role (Viewer / Limited Guest / equivalent). Membership stays hand-managed in the Keycloak UI — humans-in-UI, structure-in-TF — so adding a new person to all apps at the right tier is a one-click group-add. Wire a `keycloak_openid_group_membership_protocol_mapper` on the new client in `terraform/keycloak/keycloak.tf` (pattern: `<app>_groups`, `claim_name: groups`, `full_path: false`); without it the token carries no group info and the app sees nothing to map. Per-app *consumption* differs (Grafana JMESPath, Harbor UI fields, Immich claim mapping) — see Worked examples. Don't pre-create a local user matching your Keycloak username; let OAuth onboarding create it (login-collision blocks first sign-up with a misleading "user not found").
 
 ## Worked examples (read these before adding similar things)
 
-- **New internal HTTPS service**: `gondor/apps/observability/grafana-route.yaml` + the `grafana-https` listener in `gondor/infrastructure/instances/traefik/gateway.yaml`. Pattern is: Gateway listener with hostname, cert-manager Certificate, HTTPRoute, optional traefik Middleware via `ExtensionRef` filter. Plus a router DNS record.
+- **New internal HTTPS service**: `kubernetes/apps/observability/grafana-route.yaml` + the `grafana-https` listener in `kubernetes/infrastructure/instances/traefik/gateway.yaml`. Pattern is: Gateway listener with hostname, cert-manager Certificate, HTTPRoute, optional traefik Middleware via `ExtensionRef` filter. Plus a router DNS record.
 - **Encrypted credentials with both k8s + Ansible sides**: `prometheus-basic-auth` (k8s, bcrypt) paired with `ansible/group_vars/alloy/secrets.sops.yaml` (plaintext). Rotating means updating both files in lockstep.
-- **New OIDC app integration**: read the three existing wirings as a set. (1) `terraform/keycloak/keycloak.tf` — `keycloak_openid_client.<app>` + sensitive `<app>_oidc_client_secret` output + `<app>_groups` membership mapper. (2) Per-pod CA mount so the pod trusts `keycloak.vingilot.internal` (chart-native `caBundleSecretName` for Harbor; ConfigMap + `NODE_EXTRA_CA_CERTS` for Immich/Node; ConfigMap + `auth.generic_oauth.tls_client_ca` for Grafana/Go — OAuth-scoped, system trust untouched). (3) Role mapping: Grafana's `role_attribute_path` JMESPath in `gondor/apps/observability/kube-prometheus-stack.yaml`; Harbor's `oidc_admin_group` + `oidc_groups_claim` + `oidc_user_claim: preferred_username` saved via UI or PUT to `/api/v2.0/configurations`; Immich is a manual UI bump until we add a Keycloak Script Mapper or per-user attribute. Local admins (`*-admin.yaml` SOPS Secrets) stay as break-glass only.
+- **New OIDC app integration**: read the three existing wirings as a set. (1) `terraform/keycloak/keycloak.tf` — `keycloak_openid_client.<app>` + sensitive `<app>_oidc_client_secret` output + `<app>_groups` membership mapper. (2) Per-pod CA mount so the pod trusts `keycloak.vingilot.internal` (chart-native `caBundleSecretName` for Harbor; ConfigMap + `NODE_EXTRA_CA_CERTS` for Immich/Node; ConfigMap + `auth.generic_oauth.tls_client_ca` for Grafana/Go — OAuth-scoped, system trust untouched). (3) Role mapping: Grafana's `role_attribute_path` JMESPath in `kubernetes/apps/observability/kube-prometheus-stack.yaml`; Harbor's `oidc_admin_group` + `oidc_groups_claim` + `oidc_user_claim: preferred_username` saved via UI or PUT to `/api/v2.0/configurations`; Immich is a manual UI bump until we add a Keycloak Script Mapper or per-user attribute. Local admins (`*-admin.yaml` SOPS Secrets) stay as break-glass only.
