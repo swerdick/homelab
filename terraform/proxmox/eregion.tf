@@ -1,6 +1,11 @@
-# eregion — CT 142, unprivileged Paper Minecraft server.
+# eregion — CT 142, unprivileged Fabric Minecraft server.
 # Second Age realm of the elven-smiths; thematic fit for a crafting server.
-# In-guest config: ansible/playbooks/install-paper-mc.yaml.
+# In-guest config: ansible/playbooks/install-fabric-mc.yaml.
+#
+# Sized for one modded Fabric world running at a time (Tectonic + Terralith +
+# Distant Horizons). 8 GiB covers a single ~6 GiB-heap instance; the disk is
+# grown well past the world footprint because every staged world's data + DH
+# LOD databases live on the rootfs even while their systemd instance is stopped.
 
 resource "proxmox_virtual_environment_container" "eregion" {
   vm_id        = 142
@@ -12,7 +17,7 @@ resource "proxmox_virtual_environment_container" "eregion" {
 
   disk {
     datastore_id = "local-zfs"
-    size         = 20
+    size         = 48
   }
 
   features {
@@ -20,11 +25,11 @@ resource "proxmox_virtual_environment_container" "eregion" {
   }
 
   cpu {
-    cores = 2
+    cores = 4
   }
 
   memory {
-    dedicated = 4096
+    dedicated = 8192
     swap      = 512
   }
 

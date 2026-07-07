@@ -1,0 +1,32 @@
+# Minecraft (Fabric) artifacts published to Harbor as OCI blobs by
+# publish-mc-mods.sh, and pulled onto eregion by ansible/playbooks/install-fabric-mc.yaml.
+#
+# Format (pipe-delimited, one artifact per line):
+#   name | tag | filename | upstream_url | sha512
+#
+# - name/tag  -> Harbor coordinate:  harbor.vingilot.internal/minecraft/<name>:<tag>
+#                (OCI tags can't contain '+', so '+' in versions is written as '-')
+# - filename  -> canonical on-disk name; the file is renamed to this before push,
+#                so `oras pull` restores exactly this name into the mods/ dir.
+#                MUST match the `filename:` in ansible/host_vars/eregion/main.yaml.
+# - sha512    -> upstream file hash; verified before push AND after pull. Leave
+#                EMPTY to skip pre-verify and have the script print the computed
+#                sha512 instead (used for the Fabric launcher jar, which upstream
+#                publishes with no checksum — paste the printed value into
+#                host_vars `minecraft_launch_jar.sha512`).
+#
+# Keep this file and host_vars/eregion/main.yaml in sync — both derive from the
+# same Modrinth release data. Bumping a mod = edit both, re-run this script,
+# re-run the playbook. See runbooks/fabric-upgrade.md.
+
+fabric-server-launch|26.2-loader0.19.3-installer1.1.1|fabric-server-mc26.2-loader0.19.3.jar|https://meta.fabricmc.net/v2/versions/loader/26.2/0.19.3/1.1.1/server/jar|0c0a57be5c5786fffd697d9608ae09f8e1c025546e3daad4d5385bccfa4d2ea018fec399d57dbee5b557711b8cd8852c5423f514d1d4c71093d86f6e96711a7d
+fabric-api|0.154.2-26.2|fabric-api.jar|https://cdn.modrinth.com/data/P7dR8mSH/versions/Kr4WG5mG/fabric-api-0.154.2%2B26.2.jar|7cedad862e8105a7de8db090c0707c25a14a9472654090861dcf490f834862c3212723e762f6f797a0e4683104f4b3a20d3692fb29d7b5c0af437613283d34db
+lithium|0.25.1-mc26.2|lithium.jar|https://cdn.modrinth.com/data/gvQqBUqZ/versions/vy3clWg7/lithium-fabric-0.25.1%2Bmc26.2.jar|165320d63464bf45676ff6b4437111e63547ac7f752d7b19a19cdf90083c4c941062ba82dd1dc80ba539a07a97dc08e7db81405fd3ac0998f2a374806d70651a
+ferritecore|9.0.0-fabric|ferritecore.jar|https://cdn.modrinth.com/data/uXXizFIs/versions/d5ddUdiB/ferritecore-9.0.0-fabric.jar|d81fa97e11784c19d42f89c2f433831d007603dd7193cee45fa177e4a6a9c52b384b198586e04a0f7f63cd996fed713322578bde9a8db57e1188854ae5cbe584
+c2me|0.4.1-beta.1.0-26.2|c2me.jar|https://cdn.modrinth.com/data/VSNURh3q/versions/hfq4dPFH/c2me-fabric-mc26.2-0.4.1-beta.1.0.jar|21076491de36c5d680cafa494116b98a134a3d7e3cbcb77a59942bab0ceacf6c9386a80b1e4d870e501aafab27b89c0b5d7a09f1392a4d4ab43a87f9d3524841
+chunky|1.5.3|chunky.jar|https://cdn.modrinth.com/data/fALzjamp/versions/4Eotm6ov/Chunky-Fabric-1.5.3.jar|b83bfe7b218d0aa6232af977ae741dc1f82b10e50cd12bb759f65cf416b8b62beccb543e587ef0b9670abe03815660f8e091bc6823624d65cf07300571573516
+spark|1.10.173-fabric|spark.jar|https://cdn.modrinth.com/data/l6YH9Als/versions/iYFOl6lQ/spark-1.10.173-fabric.jar|1dcbf2b76ceacf07523afaeaf63d3625b0318077cc6ce588bb701aea4a494bc2a5179fd2ca5aeda9513c6a2248c2ec590387e8aec6ac9fd8e3d01760bbc3dbfb
+distant-horizons|3.1.2-b-26.2|distant-horizons.jar|https://cdn.modrinth.com/data/uCdwusMi/versions/IguX0jEa/DistantHorizons-3.1.2-b-26.2-fabric-neoforge.jar|3bd9c7093f2589fdbbc521d67e98f160ccd6d5fc538a2d83146039f944c8ee648f1057d1c3c3cb44be1d759e5eab7b062dfc934443b34489f9695dff83c08511
+tectonic|3.0.26-fabric-26.2|tectonic.jar|https://cdn.modrinth.com/data/lWDHr9jE/versions/rc4JXlpP/tectonic-3.0.26-fabric-26.2.jar|6ca2ac61ce7fa9e8758bdf83bff99c97d39a300efbec12db2714557aef420739b46a68aa62ee93cdd6339f8f7ad8cbbeca59f5be3c6361b8d0ea09e34a45864c
+lithostitched|1.7.13-fabric-26.2|lithostitched.jar|https://cdn.modrinth.com/data/XaDC71GB/versions/vVFCOh7u/lithostitched-1.7.13-fabric-26.2.jar|22a6ef66abbc4fbba910cd7bba7e83f50f6cadb425058cbb484b9280c0aee59475bfb4fff41ee5dc939ecb124e2c8c518a84d1a5c58ecb7bf9b0ae856daf64bb
+terralith|2.6.3-26.2|terralith.zip|https://cdn.modrinth.com/data/8oi3bsk5/versions/eihdCshF/Terralith_26.2_v2.6.3.zip|8537db76a77c9ac749c26ed213bdaac576fc92328dcba65c6e5ad20062946c9e5ff02b7ada8492812da5d8b2a8eee57817d0475e128667c3aca6b790e5ba6cdb
