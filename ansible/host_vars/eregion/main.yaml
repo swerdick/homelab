@@ -1,46 +1,51 @@
 ---
-# PaperMC server pinning (v3 / Paper-native versioning).
-# Bump these to upgrade; re-run install-paper-mc.yaml; the handler restarts
-# the service via mcrcon (clean save+stop). See runbooks/paper-upgrade.md.
+# Fabric Minecraft server config for eregion (Paper → Fabric rebuild).
+# Managed by ansible/playbooks/install-fabric-mc.yaml. See runbooks/fabric-upgrade.md.
 #
-# Browse versions: https://fill.papermc.io/v3/projects/paper
-# Build metadata:  https://fill.papermc.io/v3/projects/paper/versions/<ver>/builds/<build>
+# Multi-world = one systemd instance per `minecraft_instances` entry
+# (fabric-server@<name>), each with its own dir/port/mods/world. Only
+# `enabled: true` instances run; the rest are staged on disk but stopped.
+# Worlds are run one at a time, so eregion is sized for a single instance.
 #
-# Note: Paper's v3 API uses Paper-native versioning (26.1.x) decoupled from
-# the Minecraft version string. The MC-version-based 1.21.x track on the
-# legacy v2 API still exists but is on a slower release cadence; v3 is
-# the canonical track going forward.
-paper_version: "26.1.2"
-paper_build: 64
+# Artifacts (Fabric launcher, mods, datapacks) are pulled from Harbor with ORAS
+# (harbor.vingilot.internal/minecraft/<name>:<tag>), pushed there once by
+# scripts/publish-mc-mods.sh. Each carries `sha512` (the integrity pin —
+# verified after every pull, fail-closed) and `upstream_url` (the documented
+# fallback if Harbor is down: swap the oras-pull task back to get_url). OCI tags
+# can't contain '+', so version tags replace '+' with '-'.
+#
+# Bumping a mod: update its version/tag/sha512/upstream_url here, re-run
+# scripts/publish-mc-mods.sh to push the new jar, then re-run the playbook.
 
-# JVM heap. Xms < Xmx (deliberately NOT Aikar's Xms==Xmx) so the heap can
-# shrink back toward Xms while the server is idle and hand the freed pages
-# back to earendil. eregion sits empty ~90% of the time, so the payoff is a
-# ~3.8 GiB -> ~1.5-2 GiB idle host footprint. Xmx stays at 3G, so the busy
-# ceiling — and therefore the LXC's 4 GiB cap and our host worst-case memory
-# budget — is unchanged. The first player to join after a long idle eats a
-# brief heap-regrow warm-up; imperceptible on a <=10-player friends server.
-# (Drop Xms to 512M for an even lower idle floor at the cost of a bigger regrow.)
-paper_xms: "1G"
-paper_xmx: "3G"
+minecraft_mc_version: "26.2"
+minecraft_fabric_loader: "0.19.3"
+minecraft_fabric_installer: "1.1.1"
 
-# JVM flags. Base is Paper's recommended Aikar G1GC set (published at
-# fill.papermc.io/v3/projects/paper/versions/<ver> under
-# version.java.flags.recommended), with two deliberate deviations so an idle
-# server returns memory to the host (see paper_xms/paper_xmx):
-#   * removed  -XX:+AlwaysPreTouch
-#       It force-commits the entire heap at startup and never releases it —
-#       the single biggest reason eregion pinned 3.8 GiB whether 0 or 10
-#       players were on.
+# oras CLI (host-side puller). Bump = edit here; playbook re-installs.
+# https://github.com/oras-project/oras/releases
+minecraft_oras_version: "1.3.2"
+minecraft_oras_sha256: "9229ccc6d17bb282039ad4a69abb16dcb887a5bce567c075d731d9b3c7ad8eaf"
+
+# Fabric server launcher jar. publish-mc-mods.sh fetches it from
+# meta.fabricmc.net/v2/versions/loader/26.2/0.19.3/1.1.1/server/jar (which
+# publishes NO checksum) and prints the sha512 it computed — paste that below.
+minecraft_launch_jar:
+  filename: fabric-server-mc26.2-loader0.19.3.jar
+  artifact: "fabric-server-launch:26.2-loader0.19.3-installer1.1.1"
+  sha512: "0c0a57be5c5786fffd697d9608ae09f8e1c025546e3daad4d5385bccfa4d2ea018fec399d57dbee5b557711b8cd8852c5423f514d1d4c71093d86f6e96711a7d"
+
+# RCON password: reuse the existing SOPS-encrypted secret (still keyed
+# `paper_rcon_password` in secrets.sops.yaml) rather than re-encrypting the
+# vault during the rebuild. Rename the SOPS key at leisure later.
+minecraft_rcon_password: "{{ paper_rcon_password }}"
+
+# JVM flags. Aikar's G1GC set with two deliberate deviations so an idle server
+# hands memory back to earendil (unchanged from the Paper era):
+#   * removed  -XX:+AlwaysPreTouch   (force-commits + never releases the heap)
 #   * added    -XX:G1PeriodicGCInterval=60000 -XX:-G1PeriodicGCInvokesConcurrent
-#       JEP 346: once 60s pass with no GC (i.e. the server is idle), G1 runs a
-#       *full* GC and uncommits unused heap. The full-GC variant (-...Concurrent)
-#       hands back the most memory. It can only fire after a GC-free window, so
-#       it never triggers during active play — an active server GCs far more
-#       often than every 60s.
-# Dropped the -Daikars.* identification markers since this is no longer the
-# stock recommended set.
-paper_flags: >-
+#              (JEP 346: full GC + heap uncommit after a 60s GC-free/idle window)
+# Per-instance heap is set by xms/xmx below (not baked into these flags).
+minecraft_flags: >-
   -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200
   -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC
   -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M
@@ -50,81 +55,120 @@ paper_flags: >-
   -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1
   -XX:G1PeriodicGCInterval=60000 -XX:-G1PeriodicGCInvokesConcurrent
 
-# RCON port for `mcrcon` from thorondor. Paper always listens on 0.0.0.0
-# (vanilla MC's `rcon.bind` is silently ignored); LAN-only positioning +
-# the strong password in secrets.sops.yaml handles the threat model.
-paper_rcon_port: 25575
+# server.properties + per-instance defaults (each instance may override).
+minecraft_motd_default: "Vingilot Minecraft - eregion"
+minecraft_max_players: 10
+minecraft_view_distance: 10
+minecraft_difficulty: "normal"
+# Pause world + entity ticking after this many player-empty seconds; pairs with
+# the idle-uncommit JVM flags so an empty server's heap shrinks. -1 = never.
+minecraft_pause_when_empty_seconds: 60
+# Fallback heap if an instance omits xms/xmx.
+minecraft_xms: "1G"
+minecraft_xmx: "4G"
 
-# server.properties overrides — Paper auto-generates everything else.
-paper_motd: "Vingilot Minecraft - eregion"
-paper_max_players: 10
-paper_view_distance: 10
-paper_difficulty: "normal"
-
-# Pause world + entity ticking once the server has had zero players for this
-# many seconds (vanilla server.properties key; Paper ships it at -1 = never).
-# Pairs with the idle-uncommit JVM flags above: a paused server stops
-# allocating, so the periodic GC has nothing to retain and the heap shrinks
-# promptly. Players un-pause the world instantly on join (brief tick warm-up,
-# the same idle trade-off as the heap regrow). Set to -1 to restore Paper's
-# default if any time-based plugin behaviour misbehaves while empty.
-paper_pause_when_empty_seconds: 60
-
-# paper_rcon_password lives in host_vars/eregion/secrets.sops.yaml
-# (SOPS-encrypted; community.sops.sops vars plugin auto-decrypts at runtime).
-
-# --- Server operators (ops.json) ------------------------------------------
-# Paper reads ops.json at start; the playbook templates it from this list.
-# `level` is the op level: 4 = full ops (default), lower values restrict
-# command access. UUIDs come from Mojang's API:
-#   curl -s https://api.mojang.com/users/profiles/minecraft/<name>
-# Insert dashes in the 8-4-4-4-12 format that ops.json expects.
-paper_ops:
+# --- Server operators (ops.json, templated per instance) -------------------
+# UUIDs from https://api.mojang.com/users/profiles/minecraft/<name>, dashed.
+minecraft_ops:
   - uuid: 77eec660-11a0-4afc-bab5-a902250e639b
     name: sudoNebula
     level: 4
     bypassesPlayerLimit: false
 
-# --- Plugins ---------------------------------------------------------------
-# Server-side .jar plugins installed under /opt/minecraft/plugins/. The
-# `filename` is the on-disk name (overwritten on version bump, so a bump
-# just replaces the file); the URL points at the upstream artifact for
-# that version. SHA512 is verified on download (Modrinth/GitHub publish
-# either sha512 or sha1; we prefer sha512).
-#
-# Any .jar in /opt/minecraft/plugins/ not listed here gets removed on
-# re-run — so dropping a plugin is just deleting the entry + replay.
-paper_plugins:
-  - filename: Multiverse-Core.jar
-    url: https://cdn.modrinth.com/data/3wmN97b8/versions/g7LecP9j/multiverse-core-5.6.2.jar
-    sha512: 364df3e244c6344b00a3da1820262c1c62720ddac911d1de4eea7a3ce0e6f219442c1c1cd51746b78551c19f7fcbc934cd177516091e4d3d21f3a6c90cf84808
-  # EssentialsX intentionally absent — EssentialsX 2.21.2 (latest stable as
-  # of 2026-05) NPEs on enable against Paper 26.1.2 (its provider lookup
-  # tries to resolve a class that's moved/changed in Paper 26.x). The
-  # 2.22.0-dev snapshot on ci.ender.zone (#1799) predates Paper 26.1.2's
-  # release by 4 days, so it can't have the fix either. Re-add when a
-  # Paper-26-compat EssentialsX stable lands. See ROADMAP.
+# --- Shared server-side mod set -------------------------------------------
+# Every instance gets these (Fabric API + Distant Horizons server LOD + the
+# performance/utility set). Instances concatenate their own worldgen mods on
+# top via Jinja (see minecraft_instances). All SERVER-SIDE — shaders/Sodium/
+# Iris are client-only and live in the Prism client on anduril, never here
+# (see runbooks/eregion-client.md).
+_mods_core:
+  - filename: fabric-api.jar
+    artifact: "fabric-api:0.154.2-26.2"
+    sha512: "7cedad862e8105a7de8db090c0707c25a14a9472654090861dcf490f834862c3212723e762f6f797a0e4683104f4b3a20d3692fb29d7b5c0af437613283d34db"
+    upstream_url: "https://cdn.modrinth.com/data/P7dR8mSH/versions/Kr4WG5mG/fabric-api-0.154.2%2B26.2.jar"
+  - filename: lithium.jar
+    artifact: "lithium:0.25.1-mc26.2"
+    sha512: "165320d63464bf45676ff6b4437111e63547ac7f752d7b19a19cdf90083c4c941062ba82dd1dc80ba539a07a97dc08e7db81405fd3ac0998f2a374806d70651a"
+    upstream_url: "https://cdn.modrinth.com/data/gvQqBUqZ/versions/vy3clWg7/lithium-fabric-0.25.1%2Bmc26.2.jar"
+  - filename: ferritecore.jar
+    artifact: "ferritecore:9.0.0-fabric"
+    sha512: "d81fa97e11784c19d42f89c2f433831d007603dd7193cee45fa177e4a6a9c52b384b198586e04a0f7f63cd996fed713322578bde9a8db57e1188854ae5cbe584"
+    upstream_url: "https://cdn.modrinth.com/data/uXXizFIs/versions/d5ddUdiB/ferritecore-9.0.0-fabric.jar"
+  - filename: c2me.jar
+    artifact: "c2me:0.4.1-beta.1.0-26.2"
+    sha512: "21076491de36c5d680cafa494116b98a134a3d7e3cbcb77a59942bab0ceacf6c9386a80b1e4d870e501aafab27b89c0b5d7a09f1392a4d4ab43a87f9d3524841"
+    upstream_url: "https://cdn.modrinth.com/data/VSNURh3q/versions/hfq4dPFH/c2me-fabric-mc26.2-0.4.1-beta.1.0.jar"
+  - filename: chunky.jar
+    artifact: "chunky:1.5.3"
+    sha512: "b83bfe7b218d0aa6232af977ae741dc1f82b10e50cd12bb759f65cf416b8b62beccb543e587ef0b9670abe03815660f8e091bc6823624d65cf07300571573516"
+    upstream_url: "https://cdn.modrinth.com/data/fALzjamp/versions/4Eotm6ov/Chunky-Fabric-1.5.3.jar"
+  - filename: spark.jar
+    artifact: "spark:1.10.173-fabric"
+    sha512: "1dcbf2b76ceacf07523afaeaf63d3625b0318077cc6ce588bb701aea4a494bc2a5179fd2ca5aeda9513c6a2248c2ec590387e8aec6ac9fd8e3d01760bbc3dbfb"
+    upstream_url: "https://cdn.modrinth.com/data/l6YH9Als/versions/iYFOl6lQ/spark-1.10.173-fabric.jar"
+  - filename: distant-horizons.jar
+    artifact: "distant-horizons:3.1.2-b-26.2"
+    sha512: "3bd9c7093f2589fdbbc521d67e98f160ccd6d5fc538a2d83146039f944c8ee648f1057d1c3c3cb44be1d759e5eab7b062dfc934443b34489f9695dff83c08511"
+    upstream_url: "https://cdn.modrinth.com/data/uCdwusMi/versions/IguX0jEa/DistantHorizons-3.1.2-b-26.2-fabric-neoforge.jar"
 
-# --- Worlds + datapacks ----------------------------------------------------
-# `world` is the default Paper world (auto-generated on first boot; no
-# datapack — vanilla terrain). `tectonic` and `terralith` are managed by
-# Multiverse-Core; the playbook pre-stages their datapack files in
-# /opt/minecraft/<world>/datapacks/ so that when an op runs
-# `/mv create <world> normal` in-game, the datapack is already in place
-# and Minecraft picks it up at world-generation time.
-#
-# See runbooks/paper-upgrade.md ("Adding a datapack-driven world") for
-# the full procedure including the chicken-and-egg around chunk
-# generation vs datapack-load order.
-paper_worlds:
-  - name: world  # vanilla, current survival world; datapacks intentionally empty
-  - name: tectonic
-    datapacks:
-      - filename: Tectonic.zip
-        url: https://cdn.modrinth.com/data/lWDHr9jE/versions/VfuqmXvF/tectonic-datapack-3.0.18.zip
-        sha512: 3de178cc019f481d86511d66c579317a1277167685d7886707ae591f25cc910cb2d5550ef77d69c2d35b0acdb2c67b05f7ef014c45a9feda2867281227d85e81
-  - name: terralith
-    datapacks:
-      - filename: Terralith.zip
-        url: https://cdn.modrinth.com/data/8oi3bsk5/versions/xDS6ehq8/Terralith_1.21.11_v2.6.0.zip
-        sha512: e583b854fd86c930be399e414a45d63a261ed7b971a97ba409b9b79e25239af397a87cb9b38eecfc0ae83253c1d9cef558107ac4037aece6eca9cfcc02a760b8
+# Worldgen mod — only the "main" forever world runs it (reshapes overworld
+# terrain; officially compatible with the Terralith datapack below). Hard-depends
+# on lithostitched (Apollo's worldgen library) — bundled alongside it below.
+_mod_tectonic:
+  filename: tectonic.jar
+  artifact: "tectonic:3.0.26-fabric-26.2"
+  sha512: "6ca2ac61ce7fa9e8758bdf83bff99c97d39a300efbec12db2714557aef420739b46a68aa62ee93cdd6339f8f7ad8cbbeca59f5be3c6361b8d0ea09e34a45864c"
+  upstream_url: "https://cdn.modrinth.com/data/lWDHr9jE/versions/rc4JXlpP/tectonic-3.0.26-fabric-26.2.jar"
+
+# Lithostitched — worldgen library, hard dependency of Tectonic. Server-side.
+_mod_lithostitched:
+  filename: lithostitched.jar
+  artifact: "lithostitched:1.7.13-fabric-26.2"
+  sha512: "22a6ef66abbc4fbba910cd7bba7e83f50f6cadb425058cbb484b9280c0aee59475bfb4fff41ee5dc939ecb124e2c8c518a84d1a5c58ecb7bf9b0ae856daf64bb"
+  upstream_url: "https://cdn.modrinth.com/data/XaDC71GB/versions/vVFCOh7u/lithostitched-1.7.13-fabric-26.2.jar"
+
+# Terralith — a DATAPACK (.zip) staged into <instance>/world/datapacks/ before
+# first world-gen. Compatible with the Tectonic mod (the supported combo).
+_datapack_terralith:
+  filename: terralith.zip
+  artifact: "terralith:2.6.3-26.2"
+  sha512: "8537db76a77c9ac749c26ed213bdaac576fc92328dcba65c6e5ad20062946c9e5ff02b7ada8492812da5d8b2a8eee57817d0475e128667c3aca6b790e5ba6cdb"
+  upstream_url: "https://cdn.modrinth.com/data/8oi3bsk5/versions/eihdCshF/Terralith_26.2_v2.6.3.zip"
+
+# --- Instances -------------------------------------------------------------
+# One systemd unit each. Run one at a time (unique ports let them co-reside if
+# you ever want to). `main` is the Tectonic+Terralith "vanilla-plus forever
+# world" and is the only one enabled by default.
+minecraft_instances:
+  - name: main
+    enabled: true
+    port: 25565
+    rcon_port: 25575
+    xms: "2G"
+    xmx: "6G"
+    motd: "Vingilot Minecraft - eregion (main)"
+    mods: "{{ _mods_core + [_mod_tectonic, _mod_lithostitched] }}"
+    datapacks: "{{ [_datapack_terralith] }}"
+
+  - name: vanilla
+    enabled: false
+    port: 25566
+    rcon_port: 25576
+    xms: "1G"
+    xmx: "4G"
+    motd: "Vingilot Minecraft - eregion (vanilla)"
+    # Stock worldgen + Distant Horizons + the perf set; no Tectonic/Terralith.
+    mods: "{{ _mods_core }}"
+
+  # A third world (e.g. creative/build server) drops in the same way — copy the
+  # vanilla block, give it a unique name/port/rcon_port, and set enabled when
+  # you want it. Per-world gamemode/other server.properties tweaks that aren't
+  # in the pinned key set can be set in-game or added to the playbook's key list.
+  # - name: creative
+  #   enabled: false
+  #   port: 25567
+  #   rcon_port: 25577
+  #   xms: "1G"
+  #   xmx: "4G"
+  #   motd: "Vingilot Minecraft - eregion (creative)"
+  #   mods: "{{ _mods_core }}"

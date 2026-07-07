@@ -21,7 +21,7 @@ GitOps-managed where it makes sense:
 | smb      | debian LXC  | Samba shares                                  |
 | erebor   | debian LXC  | Proxmox Backup Server                         |
 | aglarond | debian LXC  | restic shipping backups to Backblaze          |
-| eregion  | debian LXC  | PaperMC Minecraft server (LAN)                |
+| eregion  | debian LXC  | Fabric Minecraft server (LAN)                 |
 | samwise  | raspberry pi| k3s ARM worker, tailscale subnet router, WoL  |
 
 ## Ansible playbooks
