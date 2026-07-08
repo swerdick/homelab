@@ -67,6 +67,24 @@ minecraft_pause_when_empty_seconds: 60
 minecraft_xms: "1G"
 minecraft_xmx: "4G"
 
+# --- Distant Horizons server-side generation throttle ----------------------
+# On this 4-core box, DH's LOD-generation threads compete with the main tick
+# thread + C2ME chunk-gen and tank TPS while a player explores (observed a
+# 13.6 TPS 15m-average, felt as client stutter). These bound DH's CPU so the
+# tick thread keeps priority; TPS then holds at 20 even under a full Chunky
+# pre-gen. Pair with `/chunky` pre-generation so exploration hits existing
+# terrain instead of triggering live worldgen. The playbook applies these to
+# each instance's config/DistantHorizons.toml (DH-generated on first boot —
+# see the playbook note; a brand-new build applies them on the 2nd run).
+#   distance: DH defaults 4096 (256 chunks) -> 2048 (128); area scales r^2, so
+#             this ~quarters the generation work.
+#   priority: Java thread prio (1-10); below the tick thread. DH's own config
+#             comment says to lower this when running C2ME + seeing starvation.
+#   runtime : fraction of time each DH thread runs before idling (default 1.0).
+minecraft_dh_max_generation_distance: 2048
+minecraft_dh_thread_priority: 2
+minecraft_dh_thread_runtime_ratio: "0.5"
+
 # --- Server operators (ops.json, templated per instance) -------------------
 # UUIDs from https://api.mojang.com/users/profiles/minecraft/<name>, dashed.
 minecraft_ops:

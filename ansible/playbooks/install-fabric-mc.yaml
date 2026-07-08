@@ -562,6 +562,43 @@
       loop_control:
         label: "{{ item.name }}"
 
+    # --- Distant Horizons server-side generation throttle ----------------
+    # DH writes config/DistantHorizons.toml on its FIRST boot, so on a brand-new
+    # build this patch finds no file the first run (the server is still booting)
+    # and applies on the next run — it's idempotent thereafter, and DH preserves
+    # the values across restarts. `replace` keeps the file's tab indentation and
+    # only swaps each value. See host_vars for why (protects tick TPS from DH's
+    # LOD-generation threads on this 4-core box).
+    - name: Stat each instance's DistantHorizons config
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.name }}/config/DistantHorizons.toml"
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: dh_configs
+
+    - name: Throttle DH server-side generation (protect tick TPS)
+      ansible.builtin.replace:
+        path: "{{ minecraft_base }}/{{ item.0.item.name }}/config/DistantHorizons.toml"
+        regexp: "{{ item.1.regexp }}"
+        replace: "{{ item.1.replace }}"
+      loop: "{{ dh_configs.results | product(_dh_settings) | list }}"
+      when: item.0.stat.exists
+      loop_control:
+        label: "{{ item.0.item.name }}: {{ item.1.name }}"
+      vars:
+        _dh_settings:
+          - name: maxGenerationRequestDistance
+            regexp: '^(\s*maxGenerationRequestDistance\s*=\s*).*$'
+            replace: '\g<1>{{ minecraft_dh_max_generation_distance }}'
+          - name: threadPriority
+            regexp: '^(\s*threadPriority\s*=\s*).*$'
+            replace: '\g<1>{{ minecraft_dh_thread_priority }}'
+          - name: threadRunTimeRatio
+            regexp: '^(\s*threadRunTimeRatio\s*=\s*).*$'
+            replace: '\g<1>"{{ minecraft_dh_thread_runtime_ratio }}"'
+      notify: Restart fabric instances
+
   handlers:
     - name: Restart fabric instances
       # Restart only the enabled instances — never resurrect a deliberately
