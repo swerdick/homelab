@@ -10,6 +10,12 @@ This is a **manual** procedure — anduril is a hand-managed gaming box (see `pr
 
 **Do not use the Flatpak.** anduril is a privileged Proxmox **LXC**, and Flatpak's `bwrap` sandbox fails there — `/proc/sys/user/max_user_namespaces` is read-only in the container, so `bwrap` aborts (Steam's pressure-vessel tolerates this; flatpak's bwrap doesn't). The flatpak Prism installs fine but **crashes instantly on launch** (from Steam, xrdp, or CLI — all the same bwrap failure). Use the **native portable build** instead — it launches java directly with no sandbox.
 
+> **Automated:** the launcher binary + `.desktop` install is codified in
+> `ansible/playbooks/install-anduril-prism.yaml` (in `site-anduril.yaml`) — a
+> rebuild reproduces it. The manual steps below are the equivalent / for
+> reference; everything *after* the install (instance, mods, account, Steam
+> shortcut) stays manual.
+
 Over SSH (or a terminal):
 ```bash
 cd ~ && curl -fsSL -o /tmp/prism.tar.gz \
