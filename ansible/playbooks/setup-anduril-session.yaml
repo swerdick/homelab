@@ -291,6 +291,15 @@
           # no_display
           toggle_hud=Shift_L+F12
 
+          # Frame-rate lock -- the stutter fix on this 60Hz, VRR-incapable panel.
+          # MangoHud cycles the list: 60 (1 frame/refresh) -> 30 (the clean even
+          # divisor for CPU-bound titles/emulation: 2 refreshes/frame, no judder)
+          # -> 0 (uncapped, for testing). Set each game's in-game V-Sync OFF so this
+          # is the only limiter (avoids the 60->30->20 hard-vsync staircase). Toggle
+          # from a Steam-Input paddle chord, like the HUD toggle above.
+          fps_limit=60,30,0
+          toggle_fps_limit=Shift_L+F1
+
           # Show only the AMD 9070 XT (PCI 03:00.0). Without this, MangoHud also lists
           # the idle i7-6700K iGPU (Intel HD 530, PCI 00:02.0) as a confusing all-zero
           # "GPU0". (If a future MangoHud wants gpu_list instead, the AMD is the active
@@ -401,6 +410,11 @@
             sleep 2
             # TV is the only/primary output (disable the DP-3 dummy)
             WAYLAND_DISPLAY=wayland-0 kscreen-doctor output.HDMI-A-4.enable output.HDMI-A-4.priority.1 output.DP-3.disable 2>/dev/null || true
+            # Pin 4K@60 explicitly -- the TV's EDID-preferred mode is 4K@30, which
+            # would judder. Separate call (kscreen commits a call atomically) so a bad
+            # modestring can't also break the routing above; the || true then just
+            # leaves the auto/EDID mode. Init-only, before Steam/Sunshine come up.
+            WAYLAND_DISPLAY=wayland-0 kscreen-doctor output.HDMI-A-4.mode.3840x2160@60 2>/dev/null || true
             # route audio to the AMD HDMI (TV) sink. The WirePlumber drop-in
             # (51-anduril-hdmi.conf) pins this card's HDMI profile so the sink is
             # always present; here we just make it the default.
@@ -467,10 +481,14 @@
           #   --force-grab-cursor : route relative pointer motion into the game (#1428)
           #   --xwayland-count 2 + STEAM_MULTIPLE_XWAYLANDS=1 : Steam + game each get one
           # Prereq: gamescope must be built with libei (libeis.so linked) -- verified.
-          # Couch-readable UI on the 4K panel: lower each game's render res via its Steam
-          # resolution property; gamescope upscales to -W/-H.
+          # Native-4K convention (ends the fragile downscale+upscale): a game left at
+          # 3840x2160 renders 1:1 through gamescope -- no scaling pass, so no FSR/NIS
+          # ringing (the checkerboard). For couch-readability on a specific title, set
+          # 1920x1080 + Scaling Filter=Integer in Steam (exact 2x, pixel-perfect),
+          # NEVER FSR/NIS. -F linear is just the explicit session default; a per-game
+          # Steam filter still overrides it over the wayland protocol at runtime.
           exec env STEAM_MULTIPLE_XWAYLANDS=1 gamescope \
-            -e -f --backend sdl -W 3840 -H 2160 -r 60 --xwayland-count 2 --force-grab-cursor \
+            -e -f --backend sdl -F linear -W 3840 -H 2160 -r 60 --xwayland-count 2 --force-grab-cursor \
             -- steam -gamepadui
 
     - name: Force the gamescope session window fullscreen on the TV (KWin rule)
