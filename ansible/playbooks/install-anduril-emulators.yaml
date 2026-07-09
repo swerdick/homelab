@@ -190,6 +190,27 @@
       loop_control:
         label: "{{ item.key }}"
 
+    - name: Set RetroArch video output (crisp integer scale, no sharpen shader)
+      # Retro cores render at tiny native res; on the 4K panel scale them with integer
+      # multiples (pixel-perfect, correct aspect via pillarbox) and NEAREST
+      # (video_smooth=false), not bilinear mush, and keep any auto-loaded shader off so
+      # no sharpen pass can ring. These are display prefs, not artifact-critical (retro
+      # cores don't FSR) -- flip video_scale_integer to "false" to fill the screen.
+      become: true
+      become_user: "{{ session_user }}"
+      ansible.builtin.lineinfile:
+        path: "/home/{{ session_user }}/.config/retroarch/retroarch.cfg"
+        regexp: '^{{ item.key }} = '
+        line: '{{ item.key }} = "{{ item.value }}"'
+        create: true
+        mode: "0644"
+      loop:
+        - { key: video_smooth, value: "false" }
+        - { key: video_scale_integer, value: "true" }
+        - { key: video_shader_enable, value: "false" }
+      loop_control:
+        label: "{{ item.key }}"
+
     # --- All emulators: force XWayland so Steam Input actually reaches them --------
     # ROOT CAUSE of "controller detected but unresponsive in emulators" (chased
     # 2026-06-26): they render on NATIVE WAYLAND, where Steam's overlay + Steam-Input
@@ -416,6 +437,26 @@
       loop_control:
         label: "{{ item.option }}"
 
+    - name: Set Dolphin graphics output (4K internal res, no post shader)
+      # Dolphin reads GFX.ini (separate from Dolphin.ini). InternalResolution is a
+      # multiple of GC/Wii native: 6 ~= 4K (3840-wide), GPU-cheap on the 9070XT and
+      # res-independent on the i7-6700K. Empty PostProcessingShader = no sharpen pass
+      # that could ring. Dolphin uses spaced `Key = Value` and rewrites GFX.ini on
+      # exit but preserves these keys once set.
+      become: true
+      become_user: "{{ session_user }}"
+      community.general.ini_file:
+        path: "/home/{{ session_user }}/.config/dolphin-emu/GFX.ini"
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: "0644"
+      loop:
+        - { section: Settings, option: InternalResolution, value: "6" }
+        - { section: Enhancements, option: PostProcessingShader, value: "" }
+      loop_control:
+        label: "{{ item.section }}/{{ item.option }}"
+
     # --- Eden (Switch): add the shared ROM tree as a game directory -------------
 
     - name: Point Eden at the shared ROM tree (game directory)
@@ -440,6 +481,31 @@
         - { option: 'Paths\gamedirs\4\path', value: "{{ emu_root }}/roms" }
         - { option: 'Paths\gamedirs\4\deep_scan', value: "true" }
         - { option: 'Paths\gamedirs\4\expanded', value: "true" }
+      loop_control:
+        label: "{{ item.option }}"
+
+    - name: Pin Eden's scaling filter to Bilinear (never FSR -- the TOTK checkerboard)
+      # Eden's [Renderer] scaling_filter picks how its internal-res frame scales to the
+      # 4K window: 5 = FSR, whose sharpening rings (the checkerboard seen in TOTK). Pin
+      # 1 = Bilinear. yuzu-family stores a `<key>\default` companion; when true it
+      # ignores the value, so set it false to force ours. Belt-and-suspenders to the
+      # VisualFixes pchtxt that disables in-game FSR; use_disk_shader_cache trims
+      # first-run shader-compile hitching. Eden live-rewrites qt-config.ini but keeps
+      # these once set.
+      become: true
+      become_user: "{{ session_user }}"
+      ansible.builtin.ini_file:
+        path: "/home/{{ session_user }}/.config/eden/qt-config.ini"
+        section: Renderer
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        no_extra_spaces: true
+        mode: "0644"
+      loop:
+        - { option: scaling_filter, value: "1" }
+        - { option: 'scaling_filter\default', value: "false" }
+        - { option: use_disk_shader_cache, value: "true" }
+        - { option: 'use_disk_shader_cache\default', value: "false" }
       loop_control:
         label: "{{ item.option }}"
 
@@ -549,6 +615,25 @@
             - { section: Filenames, option: BIOS, value: "scph39001.bin" }
           loop_control:
             label: "{{ item.section }}/{{ item.option }}"
+
+        - name: Set PCSX2 graphics output (4K upscale, no TV shader)
+          # PCSX2 keeps GS settings in PCSX2.ini [EmuCore/GS]. upscale_multiplier is a
+          # multiple of PS2 native: 6 ~= 4K, GPU-cheap on the 9070XT. TVShader=0 keeps
+          # the CRT/sharpen shader off so nothing rings. PCSX2 live-rewrites the ini but
+          # preserves these keys once set.
+          become: true
+          become_user: "{{ session_user }}"
+          ansible.builtin.ini_file:
+            path: "/home/{{ session_user }}/.config/PCSX2/inis/PCSX2.ini"
+            section: EmuCore/GS
+            option: "{{ item.option }}"
+            value: "{{ item.value }}"
+            mode: "0644"
+          loop:
+            - { option: upscale_multiplier, value: "6" }
+            - { option: TVShader, value: "0" }
+          loop_control:
+            label: "{{ item.option }}"
 
         - name: Seed the PCSX2 controller binding (SDL pad -> DualShock2)
           # Captured from PCSX2's "Automatic Mapping" of the Steam-Input pad (a generic
