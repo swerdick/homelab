@@ -26,10 +26,12 @@
     debian_base_locales:
       - en_US.UTF-8
 
-    # IANA timezone name for /etc/timezone + /etc/localtime. UTC keeps
-    # log timestamps consistent across hosts; override per-host via
-    # host_vars/<name>.yaml if a specific host needs local time.
-    debian_base_timezone: UTC
+    # NOTE: debian_base_timezone is deliberately NOT set here. A play-level var
+    # outranks inventory host_vars in Ansible precedence, which would silently
+    # defeat the documented per-host override. The default (UTC) lives on the
+    # task below as `| default('UTC')`; set debian_base_timezone in
+    # host_vars/<name>.yaml to override (e.g. anduril = America/New_York for the
+    # TV clock). UTC keeps log timestamps consistent across the rest of the fleet.
 
     # Packages every Debian-family host should have. Deliberately small —
     # anything host- or service-specific belongs in that host's own
@@ -108,7 +110,7 @@
       # otherwise falls back to writing /etc/timezone + /etc/localtime
       # symlink. Either way, idempotent.
       community.general.timezone:
-        name: "{{ debian_base_timezone }}"
+        name: "{{ debian_base_timezone | default('UTC') }}"
 
     # --- Time sync -------------------------------------------------------
 

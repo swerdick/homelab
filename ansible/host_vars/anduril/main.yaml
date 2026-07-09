@@ -11,3 +11,9 @@
 # Nothing held back: the session stack (kwin/mesa/steam) is fine to patch, and
 # there's no kernel/driver in the container to protect.
 unattended_upgrade_blacklist: []
+
+# anduril is the TV box: the on-screen clock must read local time, so override
+# the fleet-wide UTC default from setup-debian-base.yaml. This is the one
+# deliberate exception to UTC-everywhere; the absolute clock stays host-synced
+# (an LXC shares earendil's clock), this only moves the displayed zone.
+debian_base_timezone: America/New_York
