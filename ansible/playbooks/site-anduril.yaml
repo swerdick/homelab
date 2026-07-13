@@ -44,5 +44,8 @@
 - name: Install the emulation stack
   import_playbook: install-anduril-emulators.yaml
 
+- name: Install the Prism Launcher (Minecraft)
+  import_playbook: install-anduril-prism.yaml
+
 - name: Install Sunshine game streaming
   import_playbook: setup-anduril-sunshine.yaml

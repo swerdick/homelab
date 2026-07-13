@@ -24,7 +24,7 @@ The balance: don't propose hacky homelab shortcuts that would hurt the resume an
 | smb      | LXC serving Samba shares                      |
 | aglarond | LXC shipping restic backups to Backblaze      |
 | erebor   | LXC running Proxmox Backup Server             |
-| eregion  | LXC running the PaperMC Minecraft server (LAN) |
+| eregion  | LXC running the Fabric Minecraft server (LAN) |
 | samwise  | Raspberry Pi 5 — k3s ARM worker, tailscale subnet router, WoL sender |
 
 `earendil` shuts down nightly, taking every guest (gondor included) with it — anything consuming cluster services or metrics should tolerate that window. `anduril` no longer competes with gondor for the GPU: it shares the host's AMD card via `amdgpu` (no passthrough claim).

@@ -1,0 +1,118 @@
+---
+# Install the Prism Launcher (Minecraft) on the anduril gaming LXC.
+#
+# NATIVE portable build, NOT the Flatpak. anduril is a privileged LXC where
+# Flatpak's bwrap sandbox fails (`/proc/sys/user/max_user_namespaces` is
+# read-only in the container), so flatpak apps install fine but crash instantly
+# on launch. The portable tarball runs java directly with no sandbox. See
+# [[project_anduril_no_flatpak]] and runbooks/eregion-client.md.
+#
+# Scope: this installs the launcher binary + a .desktop entry (so it shows up in
+# Steam's "Add a Non-Steam Game" list — gamescope's file Browse dialog is
+# broken). Everything user-specific (the MC instance, mods, shaders, MS account,
+# Steam shortcut, in-game settings) stays manual — see runbooks/eregion-client.md.
+#
+# Userspace only (installs under ~pseudo) — no root, and it does NOT touch the
+# gaming session / emulators. The portable build keeps its data (instances,
+# accounts) inside {{ prism_dir }}, so an in-place version bump preserves them.
+#
+# Bump: edit prism_version + prism_tarball_sha256 (from the PrismLauncher release
+# assets' checksums), re-run. Prism also self-updates in-GUI; this play just
+# pins the baseline install for a reproducible rebuild.
+
+- name: Install native Prism Launcher on anduril
+  hosts: anduril
+  # anduril's inventory sets ansible_become: true (→ root), but Prism is the
+  # interactive user's launcher and its portable data lives in ~pseudo. Run the
+  # install AS pseudo so files land in /home/pseudo owned by pseudo.
+  become: true
+  become_user: "{{ prism_user }}"
+  gather_facts: true
+  vars:
+    prism_user: pseudo
+    prism_home: "/home/{{ prism_user }}"
+    prism_version: "11.0.2"
+    prism_tarball_url: "https://github.com/PrismLauncher/PrismLauncher/releases/download/{{ prism_version }}/PrismLauncher-Linux-Qt6-Portable-{{ prism_version }}.tar.gz"
+    prism_tarball_sha256: "cda51a7adb1e29b6b63065e2fb67ad4d3a754d012739064394f5c3b5ba4af006"
+    prism_dir: "{{ prism_home }}/prism"
+
+  tasks:
+    - name: Sanity-check that this is anduril
+      # anduril-only; refuse to run elsewhere (the install path + .desktop are
+      # user-specific to this box).
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "anduril"
+          - ansible_facts.hostname == "anduril"
+        fail_msg: >-
+          install-anduril-prism is anduril-only; refusing to run against
+          {{ inventory_hostname }} ({{ ansible_facts.hostname }}).
+
+    - name: Ensure the Prism dir exists
+      ansible.builtin.file:
+        path: "{{ prism_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Read the installed Prism version marker
+      ansible.builtin.slurp:
+        src: "{{ prism_dir }}/.prism_version"
+      register: prism_marker
+      failed_when: false
+
+    - name: Install/upgrade native Prism (when missing or version changed)
+      # Extracts the launcher files over {{ prism_dir }}; the portable build's
+      # data (instances/, accounts.json) sits alongside and is left untouched, so
+      # a re-extract is safe. First adoption of a hand-installed copy re-lays the
+      # same files once (marker absent) then is a no-op thereafter.
+      when: >-
+        (prism_marker.content is not defined)
+        or ((prism_marker.content | b64decode | trim) != prism_version)
+      block:
+        - name: Download the PrismLauncher portable tarball (sha256-verified)
+          ansible.builtin.get_url:
+            url: "{{ prism_tarball_url }}"
+            dest: "/tmp/prism-{{ prism_version }}.tar.gz"
+            checksum: "sha256:{{ prism_tarball_sha256 }}"
+            mode: "0644"
+
+        - name: Extract Prism into {{ prism_dir }} (preserves instances/accounts)
+          ansible.builtin.unarchive:
+            src: "/tmp/prism-{{ prism_version }}.tar.gz"
+            dest: "{{ prism_dir }}"
+            remote_src: true
+
+        - name: Record the installed version
+          ansible.builtin.copy:
+            dest: "{{ prism_dir }}/.prism_version"
+            content: "{{ prism_version }}\n"
+            mode: "0644"
+
+        - name: Clean up the tarball
+          ansible.builtin.file:
+            path: "/tmp/prism-{{ prism_version }}.tar.gz"
+            state: absent
+
+    - name: Ensure the user applications dir exists
+      ansible.builtin.file:
+        path: "{{ prism_home }}/.local/share/applications"
+        state: directory
+        mode: "0755"
+
+    - name: Install the Prism .desktop entry (Steam Add-Game list + app menu)
+      # The gamescope "Add a Non-Steam Game → Browse" picker does nothing, so a
+      # .desktop entry is how Prism appears in Steam's checklist. Point the Steam
+      # shortcut Launch Options at `--launch <instance>` for a console-feel boot
+      # (see runbooks/eregion-client.md).
+      ansible.builtin.copy:
+        dest: "{{ prism_home }}/.local/share/applications/prismlauncher-native.desktop"
+        mode: "0644"
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name=Prism Launcher (native)
+          Exec={{ prism_dir }}/PrismLauncher
+          Path={{ prism_dir }}
+          Icon={{ prism_dir }}/share/icons/hicolor/256x256/apps/org.prismlauncher.PrismLauncher.png
+          Categories=Game;
+          Terminal=false

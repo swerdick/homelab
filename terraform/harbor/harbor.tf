@@ -91,3 +91,25 @@ resource "harbor_project" "registry_k8s" {
   storage_quota          = -1
   registry_id            = harbor_registry.registry_k8s.id
 }
+
+# --- Hosted projects (we push, not proxy-cache) -----------------------------
+#
+# `minecraft` holds "loose" binaries the host playbooks used to pull straight
+# from upstream CDNs (Fabric/mod/datapack jars) — see ROADMAP "Harbor + ORAS
+# for critical loose binaries". Pushed as OCI artifacts via
+# scripts/publish-mc-mods.sh (ORAS) and pulled onto eregion by
+# ansible/playbooks/install-fabric-mc.yaml. No `registry_id` → a normal hosted
+# project (not a proxy cache). `public = true` so eregion pulls anonymously —
+# these are game mods, not secrets, and it keeps a Harbor robot credential off
+# the LXC (only tirion CA trust is needed, already distributed). Trivy still
+# scans every pushed jar (vulnerability_scanning = true); Java archives are
+# fully supported. Pushes authenticate as the Harbor admin (the same SOPS cred
+# `just tf-harbor` already uses); swap to a push-scoped robot account later if
+# least-privilege becomes worth the extra moving part.
+resource "harbor_project" "minecraft" {
+  name                   = "minecraft"
+  public                 = true
+  vulnerability_scanning = true
+  auto_sbom_generation   = false
+  storage_quota          = -1
+}

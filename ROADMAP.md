@@ -119,12 +119,6 @@ Could also run it as a daemon set and have the pods do leader election so that t
 then we have data per node.  would want the pod to check and make sure the node's link isn't already saturated so that they 
 don't run at a time when other high network bandwidth tasks are running
 
-### Re-add EssentialsX to eregion when Paper-26 compat lands
-
-EssentialsX 2.21.2 (latest stable as of May 2026) crashes on enable against Paper 26.1.2 — `NullPointerException` from its `ServerStateProvider` lookup, which is a Paper-26 API change. The `2.22.0-dev` snapshots on `ci.ender.zone` predate Paper 26.1.2's release by a few days so they don't have the fix either. Dropped from `host_vars/eregion/main.yaml`'s `paper_plugins:` for now; Multiverse-Core covers the multi-world need and vanilla `/gamemode`, `/tp`, `/give`, `/time set`, `/weather`, etc. cover the basic admin needs on a 1-2 player server.
-
-Watch [EssentialsX/Essentials releases](https://github.com/EssentialsX/Essentials/releases) for a 2.22.0 (or later) stable release marked as Paper-26-compatible, then add it back via the standard `paper_plugins` shape with the new release's SHA512. If nothing lands within a couple of months and `/home`/`/spawn`/`/kit`/`/msg` start to feel missing, the alternatives are smaller-scoped plugins (e.g. `HuskHomes`, `CMI` — both have Paper-26 builds) or just continued use of vanilla equivalents.
-
 ### Immich non-root hardening
 
 Server pod currently runs as `runAsUser: 0` with `supplementalGroups: [10000]` for `/bulk/*` access. Both `/bulk/photos` and `/bulk/media` are mounted `readOnly: true`, so the actual blast radius is small — but there's no reason to keep root. Flip to `runAsUser: 1000` + `runAsGroup: 1000` once the external-library scans are confirmed working end-to-end. Need to verify the immich-library PVC (managed library on `nfs-scratch`, written-to) tolerates the uid change; nfs-subdir-external-provisioner directories are mode 777 by default so it should.
@@ -218,12 +212,6 @@ Follow-up to image proxying above. Harbor's proxy-cache only fronts OCI registri
 **Shape:** likely a CI job (post the self-hosted-runners item above) that diffs Flux's referenced chart versions against what's in Harbor and `helm push`es the gap. Until that exists, the manual flow is fine — charts are pulled far less often than images (once per version bump, not per pod restart), so the failure-mode payoff is smaller and there's no rush.
 
 **End state:** every chart Flux reconciles is served from Harbor; combined with image proxying, a full Flux reconcile survives total upstream-registry outage.
-
-### Harbor + ORAS for critical loose binaries (Minecraft jars, etc.)
-
-A handful of setup scripts pull "loose" binaries — Paper / Purpur server jars, plugin jars, mod jars — directly from upstream URLs (PaperMC's CDN, GitHub release assets). Each is a silent supply-chain dependency that breaks a host bootstrap if the URL changes or vanishes, and they get no scanning even though Trivy speaks Java archive perfectly well. ORAS (OCI Registry As Storage) pushes arbitrary blobs as OCI artifacts; Harbor accepts ORAS pushes and Trivy scans the result the same as a container image.
-
-Workflow: catalog the critical binaries the playbooks actually reference; `oras push harbor.vingilot.internal/minecraft/paper:1.21.1 paper-1.21.1.jar` for each (one-off or via a small refresh-cron CI job); teach the playbooks to pull from Harbor with the upstream URL kept as a documented fallback comment. Pinning happens via the artifact tag; rotation happens by running the refresh job.
 
 ### Self-hosted SonarQube for static analysis
 
@@ -346,7 +334,7 @@ After all migrations land, `just tf plan` stops emitting the "Deprecated — use
 Three guests have empty descriptions in PVE's Notes tab:
 
 - `tirion` (CT 141) — step-ca / internal CA
-- `eregion` (CT 142) — PaperMC Minecraft server
+- `eregion` (CT 142) — Fabric Minecraft server
 - `gondor` (VM 140) — k3s + Flux cluster
 
 The other guests (aglarond, erebor, nfs, smb, anduril) all have substantive Notes blocks visible in the PVE sidebar and now mirrored as `terraform/descriptions/*.md` sidecar files loaded via `description = file(...)`. Filling in the missing three brings the fleet to parity. Write the descriptions directly in PVE's Notes editor (markdown), then `just dump-pve-configs` to refresh the snapshot, then save them as `terraform/descriptions/{tirion,eregion,gondor}.md` and reference from each resource — same pattern as the existing five.
@@ -417,6 +405,8 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
+- **Anduril baseline convergence — alloy/observability on the Ubuntu CT** — the June rebuild had only run `setup-pseudo-user`, so anduril was dark in Grafana; applied `distribute-root-ca` + `install-alloy` (metrics + journald logs now ship to in-cluster Prometheus/Loki + Grafana Cloud — `up{instance="anduril"}=1` for the alloy + node jobs) + `setup-debian-base` + `install-unattended-upgrades`. anduril is Ubuntu 26.04 (the fleet's lone non-Debian LXC), so the Debian-first plays' `--check` failures were check-mode artifacts that cleared on a real run; also fixed `setup-debian-base` so its timezone default respects host_vars (TV clock stays `America/New_York`).
+- **Anduril display normalization — native 4K + frame pacing** — retired the render-low + gamescope-upscale pattern whose FSR/NIS sharpen rang (the checkerboard): games render native `3840x2160` (gamescope 1:1, `-F linear` default), `HDMI-A-4` pinned `4K@60` at init (was drifting to the EDID-preferred `4K@30`), `mangohud fps_limit=60,30,0` locks pacing on the VRR-incapable 60 Hz panel, emulators default to 4K internal + non-sharpen filters (Eden→Bilinear, not FSR). Per-game Steam res + in-game FSR (e.g. Halo MCC) stay manual. `setup-anduril-session.yaml` + `install-anduril-emulators.yaml`.
 - **Anduril native emulation (EmuDeck-style, on the gaming LXC)** — `install-anduril-emulators.yaml`: RetroArch + Dolphin + PCSX2 + Eden (native, no flatpak), ROMs sorted per-system on the bulk pool, 12 codified Steam ROM Manager parsers + PCSX2/Eden controller bindings; Switch library migrated off the Steam Deck, runs keys-only (no firmware).
 - **Anduril gaming LXC — Sunshine streaming + audio + desktop apps** — CT 117 (privileged Ubuntu 26.04, shared `amdgpu`) runs KWin + Steam Big Picture on the TV and streams over Sunshine/Moonlight (Vulkan encode + KMS capture), HDMI audio pinned in WirePlumber; `setup-anduril-{session,xrdp,apps,sunshine}.yaml`.
 - **Anduril LXC input — resolved (the spike "blocker" was a mis-measurement)** — KWin in the VT-less LXC handles injected mouse + keyboard fine (the "libinput enumerates zero devices" was just the missing binary); the lone real bug is the SC2 "Puck" trackpad/dialog, an upstream Valve issue. [[project-anduril-sc2-puck-linux-bugs]]
@@ -438,7 +428,8 @@ Reverse-chronological — most recent first. One line each; `git log` carries th
 - **earendil RAM upgrade 16 → 48 GiB** — 46.9 GiB usable; the two `balloon: 0` passthrough VMs (gondor + anduril) + eregion now coexist without stopping guests to boot anduril.
 - **Anduril replatformed to Kubuntu 26.04 LTS** — retired Bazzite (dropped Sunshine); `setup-sunshine.yaml` did GTX 970 NVENC via the 580.95.05 `.run` on a mainline 6.12.90 kernel; never hot-modeset a live session (wedges the card, host-reboot-only recovery).
 - **GPU passthrough host-side prereqs codified** — `setup-vfio-passthrough.yaml` lifts the IOMMU cmdline, vfio modules, NVIDIA blacklist, and `vfio-pci` ID binding out of operator notes; introduced `site-earendil.yaml`. (Superseded by `setup-amdgpu-host.yaml` — Phase 0.)
-- **PaperMC server on `eregion` (CT 142)** — unprivileged Debian 13 LXC via `terraform/eregion.tf`, Paper under a hardened `paper-server.service` (Aikar flags + clean `mcrcon stop`), pinned via `host_vars/eregion/`; LAN-only `:25565`, `runbooks/paper-upgrade.md`.
+- **Fabric server on `eregion` (CT 142)** — rebuilt from Paper to Fabric (MC 26.2: Tectonic + Terralith + Distant Horizons) via `install-fabric-mc.yaml`. Multi-world = one `fabric-server@<name>` systemd instance per world (shared launcher jar, per-instance mods/world/port; only `main` enabled by default). Hardened template unit with the RCON creds in a root-only `instance.env`; Aikar flags + clean `mcrcon stop` carried over. LAN-only `:25565`. Bumped to 4 vCPU / 8 GiB / 48 GiB for modded worldgen + DH LOD. `runbooks/fabric-upgrade.md`; client (Prism + shaders) in `runbooks/eregion-client.md`. (Previously a hardened `paper-server.service` PaperMC build.)
+- **Harbor + ORAS for loose binaries (Minecraft pilot)** — the eregion mod/jar/datapack + Fabric launcher artifacts are pushed to Harbor as OCI blobs by `scripts/publish-mc-mods.sh` (manifest `scripts/mc-artifacts.txt`) and pulled onto the host with `oras` by `install-fabric-mc.yaml`; Trivy scans each jar. Public `minecraft` project (`terraform/harbor/harbor.tf`) so the LXC pulls anonymously; sha512 pinned + verified on pull, upstream URL kept as documented fallback. First realization of the ORAS-for-loose-binaries idea — other loose binaries (helm charts excepted) can follow the same manifest+script pattern.
 - **Suppress Proxmox no-subscription nag** — `setup-proxmox-no-nag.yaml` patches the `proxmox-widget-toolkit` JS on earendil + erebor; a `DPkg::Post-Invoke` apt hook re-applies it so a toolkit upgrade can't restore the popup.
 - **`install-k3s.sh` refactored to ansible** — `install-k3s-server.yaml` is the source of truth for gondor's k3s server (pinned via `host_vars/gondor.yaml`), with layered idempotency + loud version-mismatch fail; workers lockstepped by `install-k3s-agent.yaml`.
 - **Longer-lived ACME certs + on-boot renewal** — `install-step-ca.yaml` bumps tirion's `acme` provisioner to 90d; `setup-acme-renewal.yaml` adds `OnBootSec=2min` to earendil's + erebor's update timers so a host back from days-off renews promptly.

@@ -1,0 +1,612 @@
+---
+# Install + manage a Fabric Minecraft server on eregion. Successor to
+# install-paper-mc.yaml (Paper → Fabric rebuild); modelled on that playbook.
+#
+# - Idempotent: a re-run with no host_vars changes should report changed=0.
+# - Multi-world by SEPARATE SYSTEMD INSTANCES rather than a runtime multiverse
+#   plugin (Fabric loads one level per server process, and the worldgen tools
+#   here are mods that alter generation per-instance). Each entry in
+#   `minecraft_instances` gets its own directory under /opt/minecraft/<name>/,
+#   its own mods + datapacks + world + server.properties + RCON port, and a
+#   `fabric-server@<name>` unit from one systemd template. `enabled: true`
+#   instances are enabled+started; the rest are staged on disk but stopped.
+# - Mod/jar/datapack artifacts are pulled from Harbor with ORAS
+#   (harbor.vingilot.internal/minecraft/<name>:<version>), pushed there once by
+#   scripts/publish-mc-mods.sh. Each artifact still carries its upstream URL +
+#   sha512 in host_vars: the sha512 is the integrity pin (verified after every
+#   pull, fail-closed), and the upstream URL is the documented fallback if
+#   Harbor is unavailable. See ROADMAP "Harbor + ORAS for loose binaries".
+# - server.properties is managed key-by-key with community.general.ini_file so
+#   Fabric/Minecraft keeps its own auto-generated defaults for keys we don't set.
+
+- name: Install and manage a Fabric Minecraft server on eregion
+  # Explicit `hosts: eregion` (not a group) so a typo elsewhere can't run this
+  # against the wrong host. The play also asserts hostname before doing
+  # anything — see first task.
+  hosts: eregion
+  vars:
+    minecraft_base: /opt/minecraft
+    minecraft_user: minecraft
+    minecraft_group: minecraft
+    minecraft_harbor: harbor.vingilot.internal/minecraft
+
+    # Shared Fabric server launcher jar (one jar, all instances run it with
+    # their own WorkingDirectory). Pulled from Harbor like the mods; the
+    # symlink lets an instance's ExecStart stay version-agnostic.
+    minecraft_launch_symlink: "{{ minecraft_base }}/fabric-server-launch.jar"
+
+    mcrcon_version: "0.7.2"
+    mcrcon_zip_url: "https://github.com/Tiiffi/mcrcon/releases/download/v{{ mcrcon_version }}/mcrcon-{{ mcrcon_version }}-linux-x86-64-static.zip"
+    mcrcon_zip_sha256: "790bfdd4f51245bc40f909e3a915f98cf569f57b0edf47697f5d72e0b86c2877"
+
+    # oras CLI — used to pull artifacts from Harbor. Pinned like mcrcon
+    # (small Go binary, not packaged in apt). Values in host_vars so a bump is
+    # a host_vars edit, not a playbook edit.
+    oras_version: "{{ minecraft_oras_version }}"
+    oras_tgz_url: "https://github.com/oras-project/oras/releases/download/v{{ oras_version }}/oras_{{ oras_version }}_linux_amd64.tar.gz"
+    oras_tgz_sha256: "{{ minecraft_oras_sha256 }}"
+
+  tasks:
+    - name: Sanity-check that this is eregion
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname == "eregion"
+          - ansible_facts.hostname == "eregion"
+        fail_msg: >-
+          install-fabric-mc playbook is eregion-only; refusing to run against
+          {{ inventory_hostname }} (live hostname {{ ansible_facts.hostname }}).
+
+    - name: Install Java 25 and helpers
+      # Fabric for MC 26.2 requires JRE 21+. Trixie main has
+      # openjdk-25-jre-headless, which we already run for the Paper era.
+      ansible.builtin.apt:
+        name:
+          - openjdk-25-jre-headless
+          - curl
+          - jq
+          - unzip
+          - tar
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Remove old Java 21 if present (cleanup)
+      ansible.builtin.apt:
+        name: openjdk-21-jre-headless
+        state: absent
+        purge: true
+
+    - name: Create the Minecraft system user {{ minecraft_user }}
+      ansible.builtin.user:
+        name: "{{ minecraft_user }}"
+        system: true
+        home: "{{ minecraft_base }}"
+        shell: /usr/sbin/nologin
+        create_home: false
+
+    - name: Ensure correct ownership of the Minecraft base {{ minecraft_base }}
+      ansible.builtin.file:
+        path: "{{ minecraft_base }}"
+        state: directory
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0750"
+
+    # --- mcrcon (small Go binary; not packaged in apt) -------------------
+
+    - name: Check whether mcrcon is already installed at the desired version
+      ansible.builtin.command:
+        cmd: /usr/local/bin/mcrcon -v
+      register: mcrcon_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Install mcrcon when missing or out of date
+      when: mcrcon_check.rc != 0 or mcrcon_version not in (mcrcon_check.stdout | default(''))
+      vars:
+        mcrcon_zip_path: "/tmp/mcrcon-{{ mcrcon_version }}.zip"
+        mcrcon_archive_inner: "mcrcon-{{ mcrcon_version }}-linux-x86-64-static/mcrcon"
+      block:
+        - name: Download mcrcon release zip
+          ansible.builtin.get_url:
+            url: "{{ mcrcon_zip_url }}"
+            dest: "{{ mcrcon_zip_path }}"
+            checksum: "sha256:{{ mcrcon_zip_sha256 }}"
+            mode: "0644"
+
+        - name: Unpack mcrcon zip to /tmp
+          ansible.builtin.unarchive:
+            src: "{{ mcrcon_zip_path }}"
+            dest: /tmp
+            remote_src: true
+            include:
+              - "{{ mcrcon_archive_inner }}"
+
+        - name: Install mcrcon binary into /usr/local/bin
+          ansible.builtin.copy:
+            src: "/tmp/{{ mcrcon_archive_inner }}"
+            dest: /usr/local/bin/mcrcon
+            remote_src: true
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Clean up mcrcon temp artifacts
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - "{{ mcrcon_zip_path }}"
+            - "/tmp/mcrcon-{{ mcrcon_version }}-linux-x86-64-static"
+
+    # --- oras CLI (pulls artifacts from Harbor) --------------------------
+
+    - name: Check whether oras is already installed at the desired version
+      ansible.builtin.command:
+        cmd: /usr/local/bin/oras version
+      register: oras_check
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Install oras when missing or out of date
+      when: oras_check.rc != 0 or oras_version not in (oras_check.stdout | default(''))
+      vars:
+        oras_tgz_path: "/tmp/oras-{{ oras_version }}.tar.gz"
+      block:
+        - name: Download oras release tarball
+          ansible.builtin.get_url:
+            url: "{{ oras_tgz_url }}"
+            dest: "{{ oras_tgz_path }}"
+            checksum: "sha256:{{ oras_tgz_sha256 }}"
+            mode: "0644"
+
+        - name: Install oras binary into /usr/local/bin
+          ansible.builtin.unarchive:
+            src: "{{ oras_tgz_path }}"
+            dest: /usr/local/bin
+            remote_src: true
+            include:
+              - oras
+            owner: root
+            group: root
+            mode: "0755"
+
+        - name: Clean up oras tarball
+          ansible.builtin.file:
+            path: "{{ oras_tgz_path }}"
+            state: absent
+
+    # --- Fabric server launcher jar --------------------------------------
+    # Pulled from Harbor (published by scripts/publish-mc-mods.sh, which fetches
+    # it from meta.fabricmc.net and records its sha512 — Fabric's meta API does
+    # not publish a checksum). One shared jar; each instance runs it from its
+    # own WorkingDirectory.
+
+    - name: Stat the Fabric launcher jar
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ minecraft_launch_jar.filename }}"
+        checksum_algorithm: sha512
+      register: launch_stat
+
+    - name: Pull the Fabric launcher jar from Harbor (when missing or changed)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/oras pull {{ minecraft_harbor }}/{{ minecraft_launch_jar.artifact }}
+          --output {{ minecraft_base }}
+      when: not launch_stat.stat.exists or launch_stat.stat.checksum != minecraft_launch_jar.sha512
+      changed_when: true
+      notify: Restart fabric instances
+
+    - name: Verify the Fabric launcher jar checksum (fail closed)
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ minecraft_launch_jar.filename }}"
+        checksum_algorithm: sha512
+      register: launch_verify
+      # Skipped under --check: on a first-ever (fresh) run the oras pull above
+      # is a command task (no-op in check mode), so the file wouldn't exist yet
+      # and this fail-closed check would spuriously error a dry run.
+      when: not ansible_check_mode
+      failed_when: not launch_verify.stat.exists or launch_verify.stat.checksum != minecraft_launch_jar.sha512
+
+    - name: Own the Fabric launcher jar
+      ansible.builtin.file:
+        path: "{{ minecraft_base }}/{{ minecraft_launch_jar.filename }}"
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0644"
+
+    - name: Point fabric-server-launch.jar at the active launcher jar
+      ansible.builtin.file:
+        src: "{{ minecraft_launch_jar.filename }}"
+        dest: "{{ minecraft_launch_symlink }}"
+        state: link
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+      notify: Restart fabric instances
+
+    # --- Per-instance directory scaffolding ------------------------------
+
+    - name: Ensure per-instance directories exist
+      ansible.builtin.file:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/{{ item.1 }}"
+        state: directory
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0750"
+      loop: "{{ minecraft_instances | product(['mods', (minecraft_level_name | default('world')) ~ '/datapacks']) | list }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1 }}"
+
+    # --- Mods (per instance, pulled from Harbor) -------------------------
+
+    - name: Stat per-instance mod files
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/mods/{{ item.1.filename }}"
+        checksum_algorithm: sha512
+      loop: "{{ minecraft_instances | subelements('mods') }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+      register: mod_stats
+
+    - name: Pull per-instance mods from Harbor (when missing or changed)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/oras pull {{ minecraft_harbor }}/{{ item.item.1.artifact }}
+          --output {{ minecraft_base }}/{{ item.item.0.name }}/mods
+      loop: "{{ mod_stats.results }}"
+      loop_control:
+        label: "{{ item.item.0.name }}/{{ item.item.1.filename }}"
+      when: not item.stat.exists or item.stat.checksum != item.item.1.sha512
+      changed_when: true
+      notify: Restart fabric instances
+
+    - name: Verify per-instance mod checksums (fail closed)
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/mods/{{ item.1.filename }}"
+        checksum_algorithm: sha512
+      loop: "{{ minecraft_instances | subelements('mods') }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+      register: mod_verify
+      when: not ansible_check_mode   # see launcher-jar verify note
+      failed_when: >-
+        not mod_verify.stat.exists or mod_verify.stat.checksum != item.1.sha512
+
+    - name: Own per-instance mod files
+      ansible.builtin.file:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/mods/{{ item.1.filename }}"
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0644"
+      loop: "{{ minecraft_instances | subelements('mods') }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+
+    - name: Find existing mod JARs per instance (for unmanaged-cleanup)
+      ansible.builtin.find:
+        paths: "{{ minecraft_base }}/{{ item.name }}/mods"
+        patterns: "*.jar"
+        file_type: file
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: existing_mod_jars
+
+    - name: Remove mod JARs not declared for their instance
+      ansible.builtin.file:
+        path: "{{ item.1.path }}"
+        state: absent
+      loop: >-
+        {{ existing_mod_jars.results
+           | subelements('files') }}
+      loop_control:
+        label: "{{ item.0.item.name }}/{{ item.1.path | basename }}"
+      vars:
+        _declared: >-
+          {{ (minecraft_instances | selectattr('name', 'equalto', item.0.item.name) | first).mods
+             | map(attribute='filename') | list }}
+      when: (item.1.path | basename) not in _declared
+      notify: Restart fabric instances
+
+    # --- Per-world datapacks (pulled from Harbor) ------------------------
+    # Staged into <instance>/<level>/datapacks/ so they are present before the
+    # world generates (chicken-and-egg: Minecraft only loads a datapack that
+    # exists at world-gen time). No auto-cleanup of removed datapacks (rare;
+    # cross-world cleanup logic is gnarly) — remove the zip by hand if you drop
+    # a datapack entry, same caveat as the Paper playbook carried.
+
+    - name: Stat per-instance datapacks
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/{{ minecraft_level_name | default('world') }}/datapacks/{{ item.1.filename }}"
+        checksum_algorithm: sha512
+      loop: "{{ minecraft_instances | subelements('datapacks', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+      register: datapack_stats
+
+    - name: Pull per-instance datapacks from Harbor (when missing or changed)
+      ansible.builtin.command:
+        cmd: >-
+          /usr/local/bin/oras pull {{ minecraft_harbor }}/{{ item.item.1.artifact }}
+          --output {{ minecraft_base }}/{{ item.item.0.name }}/{{ minecraft_level_name | default('world') }}/datapacks
+      loop: "{{ datapack_stats.results }}"
+      loop_control:
+        label: "{{ item.item.0.name }}/{{ item.item.1.filename }}"
+      when: not item.stat.exists or item.stat.checksum != item.item.1.sha512
+      changed_when: true
+      notify: Restart fabric instances
+
+    - name: Verify per-instance datapack checksums (fail closed)
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/{{ minecraft_level_name | default('world') }}/datapacks/{{ item.1.filename }}"
+        checksum_algorithm: sha512
+      loop: "{{ minecraft_instances | subelements('datapacks', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+      register: datapack_verify
+      when: not ansible_check_mode   # see launcher-jar verify note
+      failed_when: >-
+        not datapack_verify.stat.exists or datapack_verify.stat.checksum != item.1.sha512
+
+    - name: Own per-instance datapacks
+      ansible.builtin.file:
+        path: "{{ minecraft_base }}/{{ item.0.name }}/{{ minecraft_level_name | default('world') }}/datapacks/{{ item.1.filename }}"
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0644"
+      loop: "{{ minecraft_instances | subelements('datapacks', skip_missing=True) }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.filename }}"
+
+    # --- Per-instance config ---------------------------------------------
+
+    - name: Write eula.txt per instance (you are accepting Mojang's EULA)
+      ansible.builtin.copy:
+        dest: "{{ minecraft_base }}/{{ item.name }}/eula.txt"
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0644"
+        content: |
+          # Accepted via ansible/playbooks/install-fabric-mc.yaml.
+          # https://www.minecraft.net/en-us/eula
+          eula=true
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      notify: Restart fabric instances
+
+    - name: Read existing ops.json per instance (for idempotent compare)
+      # A running server rewrites ops.json in its own formatting (2-space
+      # indent, insertion-order keys); our to_nice_json is 4-space + sorted
+      # keys. Comparing raw text would rewrite every run and needlessly restart
+      # the server, so we compare the PARSED json instead (below).
+      ansible.builtin.slurp:
+        src: "{{ minecraft_base }}/{{ item.name }}/ops.json"
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: existing_ops
+      failed_when: false   # absent on first run — handled in the when: below
+
+    - name: Write ops.json per instance when it differs from minecraft_ops
+      ansible.builtin.copy:
+        dest: "{{ minecraft_base }}/{{ item.item.name }}/ops.json"
+        content: "{{ minecraft_ops | default([]) | to_nice_json }}\n"
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0640"
+      loop: "{{ existing_ops.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when: >-
+        item.content is not defined
+        or (item.content | b64decode | from_json | sort(attribute='uuid'))
+           != (minecraft_ops | default([]) | sort(attribute='uuid'))
+      notify: Restart fabric instances
+
+    - name: Build the per-instance server.properties key list
+      # Flatten (instance × pinned key) into a single list where every value is
+      # already resolved from the instance, so the ini_file task below is a
+      # plain loop. server-port + rcon.port are per-instance so co-resident
+      # instances never clash. `secret` flags the RCON password for no_log.
+      ansible.builtin.set_fact:
+        minecraft_props: >-
+          {{ minecraft_props | default([]) + [
+            {'path': _p, 'key': 'motd',                     'value': item.motd | default(minecraft_motd_default ~ ' (' ~ item.name ~ ')')},
+            {'path': _p, 'key': 'server-port',              'value': item.port},
+            {'path': _p, 'key': 'max-players',              'value': item.max_players | default(minecraft_max_players | default(10))},
+            {'path': _p, 'key': 'view-distance',            'value': item.view_distance | default(minecraft_view_distance | default(10))},
+            {'path': _p, 'key': 'difficulty',               'value': item.difficulty | default(minecraft_difficulty | default('normal'))},
+            {'path': _p, 'key': 'enable-rcon',              'value': 'true'},
+            {'path': _p, 'key': 'rcon.port',                'value': item.rcon_port},
+            {'path': _p, 'key': 'rcon.password',            'value': minecraft_rcon_password, 'secret': true},
+            {'path': _p, 'key': 'broadcast-rcon-to-ops',    'value': 'false'},
+            {'path': _p, 'key': 'online-mode',              'value': 'true'},
+            {'path': _p, 'key': 'pause-when-empty-seconds', 'value': item.pause_when_empty_seconds | default(minecraft_pause_when_empty_seconds | default(60))},
+          ] }}
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      vars:
+        _p: "{{ minecraft_base }}/{{ item.name }}/server.properties"
+
+    - name: Manage server.properties keys per instance
+      # Only the keys we pin; Minecraft/Fabric auto-generates the rest on first
+      # run. Note on RCON exposure: vanilla MC (Fabric inherits) has no
+      # rcon.bind key — RCON always listens on 0.0.0.0. LAN-only positioning +
+      # the PVE firewall + the strong password handle the threat model, same as
+      # the Paper era.
+      community.general.ini_file:
+        path: "{{ item.path }}"
+        section: null
+        option: "{{ item.key }}"
+        value: "{{ item.value | string }}"
+        owner: "{{ minecraft_user }}"
+        group: "{{ minecraft_group }}"
+        mode: "0640"
+        no_extra_spaces: true
+        create: true
+      loop: "{{ minecraft_props }}"
+      loop_control:
+        # label keeps per-iteration output readable and never prints the value
+        label: "{{ item.path | dirname | basename }}:{{ item.key }}"
+      no_log: "{{ item.secret | default(false) }}"
+      notify: Restart fabric instances
+
+    # --- Per-instance env file (JVM opts + RCON creds for systemd) --------
+
+    - name: Write per-instance systemd EnvironmentFile
+      # root:root 0600: systemd reads it before dropping to User=minecraft, so
+      # the RCON password never lives in a world-readable unit (an improvement
+      # over the Paper unit, which embedded it in ExecStop). $JVM_OPTS is split
+      # on whitespace by systemd because ExecStart references it unbraced.
+      no_log: true
+      ansible.builtin.copy:
+        dest: "{{ minecraft_base }}/{{ item.name }}/instance.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          JVM_OPTS=-Xms{{ item.xms | default(minecraft_xms | default('1G')) }} -Xmx{{ item.xmx | default(minecraft_xmx | default('4G')) }} {{ minecraft_flags }}
+          RCON_PORT={{ item.rcon_port }}
+          RCON_PASSWORD={{ minecraft_rcon_password }}
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      notify: Restart fabric instances
+
+    # --- systemd template unit -------------------------------------------
+
+    - name: Install the fabric-server@ systemd template unit
+      # One template unit; %i is the instance name. No secrets in the unit
+      # itself (they live in each instance.env), so no no_log needed here.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/fabric-server@.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Fabric Minecraft server (eregion) — instance %i
+          Documentation=https://fabricmc.net/wiki/
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitIntervalSec=60
+          StartLimitBurst=3
+          ConditionPathExists={{ minecraft_launch_symlink }}
+          ConditionPathExists={{ minecraft_base }}/%i
+
+          [Service]
+          Type=simple
+          User={{ minecraft_user }}
+          Group={{ minecraft_group }}
+          WorkingDirectory={{ minecraft_base }}/%i
+          EnvironmentFile={{ minecraft_base }}/%i/instance.env
+          ExecStart=/usr/bin/java $JVM_OPTS -jar {{ minecraft_launch_symlink }} --nogui
+          # Clean shutdown via RCON `stop` (save-all + orderly exit) rather than
+          # a SIGTERM mid-tick. The `-` prefix ignores mcrcon failures (server
+          # still booting / already crashed) so we fall through to SIGTERM after
+          # TimeoutStopSec instead of marking the unit failed.
+          ExecStop=-/usr/local/bin/mcrcon -H 127.0.0.1 -P ${RCON_PORT} -p ${RCON_PASSWORD} stop
+          Restart=on-failure
+          RestartSec=10
+          TimeoutStopSec=60
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=fabric-server@%i
+
+          # Hardening — matches the Paper unit; the JVM needs some latitude.
+          NoNewPrivileges=true
+          ProtectSystem=full
+          ReadWritePaths={{ minecraft_base }}/%i
+          ProtectHome=true
+          PrivateTmp=true
+          PrivateDevices=true
+          ProtectKernelTunables=true
+          ProtectKernelModules=true
+          ProtectKernelLogs=true
+          ProtectControlGroups=true
+          RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+          RestrictRealtime=true
+          RestrictSUIDSGID=true
+
+          [Install]
+          WantedBy=multi-user.target
+      register: fabric_systemd_unit
+
+    - name: Reload systemd if the template unit changed
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: fabric_systemd_unit.changed
+
+    - name: Enable and start enabled instances
+      ansible.builtin.systemd:
+        name: "fabric-server@{{ item.name }}.service"
+        enabled: true
+        state: started
+      loop: "{{ minecraft_instances | selectattr('enabled') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Disable and stop non-enabled instances
+      # Declarative: an instance flipped to enabled:false (or removed from the
+      # running set) is stopped + disabled here, so live state matches host_vars.
+      # Its on-disk world/mods are left intact for a later re-enable.
+      ansible.builtin.systemd:
+        name: "fabric-server@{{ item.name }}.service"
+        enabled: false
+        state: stopped
+      loop: "{{ minecraft_instances | rejectattr('enabled') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    # --- Distant Horizons server-side generation throttle ----------------
+    # DH writes config/DistantHorizons.toml on its FIRST boot, so on a brand-new
+    # build this patch finds no file the first run (the server is still booting)
+    # and applies on the next run — it's idempotent thereafter, and DH preserves
+    # the values across restarts. `replace` keeps the file's tab indentation and
+    # only swaps each value. See host_vars for why (protects tick TPS from DH's
+    # LOD-generation threads on this 4-core box).
+    - name: Stat each instance's DistantHorizons config
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.name }}/config/DistantHorizons.toml"
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: dh_configs
+
+    - name: Throttle DH server-side generation (protect tick TPS)
+      ansible.builtin.replace:
+        path: "{{ minecraft_base }}/{{ item.0.item.name }}/config/DistantHorizons.toml"
+        regexp: "{{ item.1.regexp }}"
+        replace: "{{ item.1.replace }}"
+      loop: "{{ dh_configs.results | product(_dh_settings) | list }}"
+      when: item.0.stat.exists
+      loop_control:
+        label: "{{ item.0.item.name }}: {{ item.1.name }}"
+      vars:
+        _dh_settings:
+          - name: maxGenerationRequestDistance
+            regexp: '^(\s*maxGenerationRequestDistance\s*=\s*).*$'
+            replace: '\g<1>{{ minecraft_dh_max_generation_distance }}'
+          - name: threadPriority
+            regexp: '^(\s*threadPriority\s*=\s*).*$'
+            replace: '\g<1>{{ minecraft_dh_thread_priority }}'
+          - name: threadRunTimeRatio
+            regexp: '^(\s*threadRunTimeRatio\s*=\s*).*$'
+            replace: '\g<1>"{{ minecraft_dh_thread_runtime_ratio }}"'
+      notify: Restart fabric instances
+
+  handlers:
+    - name: Restart fabric instances
+      # Restart only the enabled instances — never resurrect a deliberately
+      # stopped one. Typically just `main` is enabled, so this is a single
+      # clean RCON-driven restart.
+      ansible.builtin.systemd:
+        name: "fabric-server@{{ item.name }}.service"
+        state: restarted
+      loop: "{{ minecraft_instances | selectattr('enabled') | list }}"
+      loop_control:
+        label: "{{ item.name }}"
