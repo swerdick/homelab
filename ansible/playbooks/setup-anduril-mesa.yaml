@@ -1,0 +1,101 @@
+---
+# Graphics-stack (Mesa) bump for the anduril gaming LXC (CT 117).
+#
+# Why: the RX 9070 XT is RDNA4 (Navi 48, gfx1201) -- brand-new silicon. Ubuntu
+# 26.04 (Resolute) ships Mesa 26.0.x, which is too early for RDNA4 and produces
+# transient checkerboard/geometry corruption in games. Verified across BOTH an
+# OpenGL title (Minecraft/Sodium) and a Vulkan one (Eden/TOTK): the shared layer
+# is RADV + gamescope's compositor, not any single app or setting. In-game
+# framebuffer captures (F2) were clean during the corruption, proving it is
+# introduced below the app -- i.e. the driver. RDNA4 rendering corruption is a
+# documented, actively-fixed Mesa bug class (Mesa 26.0.2 release notes list
+# "RADV: RDNA4 visual corruption"; 26.0.7 adds AMD Vulkan texture-corruption
+# fixes). The kisak-mesa "fresh" PPA carries the newer 26.1.x branch for Resolute
+# (26.1.4~kisak1 as of 2026-07-03) -- the highest-leverage real fix.
+#
+# Layer note: this is the LXC's *userspace* Mesa. The amdgpu KERNEL driver and
+# GPU firmware live on the earendil HOST (the LXC shares the host kernel); bump
+# those via host updates separately (needs a host reboot -> takes down every
+# guest). A Mesa update shown in the Proxmox node UI is the HOST's Mesa and does
+# NOT render the LXC's games -- it is not this fix.
+#
+# Footguns: the NVIDIA-era apt footgun ([[project-anduril-apt-patch-footguns]])
+# was `apt autoremove` + i386 libnvidia/xserver pins. Those pins are GONE (this
+# is now a pin-free AMD Mesa stack), so a coordinated dist-upgrade is the correct,
+# safe way to bump the whole interdependent Mesa set atomically (a targeted
+# package list risks a partial upgrade -> Mesa ABI mismatch). We still NEVER
+# autoremove. The kisak PPA only supersedes Mesa (+ a couple of X libs), so the
+# dist-upgrade delta is effectively Mesa; there is no kernel in the LXC to pull.
+#
+# Verify-before-bump: confirm the kisak PPA still publishes for `resolute`
+# before applying -- https://launchpad.net/~kisak/+archive/ubuntu/kisak-mesa
+# Confirmed 2026-07-13: builds for resolute, latest 26.1.4~kisak1.
+#
+# Rollback: `sudo apt install ppa-purge && sudo ppa-purge ppa:kisak/kisak-mesa`
+# reverts cleanly to the distro Mesa. New Mesa loads on the next session restart
+# (`just restart-anduril`) / game relaunch -- running processes hold the old libs
+# until then.
+#
+# Lives in site-anduril.yaml, early (before the session/emulator/prism plays that
+# render on top of Mesa).
+
+- name: Bump Mesa (RDNA4 rendering fix) on the anduril LXC
+  hosts: anduril
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Sanity-check this is Ubuntu (kisak-mesa is an Ubuntu PPA)
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.distribution == "Ubuntu"
+        fail_msg: >-
+          setup-anduril-mesa targets Ubuntu (kisak-mesa PPA); got
+          {{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}.
+
+    - name: Ensure ca-certificates is present (for HTTPS key + PPA fetch)
+      ansible.builtin.apt:
+        name: ca-certificates
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install the kisak-mesa PPA signing key (HTTPS, not the gpg keyserver)
+      # The `ppa:` shortcut pulls the key over hkp://keyserver.ubuntu.com:80, which
+      # this LXC's egress blocks ("Unable to get required signing key"). Fetch the
+      # same key over HTTPS instead. Fingerprint from Launchpad (kisak-mesa PPA).
+      ansible.builtin.get_url:
+        url: "https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0xEB8B81E14DA65431D7504EA8F63F0F2B90935439"
+        dest: /usr/share/keyrings/kisak-mesa.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Add the kisak-mesa "fresh" PPA (deb822, keyed by the HTTPS-fetched key)
+      ansible.builtin.deb822_repository:
+        name: kisak-mesa
+        types: [deb]
+        uris: "https://ppa.launchpadcontent.net/kisak/kisak-mesa/ubuntu"
+        suites: "{{ ansible_facts.distribution_release }}"
+        components: [main]
+        signed_by: /usr/share/keyrings/kisak-mesa.asc
+        state: present
+        enabled: true
+
+    - name: Coordinated Mesa bump to the PPA version (dist-upgrade, no autoremove)
+      # dist-upgrade so the whole interdependent Mesa set (GL/EGL/GLX/Vulkan/VA +
+      # gallium, both amd64 and the i386 libs Steam/Proton need) moves together --
+      # a per-package list risks a split-version ABI mismatch. Scoped in practice
+      # by the PPA (only Mesa is superseded); no kernel exists in the LXC. Never
+      # autoremove (protects the i386 Steam runtime libs).
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: false
+        update_cache: true
+
+    - name: Remind that a session restart is needed to load the new Mesa
+      ansible.builtin.debug:
+        msg: >-
+          Mesa upgraded. Run `just restart-anduril` (or relaunch the game) to load
+          it -- running processes keep the old libraries until restart. Verify with
+          the F3 debug screen ('Mesa <version>') or `glxinfo -B`.

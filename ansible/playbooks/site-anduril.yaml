@@ -29,6 +29,9 @@
 - name: Configure unattended upgrades
   import_playbook: install-unattended-upgrades.yaml
 
+- name: Bump the graphics stack (Mesa) for RDNA4
+  import_playbook: setup-anduril-mesa.yaml
+
 - name: Install the Alloy collector
   import_playbook: install-alloy.yaml
 
