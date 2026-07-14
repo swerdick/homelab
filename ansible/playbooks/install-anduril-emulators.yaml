@@ -190,12 +190,13 @@
       loop_control:
         label: "{{ item.key }}"
 
-    - name: Set RetroArch video output (crisp integer scale, no sharpen shader)
-      # Retro cores render at tiny native res; on the 4K panel scale them with integer
-      # multiples (pixel-perfect, correct aspect via pillarbox) and NEAREST
-      # (video_smooth=false), not bilinear mush, and keep any auto-loaded shader off so
-      # no sharpen pass can ring. These are display prefs, not artifact-critical (retro
-      # cores don't FSR) -- flip video_scale_integer to "false" to fill the screen.
+    - name: Set RetroArch video output (fill height, no sharpen shader)
+      # Retro cores render at tiny native res; on the 4K panel let them scale up to fill
+      # the screen height (aspect stays correct via the core's 4:3 -> thin L/R pillarbox)
+      # with NEAREST (video_smooth=false), not bilinear mush, and keep any auto-loaded
+      # shader off so no sharpen pass can ring. video_scale_integer=true was pixel-perfect
+      # but on a 4K panel snapped the image to a small box with big borders -- integer
+      # multiples of the ~240p native res don't get near 2160 -- so it's off.
       become: true
       become_user: "{{ session_user }}"
       ansible.builtin.lineinfile:
@@ -206,7 +207,7 @@
         mode: "0644"
       loop:
         - { key: video_smooth, value: "false" }
-        - { key: video_scale_integer, value: "true" }
+        - { key: video_scale_integer, value: "false" }
         - { key: video_shader_enable, value: "false" }
       loop_control:
         label: "{{ item.key }}"
