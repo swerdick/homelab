@@ -408,8 +408,13 @@
           (
             for i in $(seq 1 40); do [ -S "${XDG_RUNTIME_DIR}/wayland-0" ] && break; sleep 1; done
             sleep 2
-            # TV is the only/primary output (disable the DP-3 dummy)
-            WAYLAND_DISPLAY=wayland-0 kscreen-doctor output.HDMI-A-4.enable output.HDMI-A-4.priority.1 output.DP-3.disable 2>/dev/null || true
+            # TV is the only/primary output (disable the DP-3 dummy). Pin scale 1.0:
+            # KWin otherwise auto-picks fractional 1.7 on a 4K output, which makes
+            # gamescope's nested 3840x2160 surface land on odd sizes (3840x2161) and
+            # thrash its swapchain -- the surface can then silently stop presenting
+            # (black screen, audio + input still alive; only a session restart clears
+            # it). Scale is always-valid so it rides the routing call, not the mode one.
+            WAYLAND_DISPLAY=wayland-0 kscreen-doctor output.HDMI-A-4.enable output.HDMI-A-4.priority.1 output.HDMI-A-4.scale.1 output.DP-3.disable 2>/dev/null || true
             # Pin 4K@60 explicitly -- the TV's EDID-preferred mode is 4K@30, which
             # would judder. Separate call (kscreen commits a call atomically) so a bad
             # modestring can't also break the routing above; the || true then just
