@@ -11,6 +11,10 @@
 # Steam's "Add a Non-Steam Game" list — gamescope's file Browse dialog is
 # broken). Everything user-specific (the MC instance, mods, shaders, MS account,
 # Steam shortcut, in-game settings) stays manual — see runbooks/eregion-client.md.
+# EXCEPTION: the performance baseline (JVM GC flags + mesa_glthread + heap) IS
+# enforced on the eregion instance when it exists — those are tuned defaults for
+# this RDNA4/i7-6700K box, not personal choices, and we prefer an idempotent play
+# over a bit-rotting runbook step.
 #
 # Userspace only (installs under ~pseudo) — no root, and it does NOT touch the
 # gaming session / emulators. The portable build keeps its data (instances,
@@ -35,6 +39,20 @@
     prism_tarball_url: "https://github.com/PrismLauncher/PrismLauncher/releases/download/{{ prism_version }}/PrismLauncher-Linux-Qt6-Portable-{{ prism_version }}.tar.gz"
     prism_tarball_sha256: "cda51a7adb1e29b6b63065e2fb67ad4d3a754d012739064394f5c3b5ba4af006"
     prism_dir: "{{ prism_home }}/prism"
+    # --- Performance baseline for the Minecraft instance (see task at the end) ---
+    prism_instance: eregion
+    prism_heap_mb: 6144
+    # Aikar's tuned-G1 flags (mcflags.emc.gs) MINUS -Xms/-Xmx — Prism sets those
+    # itself from the heap keys below (with Xms=Xmx so AlwaysPreTouch commits the
+    # whole heap up front, killing runtime resize/GC hitches).
+    prism_jvm_args: >-
+      -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200
+      -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch
+      -XX:G1NewSizePercent=30 -XX:G1MaxNewSizePercent=40 -XX:G1HeapRegionSize=8M
+      -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=5 -XX:G1MixedGCCountTarget=4
+      -XX:InitiatingHeapOccupancyPercent=15 -XX:G1MixedGCLiveThresholdPercent=90
+      -XX:G1RSetUpdatingPauseTimePercent=5 -XX:SurvivorRatio=32
+      -XX:+PerfDisableSharedMem -XX:MaxTenuringThreshold=1
 
   tasks:
     - name: Sanity-check that this is anduril
@@ -116,3 +134,40 @@
           Icon={{ prism_dir }}/share/icons/hicolor/256x256/apps/org.prismlauncher.PrismLauncher.png
           Categories=Game;
           Terminal=false
+
+    # --- Performance baseline for the Minecraft instance -----------------------
+    - name: Stat the Minecraft instance config (perf baseline is instance-scoped)
+      ansible.builtin.stat:
+        path: "{{ prism_dir }}/instances/{{ prism_instance }}/instance.cfg"
+      register: prism_instance_cfg
+
+    - name: Enforce the performance baseline on the {{ prism_instance }} instance
+      # Only when the instance already exists — it's created manually (mods,
+      # account, Steam shortcut per runbooks/eregion-client.md); we don't fabricate
+      # an orphan instance. Two verified wins on this RDNA4/i7-6700K stack:
+      #   - mesa_glthread=true (via WrapperCommand): threaded GL for the Minecraft
+      #     `java` process. radeonsi does NOT auto-enable glthread for the generic
+      #     `java` executable, so it must be forced — sizable MC-on-Mesa uplift.
+      #   - Aikar's G1 flags + Xms=Xmx: removes the periodic G1 stop-the-world hitch.
+      # no_extra_spaces: Prism/QSettings needs `key=value`, not `key = value`.
+      when: prism_instance_cfg.stat.exists
+      ansible.builtin.ini_file:
+        path: "{{ prism_dir }}/instances/{{ prism_instance }}/instance.cfg"
+        section: General
+        option: "{{ item.k }}"
+        value: "{{ item.v }}"
+        no_extra_spaces: true
+        mode: "0644"
+      # WrapperCommand/JvmArgs values contain spaces, so Prism (QSettings) stores
+      # them double-quoted — match that exactly or the play flip-flops the quotes
+      # (reports changed) every time Prism rewrites the file on close.
+      loop:
+        - { k: OverrideCommands, v: "true" }
+        - { k: WrapperCommand, v: '"/usr/bin/env mesa_glthread=true"' }
+        - { k: OverrideJavaArgs, v: "true" }
+        - { k: JvmArgs, v: '"{{ prism_jvm_args }}"' }
+        - { k: OverrideMemory, v: "true" }
+        - { k: MinMemAlloc, v: "{{ prism_heap_mb }}" }
+        - { k: MaxMemAlloc, v: "{{ prism_heap_mb }}" }
+      loop_control:
+        label: "{{ item.k }}"
