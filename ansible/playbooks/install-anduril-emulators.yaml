@@ -767,12 +767,15 @@
               Categories=Game;Emulator;
               StartupWMClass=eden
 
-        - name: Link the dumped Switch keys into Eden's data dir
-          # Eden reads keys from ~/.local/share/eden/keys regardless of packaging.
-          # Symlink the canonical copy on /bulk/games so a rootfs rebuild doesn't
-          # lose them. Firmware is imported in-app (Eden -> Install Firmware) from
-          # {{ emu_root }}/bios/switch. Verify-before: confirm this data-dir path
-          # against the installed Eden version if keys aren't detected.
+        - name: Link the dumped Switch keys + firmware into Eden's data dir
+          # Eden reads keys from ~/.local/share/eden/keys and system firmware from
+          # nand/system/Contents/registered/*.nca. Symlink BOTH to the canonical
+          # copies on /bulk/games so a rootfs rebuild doesn't lose them -- the dumps
+          # live on shared ZFS, only the links are anduril-local. Firmware is
+          # required by some titles (e.g. SSBU aborts in nn::fs without it); most
+          # games boot without it, which is why its absence hid until SSBU.
+          # Verify-before: confirm these data-dir paths against the installed Eden
+          # version if keys/firmware aren't detected.
           become: true
           become_user: "{{ session_user }}"
           block:
@@ -785,6 +788,23 @@
               ansible.builtin.file:
                 src: "{{ emu_root }}/bios/switch/prod.keys"
                 dest: "/home/{{ session_user }}/.local/share/eden/keys/prod.keys"
+                state: link
+                force: true
+
+            - name: Ensure Eden's system-content dir exists (parent of registered)
+              ansible.builtin.file:
+                path: "/home/{{ session_user }}/.local/share/eden/nand/system/Contents"
+                state: directory
+                mode: "0755"
+
+            - name: Link the Switch firmware into Eden's registered nand
+              # The whole registered/ dir is the symlink -> the /bulk firmware dump
+              # (238 NCAs). Edge case: if a prior run (or Eden's first launch) left
+              # registered as a real empty dir, clear it first -- the file module
+              # will not convert an existing directory into a link.
+              ansible.builtin.file:
+                src: "{{ emu_root }}/bios/switch/firmware"
+                dest: "/home/{{ session_user }}/.local/share/eden/nand/system/Contents/registered"
                 state: link
                 force: true
 
