@@ -599,6 +599,44 @@
             replace: '\g<1>"{{ minecraft_dh_thread_runtime_ratio }}"'
       notify: Restart fabric instances
 
+    # Tectonic writes config/tectonic.json on its FIRST boot (same chicken-and-egg
+    # as DH above), so this applies on the 2nd run and is idempotent thereafter.
+    # Tames the oceans toward vanilla (see host_vars: less open water so Terralith
+    # biomes actually vary, and deep oceans only slightly deeper than vanilla +
+    # explorable). Only tectonic-running instances have the file; when-guarded.
+    - name: Stat each instance's Tectonic config
+      ansible.builtin.stat:
+        path: "{{ minecraft_base }}/{{ item.name }}/config/tectonic.json"
+      loop: "{{ minecraft_instances }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: tectonic_configs
+
+    - name: Tame Tectonic ocean generation (shallower + less open water)
+      ansible.builtin.replace:
+        path: "{{ minecraft_base }}/{{ item.0.item.name }}/config/tectonic.json"
+        regexp: "{{ item.1.regexp }}"
+        replace: "{{ item.1.replace }}"
+      loop: "{{ tectonic_configs.results | product(_tectonic_settings) | list }}"
+      when: item.0.stat.exists
+      loop_control:
+        label: "{{ item.0.item.name }}: {{ item.1.name }}"
+      vars:
+        _tectonic_settings:
+          - name: ocean_offset
+            regexp: '^(\s*"ocean_offset"\s*:\s*)-?[0-9.]+(,?)\s*$'
+            replace: '\g<1>{{ minecraft_tectonic_ocean_offset }}\g<2>'
+          - name: deep_ocean_depth
+            regexp: '^(\s*"deep_ocean_depth"\s*:\s*)-?[0-9.]+(,?)\s*$'
+            replace: '\g<1>{{ minecraft_tectonic_deep_ocean_depth }}\g<2>'
+          - name: ocean_depth
+            regexp: '^(\s*"ocean_depth"\s*:\s*)-?[0-9.]+(,?)\s*$'
+            replace: '\g<1>{{ minecraft_tectonic_ocean_depth }}\g<2>'
+          - name: monument_offset
+            regexp: '^(\s*"monument_offset"\s*:\s*)-?[0-9.]+(,?)\s*$'
+            replace: '\g<1>{{ minecraft_tectonic_monument_offset }}\g<2>'
+      notify: Restart fabric instances
+
   handlers:
     - name: Restart fabric instances
       # Restart only the enabled instances — never resurrect a deliberately

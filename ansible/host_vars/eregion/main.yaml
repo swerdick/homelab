@@ -85,6 +85,24 @@ minecraft_dh_max_generation_distance: 2048
 minecraft_dh_thread_priority: 2
 minecraft_dh_thread_runtime_ratio: "0.5"
 
+# --- Tectonic terrain tuning (tamed oceans) --------------------------------
+# Tectonic v3 defaults to continent-scale land separated by very large, very
+# deep oceans (default ocean_offset -0.8, deep_ocean_depth -0.45 ~= 58 blocks).
+# That buried Terralith's biome variety under endless deep water (each island
+# one biome -> forests on repeat) and made ocean floors/monuments unreachable.
+# These tame the oceans toward vanilla while keeping Tectonic's dramatic
+# mountains: less open water (more contiguous land, so biomes actually vary) and
+# deep oceans only slightly deeper than vanilla + explorable. Applied to
+# config/tectonic.json (Tectonic-generated on first boot; see the playbook's
+# 2nd-run note). CAVEAT: these affect WORLDGEN, so on a brand-new world the
+# first-boot spawn generates with Tectonic defaults before the 2nd run tames it
+# -- for a fully-tamed fresh world, apply the config before first world-gen (as
+# done in the 2026-07 world cutover) or delete+regen after the first run.
+minecraft_tectonic_ocean_offset: "-0.5"
+minecraft_tectonic_deep_ocean_depth: "-0.25"
+minecraft_tectonic_ocean_depth: "-0.15"
+minecraft_tectonic_monument_offset: "-5"
+
 # --- Server operators (ops.json, templated per instance) -------------------
 # UUIDs from https://api.mojang.com/users/profiles/minecraft/<name>, dashed.
 minecraft_ops:
