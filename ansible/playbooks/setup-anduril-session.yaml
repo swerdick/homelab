@@ -492,6 +492,24 @@
           # 1920x1080 + Scaling Filter=Integer in Steam (exact 2x, pixel-perfect),
           # NEVER FSR/NIS. -F linear is just the explicit session default; a per-game
           # Steam filter still overrides it over the wayland protocol at runtime.
+          #
+          # SC2 "Puck" (28de:1304) cold-boot settle: the Puck has no kernel driver
+          # (Steam/SDL drive it in userspace). On a COLD boot this session auto-starts
+          # and Steam races the Puck's enumeration + the handheld's RF connect, building
+          # a bad device model that then can't switch the pad desktop->gamepad on the
+          # first game launch (controller dead in-game, only B works, trackpad mouses).
+          # Wait for the dongle to enumerate + a short settle before Steam inits. Bounded
+          # (~15s) so a missing/unplugged Puck never blocks the session boot.
+          for _i in $(seq 1 15); do
+            for _d in /sys/bus/usb/devices/*; do
+              [ "$(cat "$_d/idVendor" 2>/dev/null)" = "28de" ] \
+                && [ "$(cat "$_d/idProduct" 2>/dev/null)" = "1304" ] \
+                && { _puck=1; break; }
+            done
+            [ -n "$_puck" ] && break
+            sleep 1
+          done
+          [ -n "$_puck" ] && sleep 4   # composite iface finishes + handheld RF-connects
           exec env STEAM_MULTIPLE_XWAYLANDS=1 gamescope \
             -e -f --backend sdl -F linear -W 3840 -H 2160 -r 60 --xwayland-count 2 --force-grab-cursor \
             -- steam -gamepadui
