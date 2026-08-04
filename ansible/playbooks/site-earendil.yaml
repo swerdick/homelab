@@ -53,5 +53,8 @@
 - name: Pin the uplink NIC + Wake-on-LAN
   import_playbook: setup-earendil-network.yaml
 
+- name: Cap the ZFS ARC
+  import_playbook: setup-earendil-zfs.yaml
+
 - name: Provision Terraform PVE access
   import_playbook: setup-terraform-pve-access.yaml
