@@ -13,10 +13,24 @@ mp4  /bulk/documents        -> /srv/documents        (ro)
 mp5  /bulk/media/music      -> /srv/music            (ro)
 mp6  /bulk/photos           -> /srv/photos           (ro)
 mp7  /bulk/media/wallpaper  -> /srv/wallpaper        (ro)
-mp8  /bulk/media/movies     -> /srv/movies           (ro)
 ```
 
+(A planned mp8 for `/bulk/media/movies` was never actually added — movies are **not** in offsite backup today.)
+
 Add via host: `pct set 131 -mpN /host/path,mp=/srv/whatever,ro=1` then `pct reboot 131`.
+
+## GID 10000 passthrough (media access)
+
+The /bulk media trees are `2770 :10000` (the k8s supplementalGroups model), which the unprivileged mapped root (host uid/gid 100000) cannot read — this silently broke `restic-media` for months in 2026 (0-byte "hollow" snapshots). Access is granted the same way the smb CT does it: `/etc/pve/lxc/131.conf` maps guest GID 10000 directly to host GID 10000, and a drop-in runs `restic-media` with `SupplementaryGroups=10000` (guest group `shares`):
+
+```
+lxc.idmap: u 0 100000 65536
+lxc.idmap: g 0 100000 10000
+lxc.idmap: g 10000 10000 1
+lxc.idmap: g 10001 110001 55535
+```
+
+Managed by `ansible/playbooks/setup-aglarond.yaml` (idmap, `/etc/subgid`, `shares` group, drop-in, host-etc excludes). Idmap changes need a CT restart — never restart mid-backup.
 
 ## Three backup sets
 
@@ -100,6 +114,10 @@ Restored files land at original absolute paths under `--target`. So `--target /t
 **B2 "storage cap exceeded":** raise cap in B2 console → Caps & Alerts. Manually retry: `systemctl start --no-block restic-backups.service` — uploads resume from where they stopped.
 
 **`systemctl start` hangs:** expected for `Type=oneshot` — it waits for completion. Use `--no-block` or Ctrl+C the wait (service keeps running).
+
+**Container won't start, idmap error:** check `/etc/pve/lxc/131.conf` for duplicate `lxc.idmap:` lines. Must be exactly 4, and `/etc/subgid` must contain `root:10000:1`.
+
+**restic-media "permission denied" on all /srv sources (0 B added):** the gid-10000 passthrough isn't active — CT not restarted since the idmap landed, or the `SupplementaryGroups=10000` drop-in is missing. Re-run `setup-aglarond.yaml` and `pct reboot 131` (not mid-backup). Watch for this after any /bulk permission restructuring: it produces hollow snapshots that look current.
 
 ## Recovery (total Earendil loss)
 
