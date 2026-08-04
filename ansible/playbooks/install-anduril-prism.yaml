@@ -94,7 +94,7 @@
             checksum: "sha256:{{ prism_tarball_sha256 }}"
             mode: "0644"
 
-        - name: Extract Prism into {{ prism_dir }} (preserves instances/accounts)
+        - name: Extract Prism (preserving instances/accounts) into {{ prism_dir }}
           ansible.builtin.unarchive:
             src: "/tmp/prism-{{ prism_version }}.tar.gz"
             dest: "{{ prism_dir }}"
@@ -141,7 +141,7 @@
         path: "{{ prism_dir }}/instances/{{ prism_instance }}/instance.cfg"
       register: prism_instance_cfg
 
-    - name: Enforce the performance baseline on the {{ prism_instance }} instance
+    - name: Enforce the performance baseline on instance {{ prism_instance }}
       # Only when the instance already exists — it's created manually (mods,
       # account, Steam shortcut per runbooks/eregion-client.md); we don't fabricate
       # an orphan instance. Two verified wins on this RDNA4/i7-6700K stack:

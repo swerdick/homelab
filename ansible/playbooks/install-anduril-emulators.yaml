@@ -799,9 +799,10 @@
 
             - name: Link the Switch firmware into Eden's registered nand
               # The whole registered/ dir is the symlink -> the /bulk firmware dump
-              # (238 NCAs). Edge case: if a prior run (or Eden's first launch) left
-              # registered as a real empty dir, clear it first -- the file module
-              # will not convert an existing directory into a link.
+              # (238 NCAs). If Eden's first launch left registered as a real empty
+              # dir, force converts it in place; a NON-empty dir (firmware installed
+              # through Eden's UI) fails loudly on purpose -- clear it by hand rather
+              # than have the play silently delete installed NCAs.
               ansible.builtin.file:
                 src: "{{ emu_root }}/bios/switch/firmware"
                 dest: "/home/{{ session_user }}/.local/share/eden/nand/system/Contents/registered"

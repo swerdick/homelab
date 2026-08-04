@@ -85,6 +85,13 @@
           SupplementaryGroups=10000
       notify: Reload systemd
 
+    - name: Ensure the restic config dir exists (rebuild-before-restore case)
+      # 0700: b2.env (B2 credentials) lives here once the backup restore lands.
+      ansible.builtin.file:
+        path: /root/.config/restic
+        state: directory
+        mode: "0700"
+
     - name: Exclude host dirs unreadable from the unprivileged CT
       # Established pattern (see descriptions/aglarond.md): secrets-bearing
       # /etc dirs the mapped root can't read are excluded rather than fought.
@@ -92,6 +99,8 @@
       # backup — deliberate for now; revisit if their recovery story changes.
       ansible.builtin.lineinfile:
         path: /root/.config/restic/excludes-host.txt
+        create: true
+        mode: "0644"
         line: "{{ item }}"
       loop:
         - /srv/host-etc/alloy
