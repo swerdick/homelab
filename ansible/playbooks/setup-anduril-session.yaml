@@ -310,6 +310,20 @@
           fps
           frametime=1
           frame_timing=1
+
+          # Per-frame CSV capture for stutter forensics (2026-08 residual-hitch
+          # hunt). autostart begins a capture 5s after every app launch so a
+          # session records itself (couch/controller users can't reliably hit
+          # the toggle); log_duration bounds each file at 30 min. Shift_L+F2
+          # (a paddle-chord-able Left Shift, like the toggles above) starts/
+          # stops extra captures. log_interval=0 = every frame. CSVs land in
+          # ~/mangohud-logs as <app>_<timestamp>.csv — cheap to remove this
+          # block when the hunt is over.
+          output_folder=/home/{{ session_user }}/mangohud-logs
+          log_interval=0
+          log_duration=1800
+          autostart_log=5
+          toggle_logging=Shift_L+F2
           gpu_stats
           gpu_load_change
           gpu_temp

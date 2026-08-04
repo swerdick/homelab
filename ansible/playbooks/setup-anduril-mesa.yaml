@@ -30,6 +30,9 @@
 # Verify-before-bump: confirm the kisak PPA still publishes for `resolute`
 # before applying -- https://launchpad.net/~kisak/+archive/ubuntu/kisak-mesa
 # Confirmed 2026-07-13: builds for resolute, latest 26.1.4~kisak1.
+# Confirmed 2026-08-03: latest 26.1.6~kisak1 (applied; residual gfx12
+# checkerboard corruption unchanged 26.1.4->26.1.6 -- see the rdna4
+# corruption memory/notes before chasing Mesa versions further).
 #
 # Rollback: `sudo apt install ppa-purge && sudo ppa-purge ppa:kisak/kisak-mesa`
 # reverts cleanly to the distro Mesa. New Mesa loads on the next session restart
