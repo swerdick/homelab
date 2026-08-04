@@ -1,0 +1,103 @@
+# aglarond (CT 131) — restic offsite backups: GID-10000 passthrough + unit config.
+#
+# Root cause this codifies (diagnosed 2026-08-03): the /bulk media trees were
+# restructured to `2770 :10000` for the k8s supplementalGroups model, which cut
+# off aglarond's unprivileged mapped-root (host uid/gid 100000) entirely —
+# restic-media uploaded 0 bytes per run for months (hollow-but-fresh-looking
+# snapshots in B2), and restic-host partial-failed on two newer /etc dirs.
+#
+# The fix mirrors how the smb CT (121) and k8s pods get media access: membership
+# in host group 10000, granted here by mapping container gid 10000 straight
+# through (lxc.idmap) and putting the restic-media unit in that group. No host
+# permission loosening, no ACL second-system.
+#
+# Two plays: host-side (PVE conf + subgid) then guest-side (group, drop-in,
+# excludes). Idempotent; untargeted hosts are untouched.
+#
+# Run from ansible/:
+#   ansible-playbook playbooks/setup-aglarond.yaml --check --diff
+
+- name: Aglarond host side — gid 10000 passthrough into CT 131
+  hosts: proxmox_hosts # = earendil (the PVE node carrying CT 131)
+  become: true
+  vars:
+    aglarond_ctid: 131
+
+  tasks:
+    - name: Allow root to map host gid 10000 into containers
+      # Prerequisite for the lxc.idmap 'g 10000 10000 1' line below. Was
+      # already present (the smb CT relies on it); managed here so a host
+      # rebuild reproduces it.
+      ansible.builtin.lineinfile:
+        path: /etc/subgid
+        line: "root:10000:1"
+
+    - name: Map container gid 10000 to host gid 10000 (lxc.idmap)
+      # Exactly these four lines — a partial/duplicated set prevents CT start
+      # (see the idmap troubleshooting note in descriptions/smb.md and
+      # descriptions/aglarond.md). lineinfile keeps them as plain lxc.* lines:
+      # pct chokes on '#' comment markers inside CT confs.
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ aglarond_ctid }}.conf"
+        line: "{{ item }}"
+      loop:
+        - "lxc.idmap: u 0 100000 65536"
+        - "lxc.idmap: g 0 100000 10000"
+        - "lxc.idmap: g 10000 10000 1"
+        - "lxc.idmap: g 10001 110001 55535"
+      notify: Warn CT config changed
+
+  handlers:
+    - name: Warn CT config changed
+      # idmap changes only apply on CT restart; restarting mid-backup kills the
+      # run (uploads checkpoint, but the scan restarts), so timing stays a
+      # deliberate operator decision — mirrors setup-anduril-lxc.yaml.
+      ansible.builtin.debug:
+        msg: >-
+          /etc/pve/lxc/{{ aglarond_ctid }}.conf changed — takes effect on the
+          next CT restart (pct reboot {{ aglarond_ctid }}). Avoid restarting
+          while a restic run is in flight.
+
+- name: Aglarond guest side — restic unit access + excludes
+  hosts: aglarond
+  become: true
+
+  tasks:
+    - name: Create the shares group (container gid 10000)
+      # Same name/gid as in the smb CT. With the idmap above, container gid
+      # 10000 IS host gid 10000 — the group the /bulk media trees grant.
+      ansible.builtin.group:
+        name: shares
+        gid: 10000
+
+    - name: Create the restic-media drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/restic-media.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Run restic-media with the shares group
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/restic-media.service.d/media-group.conf
+        mode: "0644"
+        content: |
+          [Service]
+          SupplementaryGroups=10000
+      notify: Reload systemd
+
+    - name: Exclude host dirs unreadable from the unprivileged CT
+      # Established pattern (see descriptions/aglarond.md): secrets-bearing
+      # /etc dirs the mapped root can't read are excluded rather than fought.
+      # NOTE: this leaves the host's WireGuard private keys out of offsite
+      # backup — deliberate for now; revisit if their recovery story changes.
+      ansible.builtin.lineinfile:
+        path: /root/.config/restic/excludes-host.txt
+        line: "{{ item }}"
+      loop:
+        - /srv/host-etc/alloy
+        - /srv/host-etc/wireguard
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
