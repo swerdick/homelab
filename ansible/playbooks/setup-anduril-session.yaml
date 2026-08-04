@@ -314,14 +314,17 @@
           # Per-frame CSV capture for stutter forensics (2026-08 residual-hitch
           # hunt). autostart begins a capture 5s after every app launch so a
           # session records itself (couch/controller users can't reliably hit
-          # the toggle); log_duration bounds each file at 30 min. Shift_L+F2
+          # the toggle); log_duration bounds each file at 5 min — MangoHud only
+          # writes the CSV when a capture STOPS, so short windows flush
+          # continuously instead of dying buffered when a session is killed
+          # (the 30-min setting lost both captures on 2026-08-03). Shift_L+F2
           # (a paddle-chord-able Left Shift, like the toggles above) starts/
           # stops extra captures. log_interval=0 = every frame. CSVs land in
           # ~/mangohud-logs as <app>_<timestamp>.csv — cheap to remove this
           # block when the hunt is over.
           output_folder=/home/{{ session_user }}/mangohud-logs
           log_interval=0
-          log_duration=1800
+          log_duration=300
           autostart_log=5
           toggle_logging=Shift_L+F2
           gpu_stats
@@ -496,7 +499,13 @@
           # injects into the outer KWin, not the game's gamescope (gamescope #1307).
           # VALIDATED 2026-06-27: SC2 right-trackpad fully drives Stellaris's cursor.
           #   -e                  : Steam mode + focus for the nested gamepad UI (#1365)
-          #   --backend sdl       : nested fullscreen on KDE Plasma 6 Wayland (#1356)
+          #   --backend wayland   : native Wayland client of KWin. Was `sdl` (the
+          #     #1356 Plasma-6-fullscreen workaround) until 2026-08-03: the SDL
+          #     backend's present path caused transient checkerboard corruption +
+          #     back-and-forth frame jitter in EVERY app on RDNA4 (validated by a
+          #     gamescope-free direct-KWin launch being 100% clean, then this
+          #     one-word swap fixing the normal Steam path). Fullscreen behaves on
+          #     current KWin; the kwinrule below still force-fullscreens as backstop.
           #   --force-grab-cursor : route relative pointer motion into the game (#1428)
           #   --xwayland-count 2 + STEAM_MULTIPLE_XWAYLANDS=1 : Steam + game each get one
           # Prereq: gamescope must be built with libei (libeis.so linked) -- verified.
@@ -525,7 +534,7 @@
           done
           [ -n "$_puck" ] && sleep 4   # composite iface finishes + handheld RF-connects
           exec env STEAM_MULTIPLE_XWAYLANDS=1 gamescope \
-            -e -f --backend sdl -F linear -W 3840 -H 2160 -r 60 --xwayland-count 2 --force-grab-cursor \
+            -e -f --backend wayland -F linear -W 3840 -H 2160 -r 60 --xwayland-count 2 --force-grab-cursor \
             -- steam -gamepadui
 
     - name: Force the gamescope session window fullscreen on the TV (KWin rule)
