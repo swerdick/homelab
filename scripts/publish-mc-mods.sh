@@ -31,6 +31,8 @@ ADMIN_SECRET="${REPO_ROOT}/kubernetes/apps/harbor/harbor-admin.yaml"
 for bin in oras sops curl; do
   command -v "$bin" >/dev/null 2>&1 || { echo "error: '$bin' not found on PATH" >&2; exit 1; }
 done
+command -v sha512sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 \
+  || { echo "error: need 'sha512sum' or 'shasum' on PATH" >&2; exit 1; }
 
 # sha512 helper — Linux has sha512sum, macOS has `shasum -a 512`.
 sha512_of() {
