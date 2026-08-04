@@ -1,0 +1,52 @@
+# Caps the ZFS ARC at 8 GiB (raised from the historical 1.55 GiB).
+#
+# Why 8G: 48G host with ~32G committed to guests at gaming peak. The old
+# 1.55G cap couldn't hold the hot set of the latency-sensitive workloads
+# (eregion's MC world region files + Distant Horizons LOD DBs), so any
+# bulk-pool streamer — the aglarond restic offsite runs in particular —
+# churned the whole cache and turned the game's chunk loads into physical
+# reads (root-caused during the 2026-08-03 stutter session: sda went
+# 5-10% -> ~60% busy while restic saturated sdc). 8G keeps the game's hot
+# set resident, still leaves guest headroom, and the ARC shrinks (slowly)
+# under memory pressure anyway.
+#
+# Both writes below matter:
+#   - sysfs write: takes effect immediately, no reboot
+#   - modprobe.d + initramfs refresh: survives reboot (zfs loads from the
+#     initrd on PVE, so /etc/modprobe.d changes are inert until the
+#     initramfs is rebuilt — same gotcha as setup-amdgpu-host.yaml)
+#
+# Run from ansible/:
+#   ansible-playbook playbooks/setup-earendil-zfs.yaml --check --diff
+- name: Configure the ZFS ARC cap
+  hosts: proxmox_hosts # = earendil today; the 8G sizing assumes its 48G RAM
+  become: true
+  vars:
+    zfs_arc_max_bytes: 8589934592 # 8 GiB
+
+  tasks:
+    - name: Read the current runtime ARC cap
+      ansible.builtin.command: cat /sys/module/zfs/parameters/zfs_arc_max
+      register: zfs_arc_max_now
+      changed_when: false
+
+    # sysfs rejects the copy module's atomic tmpfile+rename, so this is the
+    # read/compare/write trio (same pattern as the zfs quota handling in
+    # setup-anduril-lxc.yaml).
+    - name: Apply the ARC cap at runtime
+      ansible.builtin.shell: >-
+        echo {{ zfs_arc_max_bytes }} > /sys/module/zfs/parameters/zfs_arc_max
+      when: zfs_arc_max_now.stdout | trim != (zfs_arc_max_bytes | string)
+
+    - name: Persist the ARC cap across reboots
+      ansible.builtin.lineinfile:
+        path: /etc/modprobe.d/zfs.conf
+        regexp: '^options zfs zfs_arc_max='
+        line: "options zfs zfs_arc_max={{ zfs_arc_max_bytes }}"
+        create: true
+        mode: "0644"
+      notify: Refresh initramfs
+
+  handlers:
+    - name: Refresh initramfs
+      ansible.builtin.command: update-initramfs -u
