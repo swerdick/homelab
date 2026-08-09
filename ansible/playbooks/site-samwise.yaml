@@ -1,0 +1,60 @@
+---
+# Entry point for configuring samwise — the Raspberry Pi 5: k3s ARM worker
+# (tainted homelab.vingilot.internal/role=pi), Tailscale subnet router for the
+# home LAN, WoL sender for earendil, and the auto-water sensor host.
+#
+# Composes every playbook samwise participates in (via group membership or
+# explicit targeting), in dependency order. Validated end-to-end on the
+# 2026-08-09 rebuild from a freshly imaged SD card.
+#
+# Fresh-image pre-steps (outside ansible's reach):
+#   - Image the card with hostname `samwise` + user `pseudo` + the operator's
+#     SSH key (RPi Imager customization covers all three).
+#   - Clear stale SSH host keys on the operator Mac: `ssh-keygen -R` for
+#     samwise, samwise.vingilot.internal, and 192.168.1.50.
+#   - Remove the dead cluster registration or the rejoin is rejected
+#     (fresh images generate a new k3s node password):
+#       kubectl delete node samwise
+#       kubectl -n kube-system delete secret samwise.node-password.k3s --ignore-not-found
+#
+# Post-run manual steps (Tailscale admin console):
+#   - Delete the previous `samwise` machine entry if this was a re-image (a
+#     lingering entry squats the name — the new node registers as samwise-1;
+#     rename it back after deleting the old one).
+#   - Approve the advertised 192.168.1.0/24 route; disable key expiry.
+#
+# Usage:
+#   ansible-playbook playbooks/site-samwise.yaml --check --diff
+#   ansible-playbook playbooks/site-samwise.yaml -l samwise,gondor
+# (keep gondor in the limit: install-k3s-agent.yaml fetches the join token
+# from the server and verifies the join there — samwise alone can't join)
+
+- name: Create the pseudo admin user
+  import_playbook: setup-pseudo-user.yaml
+
+- name: Apply the Debian base config
+  import_playbook: setup-debian-base.yaml
+
+- name: Install the Alloy collector (distributes the root CA first)
+  import_playbook: install-alloy.yaml
+
+- name: Configure unattended upgrades
+  import_playbook: install-unattended-upgrades.yaml
+
+- name: Install smartctl_exporter (physical host)
+  import_playbook: install-smartctl-exporter.yaml
+
+- name: Enable the I2C sensor stack (reboots on device-tree change)
+  import_playbook: setup-pi-peripherals.yaml
+
+- name: Install the wake-earendil WoL sender
+  import_playbook: install-wakeonlan.yaml
+
+- name: Install Tailscale (tailnet member + subnet router)
+  import_playbook: install-tailscale.yaml
+
+- name: Join gondor's k3s cluster as an agent
+  import_playbook: install-k3s-agent.yaml
+
+- name: Point containerd at Harbor's registry proxy-caches
+  import_playbook: setup-k3s-registries.yaml
