@@ -171,15 +171,68 @@ _datapack_terralith:
   sha512: "8537db76a77c9ac749c26ed213bdaac576fc92328dcba65c6e5ad20062946c9e5ff02b7ada8492812da5d8b2a8eee57817d0475e128667c3aca6b790e5ba6cdb"
   upstream_url: "https://cdn.modrinth.com/data/8oi3bsk5/versions/eihdCshF/Terralith_26.2_v2.6.3.zip"
 
+# Structory + its Towers add-on — structure-only datapacks (vanilla blocks, no
+# items/mobs/balance changes). Stardust Labs; explicitly Terralith-compatible.
+# Upstream's zip is version-range generic (one file covers many MC versions).
+_datapack_structory:
+  filename: structory.zip
+  artifact: "structory:1.3.17"
+  sha512: "ac7d415d2000b531b82f3dc15eec598e13756f8c7d4de02bda02d40c85ef86e45da0f39a64500ad76952b20333e0d34765c99e3e23c172f089385bd206843fa6"
+  upstream_url: "https://cdn.modrinth.com/data/aKCwCJlY/versions/OIcllpSf/Structory_v1.3.7.zip"
+_datapack_structory_towers:
+  filename: structory-towers.zip
+  artifact: "structory-towers:1.0.17"
+  sha512: "1c300616f0f5c7dd919f94d510773e450194ecfeeb8e1a41fb0cb3d3b88adb8ee51bb01b545756524d2c6d1098382b926bc500becec30979cc6be267003477fe"
+  upstream_url: "https://cdn.modrinth.com/data/j3FONRYr/versions/uxUF2h4B/Structory_Towers_v1.0.17.zip"
+
+# Nullscape — End terrain/biome overhaul (Stardust). Vanilla blocks, terrain
+# only; regenerates only the End dimension.
+_datapack_nullscape:
+  filename: nullscape.zip
+  artifact: "nullscape:1.2.20-26.2"
+  sha512: "3ace54c904600e449305547064b2e0087eb05827c06f406490e7fa18dfbe6ef42c357078d5e6ad9cc32129de30bc0de9e89dd1c7ff966f1812b1393581d82294"
+  upstream_url: "https://cdn.modrinth.com/data/LPjGiSO4/versions/prWWpjSv/Nullscape_26.2_v1.2.20.zip"
+
+# Incendium ("Legacy Edition" is the 26.x datapack line) — Nether overhaul WITH
+# custom items/mobs/boss (all vanilla-protocol: CustomModelData items + dressed
+# entities, so plain clients still join fine). The optional Sparkles resource
+# pack (item textures) is a client-side nicety and is NOT deployed server-side.
+_datapack_incendium:
+  filename: incendium.zip
+  artifact: "incendium:5.5.0-26.2"
+  sha512: "cfb6a4310ab3895a0a4a35f1b668545a45316b2bc5159d4859797b0a559de839c163a3bbab038bdac0c4f81005a8b542866d6db7aeb72144a36f6ffaf534daf1"
+  upstream_url: "https://cdn.modrinth.com/data/ZVzW5oNS/versions/znNBZB6M/Incendium_Legacy_26.2_v5.5.0.zip"
+
 # --- Instances -------------------------------------------------------------
 # One systemd unit each. Run one at a time (unique ports let them co-reside if
-# you ever want to). `main` is the Tectonic+Terralith "vanilla-plus forever
-# world" and is the only one enabled by default.
+# you ever want to). `terralith` is the current primary world (Terralith-only
+# generation, seed hand-picked on map.jacobsjo.eu) and holds the default port.
 minecraft_instances:
-  - name: main
+  # Primary world since 2026-08-04: Terralith terrain + Structory(+Towers)
+  # structures + Incendium Nether + Nullscape End. No Tectonic — its
+  # continent-scale terrain was deliberately dropped in favour of Terralith's
+  # biome-scale mountains. `seed` pins level-seed at first world-gen only.
+  - name: terralith
     enabled: true
     port: 25565
     rcon_port: 25575
+    xms: "2G"
+    xmx: "6G"
+    motd: "Vingilot Minecraft - eregion (terralith)"
+    seed: "-1037821041562569650"
+    mods: "{{ _mods_core }}"
+    datapacks: >-
+      {{ [_datapack_terralith, _datapack_structory, _datapack_structory_towers,
+          _datapack_incendium, _datapack_nullscape] }}
+
+  # Retired 2026-08-04: the Tectonic+Terralith world (2026-07 cutover). World
+  # dirs stay on disk and in the nightly vzdump of CT 142 — flip enabled and
+  # swap ports with `terralith` to resurrect it. The Tectonic tuning vars above
+  # exist only for this instance; retire them together when this is deleted.
+  - name: main
+    enabled: false
+    port: 25567
+    rcon_port: 25577
     xms: "2G"
     xmx: "6G"
     motd: "Vingilot Minecraft - eregion (main)"
