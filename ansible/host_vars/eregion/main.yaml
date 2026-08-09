@@ -176,7 +176,7 @@ _datapack_terralith:
 # Upstream's zip is version-range generic (one file covers many MC versions).
 _datapack_structory:
   filename: structory.zip
-  artifact: "structory:1.3.17"
+  artifact: "structory:1.3.7"
   sha512: "ac7d415d2000b531b82f3dc15eec598e13756f8c7d4de02bda02d40c85ef86e45da0f39a64500ad76952b20333e0d34765c99e3e23c172f089385bd206843fa6"
   upstream_url: "https://cdn.modrinth.com/data/aKCwCJlY/versions/OIcllpSf/Structory_v1.3.7.zip"
 _datapack_structory_towers:

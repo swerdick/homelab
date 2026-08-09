@@ -42,6 +42,8 @@
       ansible.builtin.apt:
         name: i2c-tools
         state: present
+        update_cache: true
+        cache_valid_time: 3600
 
     - name: Reboot to apply device-tree changes
       ansible.builtin.reboot:

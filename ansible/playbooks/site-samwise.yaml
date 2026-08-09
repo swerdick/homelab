@@ -26,8 +26,12 @@
 # Usage:
 #   ansible-playbook playbooks/site-samwise.yaml --check --diff
 #   ansible-playbook playbooks/site-samwise.yaml -l samwise,gondor
-# (keep gondor in the limit: install-k3s-agent.yaml fetches the join token
-# from the server and verifies the join there — samwise alone can't join)
+# The no-limit check is deliberate: several imported playbooks target broad
+# groups (alloy/debian_guests/physical_hosts), and the house rule is that
+# unrestricted runs must be safe — the check doubles as the fleet-wide no-op
+# audit (every non-samwise host must recap changed=0). Use the -l form for
+# the real converge; keep gondor in the limit (install-k3s-agent.yaml fetches
+# the join token from the server and verifies the join there).
 
 - name: Create the pseudo admin user
   import_playbook: setup-pseudo-user.yaml
