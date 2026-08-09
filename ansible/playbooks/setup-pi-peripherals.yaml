@@ -38,6 +38,11 @@
         state: present
       register: i2c_mod
 
+    - name: Install i2c-tools (i2cdetect) for bench validation
+      ansible.builtin.apt:
+        name: i2c-tools
+        state: present
+
     - name: Reboot to apply device-tree changes
       ansible.builtin.reboot:
         msg: "Applying I²C/1-Wire device-tree changes"
