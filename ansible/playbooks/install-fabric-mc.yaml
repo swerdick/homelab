@@ -275,6 +275,9 @@
         not mod_verify.stat.exists or mod_verify.stat.checksum != item.1.sha512
 
     - name: Own per-instance mod files
+      # In check mode the oras pull above doesn't run, so a brand-new
+      # instance's files don't exist yet — tolerate that (real runs still fail
+      # loudly), same scenario the checksum-verify tasks guard against.
       ansible.builtin.file:
         path: "{{ minecraft_base }}/{{ item.0.name }}/mods/{{ item.1.filename }}"
         owner: "{{ minecraft_user }}"
@@ -283,6 +286,7 @@
       loop: "{{ minecraft_instances | subelements('mods') }}"
       loop_control:
         label: "{{ item.0.name }}/{{ item.1.filename }}"
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Find existing mod JARs per instance (for unmanaged-cleanup)
       ansible.builtin.find:
@@ -351,6 +355,7 @@
         not datapack_verify.stat.exists or datapack_verify.stat.checksum != item.1.sha512
 
     - name: Own per-instance datapacks
+      # Check-mode tolerance: see the mod-files Own task note.
       ansible.builtin.file:
         path: "{{ minecraft_base }}/{{ item.0.name }}/{{ minecraft_level_name | default('world') }}/datapacks/{{ item.1.filename }}"
         owner: "{{ minecraft_user }}"
@@ -359,6 +364,7 @@
       loop: "{{ minecraft_instances | subelements('datapacks', skip_missing=True) }}"
       loop_control:
         label: "{{ item.0.name }}/{{ item.1.filename }}"
+      ignore_errors: "{{ ansible_check_mode }}"
 
     # --- Per-instance config ---------------------------------------------
 
@@ -425,7 +431,9 @@
             {'path': _p, 'key': 'broadcast-rcon-to-ops',    'value': 'false'},
             {'path': _p, 'key': 'online-mode',              'value': 'true'},
             {'path': _p, 'key': 'pause-when-empty-seconds', 'value': item.pause_when_empty_seconds | default(minecraft_pause_when_empty_seconds | default(60))},
-          ] }}
+          ] + ([
+            {'path': _p, 'key': 'level-seed', 'value': item.seed}
+          ] if item.seed is defined else []) }}
       loop: "{{ minecraft_instances }}"
       loop_control:
         label: "{{ item.name }}"
