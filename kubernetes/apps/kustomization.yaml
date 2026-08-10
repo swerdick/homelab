@@ -4,7 +4,7 @@ resources:
   - observability
   - jellyfin
   - immich
-  - auto-water
+  - yavanna
   - harbor
   - keycloak
 
