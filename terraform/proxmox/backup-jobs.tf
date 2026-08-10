@@ -68,15 +68,15 @@ resource "proxmox_backup_job" "erebor_config_weekly" {
   # Was "sun 04:00" — a slot the fleet never sees awake (nightly shutdown
   # ~23:15, on-demand wake ~10:00+), so this job had NEVER been running.
   # repeat_missed also covers Sundays that start after 15:00.
-  schedule      = "sun 15:00"
-  repeat_missed = true
-  storage       = "backups"
-  vmid          = ["130"]
-  enabled       = true
-  compress      = "zstd"
-  bwlimit       = 30720
-  zstd          = 1
-  mode          = "snapshot"
+  schedule       = "sun 15:00"
+  repeat_missed  = true
+  storage        = "backups"
+  vmid           = ["130"]
+  enabled        = true
+  compress       = "zstd"
+  bwlimit        = 30720
+  zstd           = 1
+  mode           = "snapshot"
   notes_template = "pbs-config -- {{guestname}}"
   prune_backups = {
     keep-last = "8"
