@@ -1,7 +1,7 @@
 ---
 # Entry point for configuring samwise — the Raspberry Pi 5: k3s ARM worker
 # (tainted homelab.vingilot.internal/role=pi), Tailscale subnet router for the
-# home LAN, WoL sender for earendil, and the auto-water sensor host.
+# home LAN, WoL sender for earendil, and the yavanna sensor host.
 #
 # Composes every playbook samwise participates in (via group membership or
 # explicit targeting), in dependency order. Validated end-to-end on the

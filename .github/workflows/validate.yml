@@ -22,7 +22,7 @@ jobs:
   # and broken kustomizations before Flux sees them). SOPS-encrypted Secret
   # values are ignored by design — content isn't needed to validate.
   # `sources: flux-system` scopes discovery to Kustomizations backed by this
-  # repo; without it the external auto-water GitRepository aborts discovery
+  # repo; without it the external yavanna GitRepository aborts discovery
   # and ZERO tests run (verified locally — exit 0, "no tests ran").
   flux-local:
     if: github.event_name != 'schedule'
