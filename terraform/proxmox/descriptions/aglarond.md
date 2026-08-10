@@ -38,7 +38,7 @@ Managed by `ansible/playbooks/setup-aglarond.yaml` (idmap, `/etc/subgid`, `share
 |---|---|---|---|
 | `restic-backups` | pbs + scratch-backups | Daily 20:30 | 30 daily |
 | `restic-host` | host-etc | Daily 21:15 | 14d / 8w / 12m |
-| `restic-media` | photos, documents, music, movies, wallpaper | Sun 21:30 | 12m / 5y |
+| `restic-media` | photos, documents, music, wallpaper (movies: no mount, see above) | Sun 21:30 | 12m / 5y |
 
 Schedules and throttling (Nice/CPUQuota) come from drop-ins managed by `setup-aglarond.yaml`. Moved from 02:00-03:00 UTC in 2026-08: those slots sat in prime evening gaming hours (22:00-23:00 ET, CPU/IO contention with anduril) and raced the ~23:15 ET fleet shutdown, which killed long B2 uploads mid-flight. 20:30 UTC lands after the 14:00 earendil-local vzdump finishes in both DST offsets.
 
