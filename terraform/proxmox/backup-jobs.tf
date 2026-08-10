@@ -21,12 +21,28 @@
 # attribute names so the block can't be DRYed via locals or variables.
 
 resource "proxmox_backup_job" "nightly_guests" {
-  id             = "backup-12b42abc-89fd"
-  schedule       = "21:00"
-  storage        = "backups"
-  vmid           = ["117", "120", "121", "131", "140", "141", "142"]
-  enabled        = true
-  compress       = "zstd"
+  id = "backup-12b42abc-89fd"
+  # 14:00 earendil-local (America/New_York). The old 21:00 slot sat in prime
+  # evening gaming hours and vzdump'ing CT 117 out from under a live session
+  # caused visible stutter (diagnosed 2026-08-09). Early afternoon is the
+  # quietest reliable window in the on-demand power cycle; the aglarond
+  # restic timers (UTC, see descriptions/aglarond.md) are anchored >=45min
+  # after this job's worst-case finish across both DST offsets.
+  schedule = "14:00"
+  # Fleet wake is on-demand, so a day that starts after 14:00 would silently
+  # skip the backup without this — and eregion's Minecraft world has no
+  # other backup. Catch-up runs are throttled by bwlimit below.
+  repeat_missed = true
+  storage       = "backups"
+  vmid          = ["117", "120", "121", "131", "140", "141", "142"]
+  enabled       = true
+  compress      = "zstd"
+  # 30 MiB/s read cap (KiB/s). Caps compressor throughput too, so the job
+  # stays ~1 core even when it collides with an interactive session.
+  # ionice deliberately omitted: block-elevator priorities are a no-op on
+  # ZFS-backed dir storage.
+  bwlimit        = 30720
+  zstd           = 1
   mode           = "snapshot"
   notes_template = "{{guestname}}"
   # Local dir target on scratch/backups (300G quota). The fat guests
@@ -45,13 +61,19 @@ resource "proxmox_backup_job" "nightly_guests" {
 }
 
 resource "proxmox_backup_job" "erebor_config_weekly" {
-  id             = "backup-43aa665e-dcfd"
-  schedule       = "sun 04:00"
-  storage        = "backups"
-  vmid           = ["130"]
-  enabled        = true
-  compress       = "zstd"
-  mode           = "snapshot"
+  id = "backup-43aa665e-dcfd"
+  # Was "sun 04:00" — a slot the fleet never sees awake (nightly shutdown
+  # ~23:15, on-demand wake ~10:00+), so this job had NEVER been running.
+  # repeat_missed also covers Sundays that start after 15:00.
+  schedule      = "sun 15:00"
+  repeat_missed = true
+  storage       = "backups"
+  vmid          = ["130"]
+  enabled       = true
+  compress      = "zstd"
+  bwlimit       = 30720
+  zstd          = 1
+  mode          = "snapshot"
   notes_template = "pbs-config -- {{guestname}}"
   prune_backups = {
     keep-last = "8"

@@ -11,7 +11,14 @@
 # through (lxc.idmap) and putting the restic-media unit in that group. No host
 # permission loosening, no ACL second-system.
 #
-# Two plays: host-side (PVE conf + subgid) then guest-side (group, drop-in,
+# Also codified here (added 2026-08-09): resource-control and schedule
+# drop-ins for all three restic units. The 02:00-03:00 UTC slots sat in
+# prime evening gaming hours (22:00-23:00 ET) and raced the ~23:15 ET fleet
+# shutdown, which killed long B2 uploads mid-flight; the units also ran
+# completely unthrottled. The .service/.timer files themselves still live
+# only on the box — the drop-ins are the managed layer on top.
+#
+# Two plays: host-side (PVE conf + subgid) then guest-side (group, drop-ins,
 # excludes). Idempotent; untargeted hosts are untouched.
 #
 # Run from ansible/:
@@ -70,11 +77,18 @@
         name: shares
         gid: 10000
 
-    - name: Create the restic-media drop-in directory
+    - name: Create the restic service + timer drop-in directories
       ansible.builtin.file:
-        path: /etc/systemd/system/restic-media.service.d
+        path: "/etc/systemd/system/{{ item }}"
         state: directory
         mode: "0755"
+      loop:
+        - restic-backups.service.d
+        - restic-backups.timer.d
+        - restic-host.service.d
+        - restic-host.timer.d
+        - restic-media.service.d
+        - restic-media.timer.d
 
     - name: Run restic-media with the shares group
       ansible.builtin.copy:
@@ -83,6 +97,50 @@
         content: |
           [Service]
           SupplementaryGroups=10000
+      notify: Reload systemd
+
+    - name: Throttle restic so backups yield to interactive workloads
+      # CPUQuota is the effective pacing lever: restic's chunk/hash CPU
+      # paces its disk reads, so capping CPU also caps the /bulk + /scratch
+      # read churn that turned game chunk-loads into physical reads (root
+      # cause in setup-earendil-zfs.yaml). 50% of one core sits well above
+      # the ~0.4-core nightly average, so wall time barely moves — only the
+      # bursts flatten. IOSchedulingClass is mostly a no-op on ZFS-backed
+      # bind mounts; kept because it is free and covers any other IO.
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item }}.service.d/resource-control.conf"
+        mode: "0644"
+        content: |
+          [Service]
+          Nice=19
+          CPUQuota=50%
+          IOSchedulingClass=idle
+      loop:
+        - restic-backups
+        - restic-host
+        - restic-media
+      notify: Reload systemd
+
+    - name: Move restic timers out of evening gaming hours
+      # aglarond is UTC. The vzdump job these feed on runs at 14:00
+      # earendil-local (America/New_York), so 20:30 UTC stays >=45min
+      # behind its worst-case finish in both EDT (16:30 local) and EST
+      # (15:30 local). The empty OnCalendar= clears the value baked into
+      # the on-box unit file — drop-ins append to list settings otherwise.
+      # Persistent=true re-asserted: with on-demand fleet wake, a day that
+      # starts after the slot must catch up at boot rather than skip.
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.unit }}.timer.d/schedule.conf"
+        mode: "0644"
+        content: |
+          [Timer]
+          OnCalendar=
+          OnCalendar={{ item.when }}
+          Persistent=true
+      loop:
+        - { unit: restic-backups, when: "*-*-* 20:30:00" }
+        - { unit: restic-host, when: "*-*-* 21:15:00" }
+        - { unit: restic-media, when: "Sun *-*-* 21:30:00" }
       notify: Reload systemd
 
     - name: Ensure the restic config dir exists (rebuild-before-restore case)

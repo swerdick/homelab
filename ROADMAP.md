@@ -300,6 +300,8 @@ Pre-flight before `timedatectl set-timezone UTC`:
 
 Then flip and verify next-run times of each converted entry match expectation. ~30-60 min focused session; defer until a low-stakes window since earendil is the host everything else depends on.
 
+Note (2026-08): the backup chain now spans both timezones by design — vzdump at `14:00` earendil-local (`backup-jobs.tf`), aglarond restic timers at 20:30/21:15 UTC (`setup-aglarond.yaml` drop-ins). The UTC anchoring keeps a >=45min gap in both DST offsets; on the TZ flip, only the vzdump `14:00` needs converting (to `18:00` UTC) to preserve the afternoon slot.
+
 ## Cleanup
 
 ### Converge ansible drift surfaced during eregion onboarding
