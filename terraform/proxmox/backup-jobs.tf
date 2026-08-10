@@ -1,9 +1,9 @@
 # Datacenter-level backup jobs (vzdump entries in /etc/pve/jobs.cfg).
 #
 # Four jobs total: two enabled (the active backup rotation), two disabled
-# (legacy jobs kept around in case we want to re-enable). The disabled
-# ones are imported with enabled=false to match reality; delete them via
-# PVE UI if you ever decide they're truly cruft.
+# (legacy, imported with enabled=false to match reality; delete via PVE UI
+# once the 2026-08 PBS cutover is validated — legacy_all_to_pbs is fully
+# superseded by nightly_guests targeting `main`).
 #
 # Job IDs are PVE-generated UUIDs (backup-<8hex>-<4hex>). Not pretty but
 # changing them would require destroy+create — TF resource names
@@ -33,27 +33,30 @@ resource "proxmox_backup_job" "nightly_guests" {
   # skip the backup without this — and eregion's Minecraft world has no
   # other backup. Catch-up runs are throttled by bwlimit below.
   repeat_missed = true
-  storage       = "backups"
-  vmid          = ["117", "120", "121", "131", "140", "141", "142"]
-  enabled       = true
-  compress      = "zstd"
-  # 30 MiB/s read cap (KiB/s). Caps compressor throughput too, so the job
-  # stays ~1 core even when it collides with an interactive session.
-  # ionice deliberately omitted: block-elevator priorities are a no-op on
-  # ZFS-backed dir storage.
-  bwlimit        = 30720
-  zstd           = 1
-  mode           = "snapshot"
-  notes_template = "{{guestname}}"
-  # Local dir target on scratch/backups (300G quota). The fat guests
-  # (140 gondor ~16G, 117 anduril ~20G+) blew past the quota under the
-  # old 7d/4w/6m policy — and because vzdump only prunes a guest after a
-  # *successful* run, the guests too big to fit never pruned themselves,
-  # so stale copies snowballed. 3 dailies + 2 weeklies keeps recent
-  # restore points local; deeper history lives in B2 via aglarond restic.
+  # PBS on erebor (cutover 2026-08-09; previously zstd tarballs on the
+  # `backups` dir storage). Deduped + incremental: CTs skip unchanged files
+  # via metadata change detection, the gondor VM uses dirty bitmaps — after
+  # the first full pass, nightly reads shrink from every-guest-in-full to
+  # the changed blocks. Offsite stays aglarond restic, which already ships
+  # /bulk/pbs to B2. Old tarballs stay on /scratch (+ 30d in B2) as the
+  # fallback until a validated PBS restore closes the migration.
+  storage = "main"
+  vmid    = ["117", "120", "121", "131", "140", "141", "142"]
+  enabled = true
+  # 30 MiB/s read cap (KiB/s) so the first full pass and repeat-missed
+  # catch-up runs stay gentle even when they collide with an interactive
+  # session. No compress/zstd attrs: PBS does its own zstd chunk
+  # compression. ionice omitted: no-op on ZFS-backed sources.
+  bwlimit                   = 30720
+  pbs_change_detection_mode = "metadata"
+  mode                      = "snapshot"
+  notes_template            = "{{guestname}}"
+  # The old 7d/4w/6m policy blew the 300G dir-storage quota (full-size
+  # tarballs); PBS dedup makes it affordable again.
   prune_backups = {
-    keep-daily  = "3"
-    keep-weekly = "2"
+    keep-daily   = "7"
+    keep-weekly  = "4"
+    keep-monthly = "6"
   }
   lifecycle {
     ignore_changes = [fleecing]
