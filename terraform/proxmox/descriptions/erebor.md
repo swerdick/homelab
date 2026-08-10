@@ -53,9 +53,7 @@ Datacenter → Storage → Add → Proxmox Backup Server:
 
 ## Backup job
 
-`guests-to-pbs` — defined at host level (Datacenter → Backup), targets `pbs-main`, includes CTs 120, 121, VM 117.
-
-**No schedule on the job.** Triggered by host orchestrator at `/etc/systemd/system/nightly-backup.service` so the whole pipeline (vzdump → PBS → restic) stays sequenced and gets `Persistent=true` catch-up behavior.
+**PBS currently receives nothing.** The only PBS-targeted vzdump job (`legacy_all_to_pbs` in `terraform/proxmox/backup-jobs.tf`) is disabled; the active rotation writes zstd tarballs to the `backups` dir storage on `/scratch/backups` instead, with offsite copies via aglarond restic. The `/datastore` content is historical. (An earlier revision of this file described a `guests-to-pbs` job driven by a `nightly-backup.service` orchestrator — neither exists.)
 
 ## SSH
 

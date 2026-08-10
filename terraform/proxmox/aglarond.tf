@@ -18,6 +18,11 @@ resource "proxmox_virtual_environment_container" "aglarond" {
   cpu {
     architecture = "amd64"
     cores        = 2
+    # Low cgroup cpu.weight (PVE default 100): restic chunking should always
+    # yield to interactive guests under host contention. Work-conserving —
+    # full speed on an idle host, near-zero share when anduril wants the
+    # cores (backup-vs-gaming stutter, diagnosed 2026-08-09).
+    units = 20
   }
 
   memory {
@@ -32,6 +37,36 @@ resource "proxmox_virtual_environment_container" "aglarond" {
 
   features {
     nesting = true
+  }
+
+  # Custom idmap maps guest GID 10000 -> host GID 10000 for the `shares`
+  # group (media access) — same pattern as smb.tf. The live lines are also
+  # asserted by setup-aglarond.yaml; declaring them here keeps TF from
+  # planning their removal after a refresh picks them up. bpg requires SSH
+  # access to *modify* idmap blocks; matching config never touches them.
+  idmap {
+    container_id = 0
+    host_id      = 100000
+    size         = 65536
+    type         = "uid"
+  }
+  idmap {
+    container_id = 0
+    host_id      = 100000
+    size         = 10000
+    type         = "gid"
+  }
+  idmap {
+    container_id = 10000
+    host_id      = 10000
+    size         = 1
+    type         = "gid"
+  }
+  idmap {
+    container_id = 10001
+    host_id      = 110001
+    size         = 55535
+    type         = "gid"
   }
 
   initialization {
