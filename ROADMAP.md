@@ -304,6 +304,16 @@ Note (2026-08): the backup chain now spans both timezones by design — vzdump a
 
 ## Cleanup
 
+### Close out the 2026-08 PBS cutover
+
+Nightly guest backups target PBS (`main`) again as of 2026-08-09; the tarball era is over but its artifacts remain as the deliberate fallback. Once a real restore from PBS is validated (`pct restore` a CT from a `main` snapshot to a scratch VMID, boot it, destroy it):
+
+- Delete the pre-cutover tarballs in `/scratch/backups` (recovers most of the 300G quota, which was at ~88%; their B2 copies age out of restic's 30-day retention on their own)
+- Delete the two disabled legacy vzdump jobs from `backup-jobs.tf` + PVE
+- Consider whether `restic-backups` still needs `/srv/scratch-backups` in its include set (only erebor's weekly tarball lands there now)
+
+Also still open from the same session: `zfs-zed` on erebor crash-loops every ~10s, and ZFS scrubs never run (Debian's 2nd-Sunday 00:24 cron falls inside the fleet's off-window — needs a rescheduled scrub timer inside the awake window).
+
 ### Converge ansible drift surfaced during eregion onboarding
 
 Running `--check --diff` unrestricted previews of the baseline plays before adding eregion turned up real drift on the existing fleet — `-l eregion` had to be used because of it. Two specific items:
