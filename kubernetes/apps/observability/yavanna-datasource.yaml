@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: yavanna-grafana-datasource
+    namespace: monitoring
+    labels:
+        # Picked up by the kube-prometheus-stack grafana datasource sidecar
+        # (RESOURCE=both, watches the monitoring namespace).
+        grafana_datasource: "1"
+type: Opaque
+stringData:
+    yavanna.yaml: ENC[AES256_GCM,data:tLMIUb+7LRLMRweQSmFWRtj74BoLpdUqNmx/GpCaMWBN6emuNjaK57FXzeAIU8VnwPMdvPUYc2NG2EXhgMSgLs99bY9kLAu0CEoyEeucEd1CI3OBiTVJYp+0B2VWDu4dcyRaJYsrDkS5K5apMVHg1rjYssN0pJ/z0eYfHvaFuwNn7FmBB8pPRDj/kR87HbByX3R9tElU/yiNjHs8eOO+QwnHArU9Qdz2oPO34u5gbhxoVmSWpJmPRJd3zBAVJWPFiluFRZDCYfoo5GexShZm2cKjdgQw1Ho4TYuKvu3QqpI5naOOcluTdSRSHhRRQ4p07xmLeIK1vUYbQhJsfsDYIDI3Awudj1lnef9jB39FNRbZRwPbRxfJx6+jT0AJEBVxiURcIO+oBUUIKjDZqDic2jHohOMyjb9oq6LVeNVZZZxxXarTAWy+fVBPz0tGe0FDJvuWzDPNFX1Kz9EnacKel9ArEyvsXVOdlAf9t5qeDZdcX03zQvSCrMqvd91mMuKzI0uHbVWcT8r6OdAdbEEsz6+47bzuOQPmnryOd6+fbpJAB04v9KAtk/NfG0uN11PfHQyUbg==,iv:dm3Sw6Mkb7PR0Q7AqV8tEfDVOSFnG0lNyaPUkQRn7HU=,tag:9g5MP/1cuLxNv/yoGZx75g==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBUWmxNSGhEZ2xmWS9tVkE5
+            dUl0M1lOUXlCV0UvWERvTkV5R25rVDBmTnhrCjVKbVIxdnczb3Q5QmM4eUYvNU1h
+            NkNCWVhBUnJHRThiNGlPMUdyOUVTWVUKLS0tIDhLalJodXdweGh5OWlDOUQ1bmRh
+            L3dCOFpscTU5ODdsTTB1K2xVMjg5ancK5kRfA92h/4Z1PrZ9xkr13MjCAQkPzl8o
+            ga1ZK+05WeVU91JQUEdOGBJRg+aSekrlLhRA7GqaShKX3UPf6XJUhg==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-08-10T04:36:32Z"
+    mac: ENC[AES256_GCM,data:bwA5JY2niy0Sfx+/KAJawUs++8/tR+VSDSM7f2nLQtChyeLbMU8y0+esFe8UCWNYoXCZ0Mf7iUUBRzuR34A0wxG/AG0AMiRd6AxA+o5V099XsYb4pYeV5cCZfGqgRYR1CpbY0DdIHewwgFB7e5dN0aY97RRaTppELwKBmHBkoaU=,iv:ARPx0DH9YhhfGtCDE0fLecTle7iMdrbRpcNIuxdtyG8=,tag:utcU6HeljQk/BohyYscNcA==,type:str]
+    version: 3.13.3

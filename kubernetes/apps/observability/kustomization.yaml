@@ -15,3 +15,4 @@ resources:
   - loki-basic-auth.yaml
   - loki-route.yaml
   - alloy.yaml
+  - yavanna-datasource.yaml
