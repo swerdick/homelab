@@ -11,7 +11,10 @@ resources:
   - operator/keycloaks-crd.yaml
   - operator/keycloakrealmimports-crd.yaml
   - operator/operator.yaml
+  # ObjectStore before the Cluster that references it.
+  - postgres-objectstore.yaml
   - postgres-cluster.yaml
+  - postgres-scheduledbackup.yaml
   - postgres-podmonitor.yaml
   - keycloak.yaml
   - keycloak-route.yaml

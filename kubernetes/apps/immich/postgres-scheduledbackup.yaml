@@ -1,0 +1,18 @@
+---
+# Daily base backup for Immich's Postgres. Six-field cron (seconds first), UTC.
+# Last of the staggered set (harbor :00, keycloak :10, yavanna :20, immich :30)
+# because it's the largest — see harbor's file for the full scheduling note.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: immich-postgresql-daily
+  namespace: immich
+spec:
+  schedule: "0 30 18 * * *"
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: immich-postgresql
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

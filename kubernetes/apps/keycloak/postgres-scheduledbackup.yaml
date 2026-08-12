@@ -1,0 +1,18 @@
+---
+# Daily base backup for Keycloak's Postgres. Six-field cron (seconds first),
+# UTC. Staggered 10 minutes after harbor's — see that file for the full note
+# on scheduling and missed-slot catch-up.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: keycloak-postgresql-daily
+  namespace: keycloak
+spec:
+  schedule: "0 10 18 * * *"
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: keycloak-postgresql
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

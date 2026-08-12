@@ -11,6 +11,15 @@ metadata:
 spec:
   instances: 1
 
+  # Continuous WAL archiving + base backups to B2 via the Barman Cloud CNPG-I
+  # plugin (see postgres-objectstore.yaml). Replaces the in-tree
+  # spec.backup.barmanObjectStore, which CNPG removes in 1.30.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: keycloak-postgresql-b2
+
   storage:
     size: 8Gi
     storageClass: nfs-scratch

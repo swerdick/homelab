@@ -2,3 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - source.yaml
+  # Backup config for yavanna-db. Lives here rather than in the app repo
+  # because that repo's Kustomization can't decrypt SOPS Secrets — see the
+  # header in postgres-objectstore.yaml.
+  - postgres-objectstore.yaml
+  - postgres-scheduledbackup.yaml
