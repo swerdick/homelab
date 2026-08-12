@@ -66,8 +66,24 @@ spec:
     resources:
       # A Cluster's spec.resources governs the postgres container only, so
       # without this the injected sidecar would run uncapped on a 20 GB VM.
+      #
+      # 128Mi was the first attempt and is NOT enough: it survives WAL
+      # archiving (one 16 MiB segment at a time) but barman-cloud-backup gets
+      # OOMKilled the moment a base backup runs — exit 137, which surfaces on
+      # the Backup CR as the misleading "rpc error: code = Unavailable ...
+      # EOF" because the sidecar dies mid-gRPC. Python plus boto3 is ~100 MiB
+      # resident before a single upload buffer is allocated, so the ceiling
+      # has to clear that by a wide margin.
+      #
+      # Limits are not reservations: the 128Mi request is what gondor
+      # actually commits, and the daily backups are staggered 10 min apart so
+      # the four sidecars never approach their ceilings together.
+      #
+      # If this ever OOMs again, the next lever is data.jobs: 2 -> 1 above —
+      # parallel upload workers each carry their own buffer, and at these
+      # database sizes the parallelism buys nothing.
       requests:
         cpu: 10m
-        memory: 32Mi
-      limits:
         memory: 128Mi
+      limits:
+        memory: 512Mi
