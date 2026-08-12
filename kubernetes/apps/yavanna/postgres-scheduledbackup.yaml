@@ -1,0 +1,23 @@
+---
+# Daily base backup for yavanna's Postgres (plant-sensor history — the least
+# reproducible data in the cluster; everything else can be re-derived or
+# re-pulled). Six-field cron (seconds first), UTC. Staggered between keycloak
+# and immich — see harbor's file for the full scheduling note.
+#
+# This will sit idle until the `plugins:` stanza lands on the yavanna-db
+# Cluster in github.com/swerdick/yavanna — without a WAL archiver configured
+# there is no archive for a base backup to be consistent against.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: yavanna-db-daily
+  namespace: yavanna
+spec:
+  schedule: "0 20 18 * * *"
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: yavanna-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

@@ -1,0 +1,54 @@
+---
+# Barman Cloud object store for Keycloak's Postgres — Backblaze B2.
+# Full rationale for every field lives in kubernetes/apps/harbor/
+# postgres-objectstore.yaml; this is the same shape with its own prefix.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: keycloak-postgresql-b2
+  namespace: keycloak
+spec:
+  configuration:
+    # Objects land under <destinationPath>/<serverName>/ and serverName
+    # defaults to the Cluster name, so this shares the bucket with the other
+    # clusters but never a prefix.
+    destinationPath: s3://vingilot-cnpg-backups/
+    endpointURL: https://s3.us-east-005.backblazeb2.com
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-b2-credentials
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-b2-credentials
+        key: ACCESS_SECRET_KEY
+      region:
+        name: cnpg-b2-credentials
+        key: REGION
+    wal:
+      compression: zstd
+      maxParallel: 2
+    data:
+      compression: gzip
+      jobs: 2
+
+  # Sibling of `configuration`, not nested inside it.
+  retentionPolicy: "30d"
+
+  instanceSidecarConfiguration:
+    env:
+      # Backblaze rejects boto3's default CRC32 integrity headers.
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+    resources:
+      # 128Mi survives WAL archiving but OOMKills barman-cloud-backup the
+      # moment a base backup runs (exit 137, surfacing as a misleading
+      # "rpc error ... EOF" on the Backup CR) — Python plus boto3 is ~100 MiB
+      # resident before any upload buffer. Diagnosed on harbor; see the fuller
+      # note in kubernetes/apps/harbor/postgres-objectstore.yaml.
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        memory: 512Mi
