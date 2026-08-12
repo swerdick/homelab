@@ -57,7 +57,7 @@ PBS is the nightly target again: `nightly_guests` in `terraform/proxmox/backup-j
 
 PBS-side maintenance is pinned by `ansible/playbooks/setup-erebor-pbs.yaml`: GC daily 19:45 UTC (after the vzdump window, before the restic read), verify weekly Sat 15:30 UTC (`ignore-verified`, re-check after 30d).
 
-Erebor itself stays on the weekly zstd tarball to the `backups` dir storage (`erebor_config_weekly`, Sun 15:00) — a PBS server backed up to its own datastore would be a restore chicken-and-egg. Pre-cutover tarballs on `/scratch/backups` (+ their 30d B2 copies) are the migration fallback until a PBS restore is validated.
+Erebor itself stays on the weekly zstd tarball to the `backups` dir storage (`erebor_config_weekly`, Sun 15:00) — a PBS server backed up to its own datastore would be a restore chicken-and-egg. Those weeklies are the only thing on `/scratch/backups` now; the pre-cutover tarball era ended 2026-08-12 after a validated PBS restore (eregion to a scratch VMID, worlds intact).
 
 ## SSH
 

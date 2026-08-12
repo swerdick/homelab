@@ -320,15 +320,15 @@ Note (2026-08): the backup chain now spans both timezones by design — vzdump a
 
 ## Cleanup
 
-### Close out the 2026-08 PBS cutover
+### Backup-chain oddities still open after the PBS cutover
 
-Nightly guest backups target PBS (`main`) again as of 2026-08-09; the tarball era is over but its artifacts remain as the deliberate fallback. Once a real restore from PBS is validated (`pct restore` a CT from a `main` snapshot to a scratch VMID, boot it, destroy it):
+Leftovers from the 2026-08 backup work (cutover itself closed out 2026-08-12 — see Completed):
 
-- Delete the pre-cutover tarballs in `/scratch/backups` (recovers most of the 300G quota, which was at ~88%; their B2 copies age out of restic's 30-day retention on their own)
-- Delete the two disabled legacy vzdump jobs from `backup-jobs.tf` + PVE
-- Consider whether `restic-backups` still needs `/srv/scratch-backups` in its include set (only erebor's weekly tarball lands there now)
-
-Also still open from the same session: `zfs-zed` on erebor crash-loops every ~10s, and ZFS scrubs never run (Debian's 2nd-Sunday 00:24 cron falls inside the fleet's off-window — needs a rescheduled scrub timer inside the awake window).
+- `zfs-zed` on erebor crash-loops every ~10s — needs its own diagnosis
+- ZFS scrubs never run: Debian's 2nd-Sunday 00:24 cron falls inside the fleet's off-window — needs a rescheduled scrub timer inside the awake window
+- `restic-host` fails nightly (status=11) — the long-owed perms fix on the offsite pipeline
+- Stale PBS groups from the anduril-VM era (`vm/117` Apr–May 2026, `vm/9000` template) hold chunks GC can't reclaim; `forget` them once confirmed obsolete
+- gondor's VM backup re-reads its full 80G disk every night (~45 min throttled): QEMU dirty bitmaps don't survive the nightly power cycle. Tolerable in the afternoon window; a fix would be stop-mode backups or accepting it
 
 ### Converge ansible drift surfaced during eregion onboarding
 
@@ -430,6 +430,8 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 ---
 
 ## Completed
+
+- **2026-08 backup overhaul** — descheduled from gaming hours + throttled, cut nightly guests over to PBS (metadata change detection, 7d/4w/6m), validated via eregion restore test 2026-08-12, deleted 261G of legacy tarballs + the two disabled legacy jobs, added the pvescheduler boot delay so power-on catch-ups don't race PBS readiness.
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
 
