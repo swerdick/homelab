@@ -1,0 +1,31 @@
+---
+# Daily base backup for Harbor's Postgres. The continuous WAL archive (see the
+# plugins stanza in postgres-cluster.yaml) is what actually bounds RPO to
+# minutes; this is the periodic truncation point that keeps WAL replay short
+# and lets retentionPolicy expire old data.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: harbor-postgresql-daily
+  namespace: harbor
+spec:
+  # SIX fields — CNPG prepends a seconds field (robfig/cron), unlike a k8s
+  # CronJob's five. Times are UTC (the operator pod's timezone).
+  #
+  # 18:00 UTC sits inside the fleet's daytime window (earendil is off roughly
+  # 03:15-14:00 UTC) and clear of restic's 20:30/21:15 uploads to the same
+  # provider. Staggered across clusters: harbor :00, keycloak :10, yavanna
+  # :20, immich :30.
+  #
+  # No catch-up flag exists or is needed — the controller computes
+  # schedule.Next(lastCheckTime) and fires immediately if that moment has
+  # already passed, so a slot missed while the fleet was down runs on wake.
+  # Same intent as Persistent=true on the restic timers.
+  schedule: "0 0 18 * * *"
+  immediate: true
+  backupOwnerReference: self
+  cluster:
+    name: harbor-postgresql
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

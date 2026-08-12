@@ -51,11 +51,13 @@ Datacenter → Storage → Add → Proxmox Backup Server:
 - Password: API token secret
 - Fingerprint: from PBS Certificates page
 
-## Backup job
+## Backup flow (2026-08 cutover)
 
-`guests-to-pbs` — defined at host level (Datacenter → Backup), targets `pbs-main`, includes CTs 120, 121, VM 117.
+PBS is the nightly target again: `nightly_guests` in `terraform/proxmox/backup-jobs.tf` (14:00 earendil-local, all guests except erebor) backs up to storage `main` with `pbs-change-detection-mode metadata` — CTs skip unchanged files, the gondor VM uses dirty bitmaps. Retention (7d/4w/6m) lives on the PVE job. Offsite: aglarond restic ships `/bulk/pbs` to B2 nightly at 20:30 UTC.
 
-**No schedule on the job.** Triggered by host orchestrator at `/etc/systemd/system/nightly-backup.service` so the whole pipeline (vzdump → PBS → restic) stays sequenced and gets `Persistent=true` catch-up behavior.
+PBS-side maintenance is pinned by `ansible/playbooks/setup-erebor-pbs.yaml`: GC daily 19:45 UTC (after the vzdump window, before the restic read), verify weekly Sat 15:30 UTC (`ignore-verified`, re-check after 30d).
+
+Erebor itself stays on the weekly zstd tarball to the `backups` dir storage (`erebor_config_weekly`, Sun 15:00) — a PBS server backed up to its own datastore would be a restore chicken-and-egg. Pre-cutover tarballs on `/scratch/backups` (+ their 30d B2 copies) are the migration fallback until a PBS restore is validated.
 
 ## SSH
 

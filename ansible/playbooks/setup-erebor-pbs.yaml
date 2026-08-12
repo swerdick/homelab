@@ -1,0 +1,70 @@
+# erebor (CT 130) — PBS maintenance schedules for the `main` datastore.
+#
+# The datastore + verify job were created by hand in the PBS UI (bootstrap
+# notes in descriptions/erebor.md); this play pins the schedule knobs, which
+# matter once the nightly vzdump job targets PBS again (2026-08 cutover):
+#
+#   - GC was `daily` (00:00 UTC = evening ET, prime gaming hours) and the
+#     verify job `monthly` (same midnight slot, and a slot the on-demand
+#     fleet may sleep through). Both now sit in the afternoon maintenance
+#     window: backup (18/19:00 UTC) -> GC 19:45 -> restic offsite read of
+#     /bulk/pbs at 20:30 keeps chunk deletion ahead of the B2 snapshot.
+#   - Retention (keep-*) stays on the PVE job in backup-jobs.tf — the PBS
+#     side only reclaims (GC) and checksums (verify).
+#
+# Run from ansible/:
+#   ansible-playbook playbooks/setup-erebor-pbs.yaml --check --diff
+
+- name: Erebor PBS maintenance schedules
+  hosts: erebor
+  become: true
+  vars:
+    pbs_datastore: main
+    pbs_gc_schedule: "19:45"
+    pbs_verify_schedule: "sat 15:30"
+
+  tasks:
+    - name: Read datastore config
+      ansible.builtin.command: >-
+        proxmox-backup-manager datastore show {{ pbs_datastore }}
+        --output-format json
+      register: pbs_ds
+      changed_when: false
+      check_mode: false
+
+    - name: Schedule GC between the vzdump window and the restic offsite read
+      ansible.builtin.command: >-
+        proxmox-backup-manager datastore update {{ pbs_datastore }}
+        --gc-schedule "{{ pbs_gc_schedule }}"
+      when: (pbs_ds.stdout | from_json)['gc-schedule'] | default('') != pbs_gc_schedule
+
+    - name: Read verify jobs
+      ansible.builtin.command: proxmox-backup-manager verify-job list --output-format json
+      register: pbs_verify_jobs
+      changed_when: false
+      check_mode: false
+
+    - name: Create the weekly verify job if none exists for the datastore
+      # Fresh-rebuild path only; the live box has a UI-created job whose
+      # generated id we adopt rather than replace (verified snapshots keep
+      # their state either way).
+      ansible.builtin.command: >-
+        proxmox-backup-manager verify-job create {{ pbs_datastore }}-weekly
+        --store {{ pbs_datastore }}
+        --schedule "{{ pbs_verify_schedule }}"
+        --ignore-verified true --outdated-after 30
+      when: >-
+        (pbs_verify_jobs.stdout | from_json)
+        | selectattr('store', 'equalto', pbs_datastore) | list | length == 0
+
+    - name: Retime the existing verify job to the Saturday-midday slot
+      vars:
+        vjob: >-
+          {{ (pbs_verify_jobs.stdout | from_json)
+             | selectattr('store', 'equalto', pbs_datastore) | first | default({}) }}
+      ansible.builtin.command: >-
+        proxmox-backup-manager verify-job update {{ vjob.id }}
+        --schedule "{{ pbs_verify_schedule }}"
+      when:
+        - vjob.id is defined
+        - vjob.schedule | default('') != pbs_verify_schedule

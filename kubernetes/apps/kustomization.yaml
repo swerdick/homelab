@@ -7,6 +7,11 @@ resources:
   - yavanna
   - harbor
   - keycloak
+  # B2 credentials for CNPG's Barman Cloud backups — one Secret per Postgres
+  # namespace, in one file so a key rotation is a single edit. Listed HERE
+  # rather than in each app dir for the same reason the generators below live
+  # here: per-app kustomizations can't load ../_shared.
+  - _shared/cnpg-b2-credentials.yaml
 
 # Tirion root CA (public cert — intentionally unencrypted; the private key
 # never leaves tirion). Single source of truth: _shared/tirion-ca.crt,

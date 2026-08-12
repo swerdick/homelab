@@ -53,6 +53,8 @@ Silent renewal failures (Proxmox ACME on earendil/erebor, cert-manager Certifica
 
 The whole thing also forces picking a notification channel (Discord webhook, ntfy.sh, email via Mailgun) — that's the rabbit-hole part.
 
+**CNPG backup health is now a concrete waiting consumer**, and a sharper one than certs: enabling WAL archiving introduced a failure mode that didn't exist before, where a broken object store means `pg_wal` grows on an 8–20 Gi `nfs-scratch` PVC until Postgres halts and takes Harbor/Keycloak/Immich with it. Unmonitored until this lands. The signals are already scraped — `barman_cloud_cloudnative_pg_io_{last_available_backup_timestamp,last_failed_backup_timestamp}` (these supersede the `cnpg_collector_*` pair, which 1.29 marks Deprecated) and `cnpg_collector_pg_wal_archive_status{value="ready"}` ride the instance manager's existing exporter, so the hand-written per-cluster PodMonitors pick them up with no changes. This repo has **zero** `PrometheusRule` resources today, so whichever entry lands first establishes that pattern.
+
 ### Flux health alerting
 
 Stalled `HelmRelease` / `Kustomization` resources are silent failures from Flux's perspective once retries are exhausted. Capacitor shows them but you have to look. Add Prometheus alert on `gotk_reconcile_condition{type="Ready",status="False"}` (or similar) so a wedged release pages instead of being noticed days later. Pair naturally with the cert-expiration alerting work since the Alertmanager plumbing is the same.
@@ -127,7 +129,21 @@ Server pod currently runs as `runAsUser: 0` with `supplementalGroups: [10000]` f
 
 Verified 2026-07-02: all four clusters (immich/harbor/keycloak/yavanna) have an **empty `spec.backup`** — the operator backs up nothing — and every PG PVC is on `nfs-scratch`, so the actual bytes live on earendil's scratch pool *outside* gondor's PBS image. Real protection today is whatever covers the scratch dataset: filesystem-level, crash-consistent for a live database, and short-horizon since the 3d/2w retention trim. Higher urgency than this entry originally implied.
 
-Barman-cloud ships base backups + a continuous WAL archive straight from the postgres pods to B2's S3 endpoint (aglarond/restic uninvolved — parallel streams). Use a **separate bucket + bucket-scoped application key** so the in-cluster credential can't touch the restic repo and vice versa; both tools manage their own object lifecycle — never share a prefix. Encryption: TLS in transit + SSE-B2 at rest (`data.encryption`/`wal.encryption: AES256`); that's server-side (B2 holds keys), unlike restic's client-side model — if key custody matters, complement with a low-cadence `pg_dump` CronJob into a restic-covered path. Config: SOPS Secret for the key, per-`Cluster` backup stanza + `ScheduledBackup`, `retentionPolicy` sized to the bucket. Pre-flight per the verify-docs rule: recent CNPG releases are migrating from in-tree `spec.backup.barmanObjectStore` to the Barman Cloud CNPG-I plugin — confirm which shape the running operator wants. Applies cluster-wide; WAL archiving takes RPO from "last snapshot" to minutes.
+Barman-cloud ships base backups + a continuous WAL archive straight from the postgres pods to B2's S3 endpoint (aglarond/restic uninvolved — parallel streams). Use a **separate bucket + bucket-scoped application key** so the in-cluster credential can't touch the restic repo and vice versa; both tools manage their own object lifecycle — never share a prefix. Encryption: TLS in transit + SSE-B2 at rest (`data.encryption`/`wal.encryption: AES256`); that's server-side (B2 holds keys), unlike restic's client-side model. Applies cluster-wide; WAL archiving takes RPO from "last snapshot" to minutes.
+
+**Pre-flight resolved 2026-08-10 — it's the plugin, not the in-tree stanza.** The running operator is 1.29.1; `spec.backup.barmanObjectStore` is deprecated as of 1.26 and **removed in 1.30**, so the target is the Barman Cloud CNPG-I plugin (chart `plugin-barman-cloud`, published on the *same* `cloudnative-pg.github.io/charts` repo the operator uses — no new HelmRepository). Shape: a `plugins:` stanza with `isWALArchiver: true` on each `Cluster`, one namespaced `ObjectStore` CR per cluster, one `ScheduledBackup` per cluster. Two upstream landmines worth remembering: `retentionPolicy` is `.spec.retentionPolicy`, a **sibling** of `configuration` (upstream's `concepts.md` nests it and is wrong — the shipped CRD has it at spec level), and `s3Credentials.region` is a **secretKeySelector**, not a plain string, so the region lives in the Secret. B2 also needs `AWS_REQUEST_CHECKSUM_CALCULATION`/`AWS_RESPONSE_CHECKSUM_VALIDATION: when_required` in `instanceSidecarConfiguration.env` — boto3's default integrity headers make B2 return `HeadBucket` 403s (cloudnative-pg#7105) — and rejects `x-amz-tagging`, so no `tags:`/`historyTags:`.
+
+The third documented method, `volumeSnapshot`, was **evaluated and ruled out for now** — see the entry below. It would not have replaced this work regardless: CNPG's own comparison table lists "PITR: requires WAL archive", so snapshots are a base-backup mechanism that still needs the archive this entry provides.
+
+Deliberately **not** doing a `pg_dump` CronJob as a complementary local tier. CNPG states logical backups are "not suitable for business continuity" and "not managed by CloudNativePG", and at ~280 MB total (immich 239 MB, harbor 12 MB, keycloak 13 MB, yavanna 18 MB) a restore straight from B2 is a couple of minutes — the local-speed argument that would justify the extra ZFS dataset, NFS export, aglarond bind mount and restic changes doesn't hold at this size.
+
+### CNPG local backup tier — CSI driver + `volumeSnapshot`
+
+The fast on-prem restore/rollback tier, deferred out of the barman work above. Blocked on storage: `kubectl get csidrivers` returns **nothing** today, there are no `snapshot.storage.k8s.io` CRDs and no snapshot-controller, and both storage classes are pre-CSI provisioners (`rancher.io/local-path`, `cluster.local/nfs-subdir-external-provisioner`) that don't implement the CSI snapshot interface. So this needs external-snapshotter + a snapshot-capable CSI driver + moving the PG clusters off `nfs-scratch`.
+
+Driver choice is genuinely open and deserves a fresh docs pass at planning time (verify-docs rule): `csi-driver-nfs` is the official kubernetes-csi option and closest to today's setup, but implements snapshots as tar archives of the volume directory — a full copy each time, not cheap CoW. democratic-csi against earendil's ZFS would give real instant snapshots (and `zfs send`-able ones), at the cost of a CSI driver holding SSH access to the hypervisor.
+
+**Sequence this after barman, not before** — the migration mechanism *is* barman. Once WAL archiving is live, moving a cluster to a new storage class is `bootstrap.recovery` into a fresh `Cluster` on the new class, not a hand-moved PVC. That's the whole reason this is a separate, later entry.
 
 ### Auto-watering on samwise (k3s workload + GPIO)
 
@@ -300,7 +316,19 @@ Pre-flight before `timedatectl set-timezone UTC`:
 
 Then flip and verify next-run times of each converted entry match expectation. ~30-60 min focused session; defer until a low-stakes window since earendil is the host everything else depends on.
 
+Note (2026-08): the backup chain now spans both timezones by design — vzdump at `14:00` earendil-local (`backup-jobs.tf`), aglarond restic timers at 20:30/21:15 UTC (`setup-aglarond.yaml` drop-ins). The UTC anchoring keeps a >=45min gap in both DST offsets; on the TZ flip, only the vzdump `14:00` needs converting (to `18:00` UTC) to preserve the afternoon slot.
+
 ## Cleanup
+
+### Close out the 2026-08 PBS cutover
+
+Nightly guest backups target PBS (`main`) again as of 2026-08-09; the tarball era is over but its artifacts remain as the deliberate fallback. Once a real restore from PBS is validated (`pct restore` a CT from a `main` snapshot to a scratch VMID, boot it, destroy it):
+
+- Delete the pre-cutover tarballs in `/scratch/backups` (recovers most of the 300G quota, which was at ~88%; their B2 copies age out of restic's 30-day retention on their own)
+- Delete the two disabled legacy vzdump jobs from `backup-jobs.tf` + PVE
+- Consider whether `restic-backups` still needs `/srv/scratch-backups` in its include set (only erebor's weekly tarball lands there now)
+
+Also still open from the same session: `zfs-zed` on erebor crash-loops every ~10s, and ZFS scrubs never run (Debian's 2nd-Sunday 00:24 cron falls inside the fleet's off-window — needs a rescheduled scrub timer inside the awake window).
 
 ### Converge ansible drift surfaced during eregion onboarding
 
