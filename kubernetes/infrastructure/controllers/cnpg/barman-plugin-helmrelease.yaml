@@ -1,0 +1,89 @@
+---
+# Barman Cloud CNPG-I plugin — object-store backup/recovery for CNPG Clusters.
+#
+# Why this lives in the cnpg/ directory rather than its own controllers/ dir:
+# the plugin MUST deploy into the operator's namespace (cnpg-system), it
+# reuses the operator's HelmRepository, and its version is coupled to the
+# operator's. A separate directory would hold neither a namespace.yaml nor a
+# helmrepository.yaml — a one-file directory pretending to be a component.
+#
+# Why the plugin at all: the in-tree `spec.backup.barmanObjectStore` on a
+# Cluster is deprecated as of CNPG 1.26 and REMOVED in 1.30. The CNPG-I
+# plugin is the supported successor, so adopting it now makes that upgrade a
+# non-event. The other documented method, `volumeSnapshot`, needs a CSI
+# driver with snapshot support — this cluster has no CSI drivers at all
+# (local-path and nfs-subdir are both pre-CSI provisioners), and snapshots
+# still require a WAL archive for PITR regardless. See ROADMAP.
+#
+# The plugin injects a sidecar into every Postgres instance pod of any
+# Cluster that references it via spec.plugins, so adding the stanza to a
+# Cluster triggers a rollout of that Cluster's pods.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: plugin-barman-cloud
+  # Must match the CloudNativePG operator's namespace — the operator only
+  # discovers plugins running alongside it.
+  namespace: cnpg-system
+spec:
+  interval: 1h
+  timeout: 5m
+  releaseName: plugin-barman-cloud
+
+  # The only HelmRelease-level dependsOn in the repo. The chart renders
+  # cert-manager Issuer + Certificate resources for the plugin<->operator
+  # mTLS, so cert-manager's CRDs and webhook must be serving before this
+  # installs. Kustomization-level ordering can't express it: cert-manager and
+  # cnpg are siblings inside the single infrastructure-controllers
+  # Kustomization, which applies them in one pass.
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
+
+  chart:
+    spec:
+      chart: plugin-barman-cloud
+      # Chart 0.7.1 ships plugin appVersion v0.14.0. Pinned to the 0.7.x line
+      # so a minor chart bump can't land unreviewed. The plugin requires
+      # CNPG >= 1.26 (we run 1.29.1) and versions independently of the
+      # operator chart — bump the two deliberately, not in lockstep by habit.
+      version: ">=0.7.0 <0.8.0"
+      sourceRef:
+        kind: HelmRepository
+        # Same chart repo as the operator — no new HelmRepository needed.
+        name: cnpg
+        namespace: flux-system
+
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+
+  values:
+    # Single-node k3s — one replica, same reasoning as the operator itself.
+    replicaCount: 1
+
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 192Mi
+
+# NB two things this chart does that aren't obvious from the values above:
+#
+#  1. The ObjectStore CRD (barmancloud.cnpg.io/v1) is a chart TEMPLATE, not a
+#     crds/ directory entry, so the install.crds/upgrade.crds settings above
+#     do not govern it. Helm owns it as an ordinary resource, which means
+#     uninstalling this HelmRelease deletes the CRD and every ObjectStore
+#     with it. The backup data in B2 survives; the CRs do not.
+#
+#  2. The chart's Service name (barman-cloud) and the TLS Secret names
+#     (barman-cloud-{server,client}-tls) are load-bearing — upstream's
+#     values.yaml warns "DO NOT CHANGE THE SERVICE NAME as it is currently
+#     used to generate the certificate". The operator finds the plugin by the
+#     Service label cnpg.io/pluginName: barman-cloud.cloudnative-pg.io.

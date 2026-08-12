@@ -18,6 +18,21 @@ metadata:
 spec:
   instances: 1
 
+  # Continuous WAL archiving + base backups to B2 via the Barman Cloud CNPG-I
+  # plugin (see postgres-objectstore.yaml). The in-tree
+  # spec.backup.barmanObjectStore is deprecated as of CNPG 1.26 and removed in
+  # 1.30, so this is the supported shape.
+  #
+  # serverName is intentionally not set: it defaults to the Cluster name, which
+  # means a restore clone bootstrapped from this store archives under its OWN
+  # prefix instead of writing into this cluster's. (The inverse is a real
+  # footgun on the recovery side — see runbooks/postgres-restore.md.)
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: harbor-postgresql-b2
+
   storage:
     size: 8Gi
     storageClass: nfs-scratch

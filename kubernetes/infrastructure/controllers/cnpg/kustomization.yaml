@@ -4,3 +4,6 @@ resources:
   - namespace.yaml
   - helmrepository.yaml
   - helmrelease.yaml
+  # Backup/recovery plugin for the operator above — same namespace, same
+  # HelmRepository. See the header in barman-plugin-helmrelease.yaml.
+  - barman-plugin-helmrelease.yaml

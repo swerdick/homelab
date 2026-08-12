@@ -1,0 +1,73 @@
+---
+# Barman Cloud object store for Harbor's Postgres — Backblaze B2.
+#
+# Must live in the same namespace as the Cluster: the plugin resolves the
+# Cluster's `barmanObjectName` parameter against the Cluster's own namespace,
+# with no cross-namespace lookup. Hence one ObjectStore per cluster.
+#
+# Layout in the bucket is <destinationPath>/<serverName>/{base,wals}/... and
+# serverName defaults to the Cluster name, so every cluster self-namespaces
+# under a distinct prefix and no two ever collide. Backblaze is also the
+# restic target, but a DIFFERENT bucket with a bucket-scoped key — the two
+# tools each manage their own object lifecycle and must never share a prefix.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: harbor-postgresql-b2
+  namespace: harbor
+spec:
+  configuration:
+    destinationPath: s3://vingilot-cnpg-backups/
+    endpointURL: https://s3.us-east-005.backblazeb2.com
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-b2-credentials
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-b2-credentials
+        key: ACCESS_SECRET_KEY
+      # A secretKeySelector, not a plain string — see the credentials Secret.
+      region:
+        name: cnpg-b2-credentials
+        key: REGION
+    wal:
+      # zstd is what makes continuous archiving cheap here: these databases
+      # write so little that most 16 MiB segments are near-empty, and
+      # archive_timeout (5min by default) forces a switch regardless.
+      compression: zstd
+      maxParallel: 2
+    data:
+      compression: gzip
+      jobs: 2
+    # Deliberately NO tags:/historyTags: — B2's S3 API rejects x-amz-tagging
+    # on Put/Copy, so setting them fails every upload.
+    #
+    # Deliberately NO encryption: AES256 either. That header asks for SSE-B2
+    # per object; at-rest encryption is instead enabled as the bucket's
+    # default in the B2 console, which covers every object unconditionally
+    # and keeps one more S3-compatibility variable off the critical path.
+
+  # NB: retentionPolicy is a sibling of `configuration`, NOT nested inside it.
+  # Upstream's concepts.md shows it nested and is wrong — the shipped CRD has
+  # it exactly once, at spec level. 30d comfortably outlives the daily base
+  # backup cadence below.
+  retentionPolicy: "30d"
+
+  instanceSidecarConfiguration:
+    env:
+      # boto3's newer S3 data-integrity defaults send CRC32 checksum headers
+      # that Backblaze rejects, surfacing as x-amz-content-sha256 errors or a
+      # HeadBucket 403 (cloudnative-pg#7105). Pre-emptive, not reactive.
+      # If a 403 persists anyway, the next lever is BARMAN_S3_USE_PATH_STYLE.
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
+    resources:
+      # A Cluster's spec.resources governs the postgres container only, so
+      # without this the injected sidecar would run uncapped on a 20 GB VM.
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi

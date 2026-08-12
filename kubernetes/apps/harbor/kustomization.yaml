@@ -2,7 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
+  # ObjectStore before the Cluster that references it.
+  # (cnpg-b2-credentials Secret is delivered from the apps root — see
+  #  kubernetes/apps/kustomization.yaml)
+  - postgres-objectstore.yaml
   - postgres-cluster.yaml
+  - postgres-scheduledbackup.yaml
   - postgres-podmonitor.yaml
   - valkey.yaml
   - harbor-admin.yaml
