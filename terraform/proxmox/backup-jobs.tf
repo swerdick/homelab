@@ -27,13 +27,13 @@ resource "proxmox_backup_job" "nightly_guests" {
   # skip the backup without this — and eregion's Minecraft world has no
   # other backup. Catch-up runs are throttled by bwlimit below.
   repeat_missed = true
-  # PBS on erebor (cutover 2026-08-09; previously zstd tarballs on the
-  # `backups` dir storage). Deduped + incremental: CTs skip unchanged files
-  # via metadata change detection, the gondor VM uses dirty bitmaps — after
-  # the first full pass, nightly reads shrink from every-guest-in-full to
-  # the changed blocks. Offsite stays aglarond restic, which already ships
-  # /bulk/pbs to B2. Old tarballs stay on /scratch (+ 30d in B2) as the
-  # fallback until a validated PBS restore closes the migration.
+  # PBS on erebor (cutover 2026-08-09; restore-validated and tarball era
+  # cleaned up 2026-08-12). Deduped + incremental: CTs skip unchanged
+  # files via metadata change detection. The gondor VM would use dirty
+  # bitmaps, but they don't survive the nightly power cycle, so it
+  # full-reads its 80G disk each run under the bwlimit (~45 min,
+  # tolerable in this window — see the ROADMAP oddities entry). Offsite
+  # stays aglarond restic, which ships /bulk/pbs to B2.
   storage = "main"
   vmid    = ["117", "120", "121", "131", "140", "141", "142"]
   enabled = true
