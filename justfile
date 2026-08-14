@@ -311,3 +311,82 @@ backup-grafana:
     echo
     echo "Exported $count dashboard(s) to $OUTDIR/"
     echo "Review with: git diff $OUTDIR/"
+
+# --- CNPG Postgres backups ---
+
+# Sidecar memory is shown because 128Mi OOMKills barman-cloud-backup; 512Mi is
+# the current ceiling (measured peaks 64-135Mi).
+# Show archiving state, last backup, and sidecar memory for every CNPG cluster.
+pg-backup-status:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    printf "%-10s %-22s %-12s %-12s %s\n" NAMESPACE CLUSTER ARCHIVING LASTBACKUP SIDECAR-MEM
+    kubectl get clusters.postgresql.cnpg.io -A \
+        -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' |
+    while read -r ns name; do
+        arch=$(kubectl -n "$ns" get cluster "$name" \
+            -o jsonpath='{range .status.conditions[?(@.type=="ContinuousArchiving")]}{.status}{end}')
+        last=$(kubectl -n "$ns" get cluster "$name" \
+            -o jsonpath='{range .status.conditions[?(@.type=="LastBackupSucceeded")]}{.status}{end}')
+        pod=$(kubectl -n "$ns" get pod -l cnpg.io/cluster="$name",cnpg.io/podRole=instance \
+            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        # The barman sidecar is a NATIVE sidecar - an initContainer with
+        # restartPolicy: Always - so it never shows up under .spec.containers.
+        mem=$(kubectl -n "$ns" get pod "$pod" \
+            -o jsonpath='{range .spec.initContainers[?(@.name=="plugin-barman-cloud")]}{.resources.limits.memory}{end}' 2>/dev/null || true)
+        printf "%-10s %-22s %-12s %-12s %s\n" "$ns" "$name" "${arch:--}" "${last:--}" "${mem:-NO-SIDECAR}"
+    done
+    echo
+    echo "NB: status.firstRecoverabilityPoint is always empty - the plugin does not"
+    echo "    maintain CNPG's in-tree status fields. Use 'just pg-backup-list'."
+
+# The kubectl-cnpg plugin isn't installed, so this applies a Backup CR directly
+# - the same object a ScheduledBackup creates.
+# Take an on-demand base backup of one cluster and wait for it to finish.
+pg-backup-now namespace cluster:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="{{cluster}}-manual-$(date -u +%Y%m%d%H%M%S)"
+    kubectl apply -f - <<EOF
+    apiVersion: postgresql.cnpg.io/v1
+    kind: Backup
+    metadata:
+      name: ${name}
+      namespace: {{namespace}}
+    spec:
+      cluster:
+        name: {{cluster}}
+      method: plugin
+      pluginConfiguration:
+        name: barman-cloud.cloudnative-pg.io
+    EOF
+    echo "Waiting for ${name}..."
+    for _ in $(seq 1 60); do
+        phase=$(kubectl -n {{namespace}} get backup "$name" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+        case "$phase" in
+            completed) echo "✓ completed"; exit 0 ;;
+            failed)
+                echo "✗ failed: $(kubectl -n {{namespace}} get backup "$name" -o jsonpath='{.status.error}')"
+                echo "  If this says 'rpc error ... EOF', the sidecar was OOMKilled -"
+                echo "  check: kubectl -n {{namespace}} get pod {{cluster}}-1 -o jsonpath='{.status.initContainerStatuses}'"
+                exit 1 ;;
+        esac
+        sleep 5
+    done
+    echo "timed out waiting for backup to finish"; exit 1
+
+# Ground truth, independent of Kubernetes state - deleting Backup CRs does not
+# remove these objects, and status.firstRecoverabilityPoint is always empty.
+# List the base backups and WAL segments actually present in the B2 bucket.
+pg-backup-list:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    creds=kubernetes/apps/_shared/cnpg-b2-credentials.yaml
+    export AWS_ACCESS_KEY_ID=$(sops --decrypt "$creds" | awk '/ACCESS_KEY_ID:/{print $2; exit}')
+    export AWS_SECRET_ACCESS_KEY=$(sops --decrypt "$creds" | awk '/ACCESS_SECRET_KEY:/{print $2; exit}')
+    aws s3 ls --endpoint-url https://s3.us-east-005.backblazeb2.com \
+        s3://vingilot-cnpg-backups/ --recursive |
+    awk '{n=split($4,p,"/");
+          if (p[2]=="base" && p[4]=="data.tar.gz") printf "  %-22s base %s  %.1f MB\n", p[1], p[3], $3/1048576;
+          if (p[2]=="wals") w[p[1]]++}
+         END {print ""; for (c in w) printf "  %-22s %d WAL segments\n", c, w[c]}'

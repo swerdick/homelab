@@ -27,4 +27,23 @@ spec:
     name: yavanna
   path: ./deploy
   prune: true
-  wait: true
+  # wait: false while samwise is offline indefinitely.
+  #
+  # The yavanna Deployment is pinned to samwise (nodeSelector
+  # homelab.vingilot.internal/host=samwise), so with samwise NotReady its pod
+  # sits Pending forever and this Kustomization never leaves InProgress. That
+  # matters beyond yavanna: the `apps` Kustomization applies THIS object and,
+  # because apps has wait: true, health-checks it — so a permanently-unhealthy
+  # yavanna made apps burn its full 5m timeout every cycle and never advance
+  # lastAppliedRevision. `flux get kustomizations` then reports apps stuck at a
+  # stale revision even though its resources applied fine, which is actively
+  # misleading when you are trying to tell whether a change deployed.
+  #
+  # Trade-off accepted deliberately: this Kustomization now reports Ready once
+  # its manifests apply, rather than once the workload is healthy — so it no
+  # longer tells us anything about yavanna's runtime state. That is a poor
+  # signal to lose, but it was a *known-false* signal for as long as samwise is
+  # down, and it was masking the health of every other app.
+  #
+  # Restore `wait: true` when samwise is back.
+  wait: false
