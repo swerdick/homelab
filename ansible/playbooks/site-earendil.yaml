@@ -56,5 +56,8 @@
 - name: Cap the ZFS ARC
   import_playbook: setup-earendil-zfs.yaml
 
+- name: Delay pvescheduler for PBS readiness
+  import_playbook: setup-earendil-scheduler.yaml
+
 - name: Provision Terraform PVE access
   import_playbook: setup-terraform-pve-access.yaml

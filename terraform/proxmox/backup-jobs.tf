@@ -1,18 +1,12 @@
 # Datacenter-level backup jobs (vzdump entries in /etc/pve/jobs.cfg).
 #
-# Four jobs total: two enabled (the active backup rotation), two disabled
-# (legacy, imported with enabled=false to match reality; delete via PVE UI
-# once the 2026-08 PBS cutover is validated — legacy_all_to_pbs is fully
-# superseded by nightly_guests targeting `main`).
+# Two jobs: the nightly guest rotation to PBS and erebor's weekly config
+# tarball. The two disabled legacy tarball-era jobs were deleted when the
+# 2026-08 PBS cutover was validated (restore test 2026-08-12).
 #
 # Job IDs are PVE-generated UUIDs (backup-<8hex>-<4hex>). Not pretty but
 # changing them would require destroy+create — TF resource names
 # (nightly_guests etc.) are the human-readable handle.
-#
-# bpg's backup_job resource doesn't model the `exclude` field (excluding
-# specific VMIDs from an `all=true` job). The legacy_all_to_pbs job has
-# `exclude 130` in jobs.cfg but TF can't see it. Since that job is
-# disabled, this gap doesn't affect anything operationally.
 
 # Every job below has `lifecycle { ignore_changes = [fleecing] }`. bpg's
 # import populates `fleecing = { enabled = false }` into state, but it's
@@ -33,13 +27,13 @@ resource "proxmox_backup_job" "nightly_guests" {
   # skip the backup without this — and eregion's Minecraft world has no
   # other backup. Catch-up runs are throttled by bwlimit below.
   repeat_missed = true
-  # PBS on erebor (cutover 2026-08-09; previously zstd tarballs on the
-  # `backups` dir storage). Deduped + incremental: CTs skip unchanged files
-  # via metadata change detection, the gondor VM uses dirty bitmaps — after
-  # the first full pass, nightly reads shrink from every-guest-in-full to
-  # the changed blocks. Offsite stays aglarond restic, which already ships
-  # /bulk/pbs to B2. Old tarballs stay on /scratch (+ 30d in B2) as the
-  # fallback until a validated PBS restore closes the migration.
+  # PBS on erebor (cutover 2026-08-09; restore-validated and tarball era
+  # cleaned up 2026-08-12). Deduped + incremental: CTs skip unchanged
+  # files via metadata change detection. The gondor VM would use dirty
+  # bitmaps, but they don't survive the nightly power cycle, so it
+  # full-reads its 80G disk each run under the bwlimit (~45 min,
+  # tolerable in this window — see the ROADMAP oddities entry). Offsite
+  # stays aglarond restic, which ships /bulk/pbs to B2.
   storage = "main"
   vmid    = ["117", "120", "121", "131", "140", "141", "142"]
   enabled = true
@@ -80,45 +74,6 @@ resource "proxmox_backup_job" "erebor_config_weekly" {
   notes_template = "pbs-config -- {{guestname}}"
   prune_backups = {
     keep-last = "8"
-  }
-  lifecycle {
-    ignore_changes = [fleecing]
-  }
-}
-
-resource "proxmox_backup_job" "legacy_samba_nfs" {
-  id             = "backup-c3e36b01-9fa9"
-  schedule       = "21:00"
-  storage        = "backups"
-  vmid           = ["120", "121"]
-  enabled        = false
-  compress       = "zstd"
-  mode           = "snapshot"
-  node           = "earendil"
-  notes_template = "{{guestname}} -- {{node}}"
-  prune_backups = {
-    keep-daily   = "7"
-    keep-last    = "3"
-    keep-monthly = "6"
-    keep-weekly  = "4"
-  }
-  lifecycle {
-    ignore_changes = [fleecing]
-  }
-}
-
-resource "proxmox_backup_job" "legacy_all_to_pbs" {
-  id             = "backup-66ed8128-0c86"
-  schedule       = "21:00"
-  storage        = "main"
-  all            = true
-  enabled        = false
-  mode           = "snapshot"
-  notes_template = "{{guestname}}"
-  prune_backups = {
-    keep-daily   = "7"
-    keep-monthly = "6"
-    keep-weekly  = "4"
   }
   lifecycle {
     ignore_changes = [fleecing]

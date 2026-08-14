@@ -1,0 +1,48 @@
+# earendil — delay pvescheduler at boot so repeat-missed backup catch-ups
+# don't race PBS availability.
+#
+# Observed 2026-08-11 23:59 UTC: fleet powered on and pvescheduler fired
+# the repeat-missed vzdump catch-up seconds into boot, which died on
+# "could not activate storage 'main': Can't connect to erebor:8007 (No
+# route to host)". pvescheduler already orders After=pve-guests.service,
+# but pve-guests completes when the erebor CT is *started* — well before
+# proxmox-backup-proxy answers on :8007 (~20s later on this hardware).
+# The failed catch-up does not retry, so that day's backup was silently
+# skipped until the next scheduled window.
+#
+# A fixed pre-start delay outlasts that readiness gap without touching
+# guest boot order — keeping anduril's TV cold-start first in line was
+# the reason not to solve this with startup order/up_delay on erebor.
+# The sleep also runs on manual `systemctl restart pvescheduler`; that is
+# harmless (the scheduler just begins polling 90s later).
+#
+# Run from ansible/:
+#   ansible-playbook playbooks/setup-earendil-scheduler.yaml --check --diff
+
+- name: Earendil — pvescheduler boot delay for PBS readiness
+  hosts: proxmox_hosts # = earendil
+  become: true
+
+  tasks:
+    - name: Create the pvescheduler drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/pvescheduler.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Delay scheduler start past PBS readiness
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pvescheduler.service.d/pbs-readiness-delay.conf
+        mode: "0644"
+        content: |
+          [Service]
+          ExecStartPre=/usr/bin/sleep 90
+      notify: Reload systemd
+
+  handlers:
+    - name: Reload systemd
+      # Deliberately no pvescheduler restart: the delay only matters on
+      # boot, and a restart would pause job processing for the sleep
+      # duration mid-day for no benefit. Picks itself up next boot.
+      ansible.builtin.systemd:
+        daemon_reload: true
