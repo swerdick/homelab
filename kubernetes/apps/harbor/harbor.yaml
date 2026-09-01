@@ -169,9 +169,17 @@ spec:
         resources:
           requests:
             cpu: 100m
-            memory: 256Mi
-          limits:
             memory: 512Mi
+          limits:
+            # Raised 512Mi -> 1Gi (2026-09-01): the distribution registry was
+            # OOMKilled 25x in 28d at 512Mi — reliably during proxy-cache blob
+            # persists (exit 137 at the exact second harbor-core logged
+            # "connection reset by peer" -> 502 -> "manifest list doesn't
+            # contain any pushed manifest", leaving artifacts uncached and
+            # unscannable). Multi-GB AI images (ComfyUI ~13.6GB) made the
+            # ceiling routine to hit. Same failure class + fix as the barman
+            # sidecar (PR #39).
+            memory: 1Gi
       controller:
         resources:
           requests:
