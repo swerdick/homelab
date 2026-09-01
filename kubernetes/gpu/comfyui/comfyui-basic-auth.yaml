@@ -1,0 +1,34 @@
+# Basic-auth credentials for comfyui.vingilot.internal — the ONLY lock on
+# the ComfyUI UI (no native auth; the Middleware in comfyui-route.yaml
+# enforces this at the Traefik edge).
+#
+# The plaintext password lives in Bitwarden (no machine consumer needs it,
+# unlike loki's — browsers prompt and cache it).
+#
+# To rotate: regenerate with
+#   htpasswd -nbB pseudo "<new-password>"
+# then `sops kubernetes/gpu/comfyui/comfyui-basic-auth.yaml` to paste the
+# new line into `users`, and update Bitwarden to match.
+apiVersion: v1
+kind: Secret
+metadata:
+    name: comfyui-basic-auth
+    namespace: comfyui
+type: Opaque
+stringData:
+    users: ENC[AES256_GCM,data:O2wZ0ilR15cVubbF/hxTKT3GjptmxaaBZZEoUNO2c2CQu78Sw2pHqivKh+fzpcWpTcawNFBzrNVBjkj3ZEgRQUxyiA==,iv:Gx+LrDapsW+gzZSg+ocMaXTqHR+wkBO8ccA10P2fbv8=,tag:Ay5m+UnA1BaeeaS3YNybiQ==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBZM0dFNUMzVTNKMGhzaWRL
+            VlZYV1dWSHlHR2FNWTVURW5tOUx4a3A1TlhJCjFGaFNDUUxSYWdjbEpOMDhmTGxG
+            cVN1ZmJZczU3ZDJvK2VBb2sxTEt1MG8KLS0tIE8xNDM3NUx1MWdGSGIwYVE5OGpF
+            R3NlVDUxb01GN2t3SGNkd25rSlhhRk0KoVG24Rbf/eQAkWjj6z4mOegKqyUgn654
+            EH97h2LpxfbN2yz7/qpXmBcnfh2sVkW86tGlLuuxf0TdORbz1C5cSw==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1n60xeumad6dxu59864v3dydp2jxj0nerlvtqf3y3gaaqh3ffnv5s7l39qn
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-09-01T02:36:56Z"
+    mac: ENC[AES256_GCM,data:zHXGXjshdSuHsOQa0A7RhKsNsRBygC9AY5o81v7kl09YqJXjAmgEE0TDhbes4HdWzbsQEl+yUDhgc2Gw2UfkcJ01kf82NTnRO4xe5JDMivO4Ti0LyEnSWbYFiSctxMew1JYGxF+oMnHNkqWazRFW/mIzEUzu0b0R8TeX61ns7LI=,iv:lHbS+5eKoid7FC63+JnLE8cTYx/5Gjw1FaFvWYm+W30=,tag:bNbNNu/GRG59X9dBv3YV3g==,type:str]
+    version: 3.13.3

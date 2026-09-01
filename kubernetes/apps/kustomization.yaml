@@ -7,6 +7,9 @@ resources:
   - yavanna
   - harbor
   - keycloak
+  # GPU workloads on mirdain ride a nested wait:false Kustomization —
+  # see gpu/flux.yaml for why they can't sit under this wait:true root.
+  - gpu
   # B2 credentials for CNPG's Barman Cloud backups — one Secret per Postgres
   # namespace, in one file so a key rotation is a single edit. Listed HERE
   # rather than in each app dir for the same reason the generators below live

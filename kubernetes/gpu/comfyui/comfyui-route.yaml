@@ -1,0 +1,45 @@
+---
+# Traefik basicAuth middleware that fronts the ComfyUI HTTPRoute. ComfyUI has
+# NO native auth — this edge middleware is the only lock on the door. Reads
+# the `users` key (htpasswd-format) from the comfyui-basic-auth Secret in the
+# same namespace.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: comfyui-basic-auth
+  namespace: comfyui
+spec:
+  basicAuth:
+    secret: comfyui-basic-auth
+    realm: "comfyui.vingilot.internal"
+---
+# Routes https://comfyui.vingilot.internal/* to the ComfyUI Service. The
+# browser UI upgrades /ws to a WebSocket for live progress — Traefik passes
+# the Upgrade through this same route, and the browser re-sends the
+# basic-auth credentials on the upgrade request.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: comfyui
+  namespace: comfyui
+spec:
+  parentRefs:
+    - name: vingilot
+      namespace: traefik
+      sectionName: comfyui-https
+  hostnames:
+    - comfyui.vingilot.internal
+  rules:
+    - filters:
+        - type: ExtensionRef
+          extensionRef:
+            group: traefik.io
+            kind: Middleware
+            name: comfyui-basic-auth
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: comfyui
+          port: 8188
