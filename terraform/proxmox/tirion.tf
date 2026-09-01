@@ -59,6 +59,9 @@ resource "proxmox_virtual_environment_container" "tirion" {
       timeout_delete,
       timeout_start,
       timeout_update,
+      # mount_point: bpg ForceNew on bind volumes — backported 2026-09-01
+      # after the missing ignore destroyed aglarond on a host-added mpN.
+      mount_point,
     ]
   }
 }

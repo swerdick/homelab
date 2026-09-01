@@ -109,6 +109,12 @@ resource "proxmox_virtual_environment_container" "nfs" {
       timeout_delete,
       timeout_start,
       timeout_update,
+      # features + mount_point: root@pam-only on this privileged CT / bpg
+      # ForceNew on bind volumes (setup-k3s-pv-storage.yaml adds mpN lines
+      # host-side). Backported 2026-09-01 after the missing mount_point
+      # ignore destroyed aglarond.
+      features,
+      mount_point,
     ]
   }
 }

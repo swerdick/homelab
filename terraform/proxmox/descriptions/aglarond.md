@@ -13,15 +13,17 @@ mp4  /bulk/documents        -> /srv/documents        (ro)
 mp5  /bulk/media/music      -> /srv/music            (ro)
 mp6  /bulk/photos           -> /srv/photos           (ro)
 mp7  /bulk/media/wallpaper  -> /srv/wallpaper        (ro)
+mp8  /bulk/ai-models/comfyui-user   -> /srv/comfyui-user   (ro)
+mp9  /bulk/ai-models/comfyui/loras  -> /srv/comfyui-loras  (ro)
 ```
 
-(A planned mp8 for `/bulk/media/movies` was never actually added — movies are **not** in offsite backup today.)
+(A planned movies mount was never actually added — movies are **not** in offsite backup today; next free slot is mp10.)
 
 Add via host: `pct set 131 -mpN /host/path,mp=/srv/whatever,ro=1` then `pct reboot 131`.
 
 ## GID 10000 passthrough (media access)
 
-The /bulk media trees are `2770 :10000` (the k8s supplementalGroups model), which the unprivileged mapped root (host uid/gid 100000) cannot read — this silently broke `restic-media` for months in 2026 (0-byte "hollow" snapshots). Access is granted the same way the smb CT does it: `/etc/pve/lxc/131.conf` maps guest GID 10000 directly to host GID 10000, and a drop-in runs `restic-media` with `SupplementaryGroups=10000` (guest group `shares`):
+The /bulk media trees are `2770 :10000` (the k8s supplementalGroups model), which the unprivileged mapped root (host uid/gid 100000) cannot read — this silently broke `restic-media` for months in 2026 (0-byte "hollow" snapshots). Access is granted the same way the smb CT does it: `/etc/pve/lxc/131.conf` maps guest GID 10000 directly to host GID 10000, and drop-ins run `restic-media` **and** `restic-backups` (which reads the 2770 `/srv/comfyui-user`) with `SupplementaryGroups=10000` (guest group `shares`):
 
 ```
 lxc.idmap: u 0 100000 65536
@@ -36,9 +38,9 @@ Managed by `ansible/playbooks/setup-aglarond.yaml` (idmap, `/etc/subgid`, `share
 
 | Service | Sources | Schedule (UTC) | Retention |
 |---|---|---|---|
-| `restic-backups` | pbs + scratch-backups | Daily 20:30 | 30 daily |
+| `restic-backups` | pbs + scratch-backups + comfyui-user (workflows) | Daily 20:30 | 30 daily |
 | `restic-host` | host-etc | Daily 21:15 | 14d / 8w / 12m |
-| `restic-media` | photos, documents, music, wallpaper (movies: no mount, see above) | Sun 21:30 | 12m / 5y |
+| `restic-media` | photos, documents, music, wallpaper, comfyui-loras (movies: no mount, see above) | Sun 21:30 | 12m / 5y |
 
 Schedules and throttling (Nice/CPUQuota) come from drop-ins managed by `setup-aglarond.yaml`. Moved from 02:00-03:00 UTC in 2026-08: those slots sat in prime evening gaming hours (22:00-23:00 ET, CPU/IO contention with anduril) and raced the ~23:15 ET fleet shutdown, which killed long B2 uploads mid-flight. 20:30 UTC lands after the 14:00 earendil-local vzdump finishes in both DST offsets.
 

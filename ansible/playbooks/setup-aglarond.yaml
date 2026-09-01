@@ -11,6 +11,12 @@
 # through (lxc.idmap) and putting the restic-media unit in that group. No host
 # permission loosening, no ACL second-system.
 #
+# Also codified here (2026-09-01): the ComfyUI backup slice — mp8/mp9 ro
+# binds of comfyui-user (hand-built workflows, nightly) and comfyui/loras
+# (curated downloads, weekly) + their include-file lines + the
+# restic-backups shares-group drop-in. Checkpoints deliberately excluded
+# (multi-GB, re-downloadable).
+#
 # Also codified here (added 2026-08-09): resource-control and schedule
 # drop-ins for all three restic units. The 02:00-03:00 UTC slots sat in
 # prime evening gaming hours (22:00-23:00 ET) and raced the ~23:15 ET fleet
@@ -52,6 +58,23 @@
         - "lxc.idmap: g 0 100000 10000"
         - "lxc.idmap: g 10000 10000 1"
         - "lxc.idmap: g 10001 110001 55535"
+      notify: Warn CT config changed
+
+    - name: Bind-mount the ComfyUI user data + LoRAs for offsite backup (mp8/mp9)
+      # comfyui-user holds hand-built workflows — tiny, irreplaceable,
+      # deliberately excluded from vzdump (the ai-models dataset is backup=0)
+      # so restic is its only protection. loras protects curated downloads
+      # against upstream deletion (civitai models vanish), weekly is enough.
+      # Both ro=1 like the other restic sources. (Checkpoints stay
+      # unprotected by choice: multi-GB and re-downloadable.)
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ aglarond_ctid }}.conf"
+        regexp: "^{{ item.slot }}:"
+        line: "{{ item.slot }}: {{ item.src }},mp={{ item.dst }},ro=1"
+        insertafter: '^mp[0-9]+:'
+      loop:
+        - { slot: mp8, src: /bulk/ai-models/comfyui-user, dst: /srv/comfyui-user }
+        - { slot: mp9, src: /bulk/ai-models/comfyui/loras, dst: /srv/comfyui-loras }
       notify: Warn CT config changed
 
   handlers:
@@ -98,6 +121,32 @@
           [Service]
           SupplementaryGroups=10000
       notify: Reload systemd
+
+    - name: Run restic-backups with the shares group too
+      # Needed since /srv/comfyui-user joined its sources — the ai-models
+      # dataset is 2770 root:10000 like the media trees, unreadable to the
+      # bare mapped root. Same mechanism as restic-media above.
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/restic-backups.service.d/shares-group.conf
+        mode: "0644"
+        content: |
+          [Service]
+          SupplementaryGroups=10000
+      notify: Reload systemd
+
+    - name: Add the ComfyUI sources to the restic include files
+      # The on-box units read sources from --files-from lists, so new
+      # sources are one managed line each — no unit edits. create: false
+      # on purpose: if the include file is missing, this box is a fresh
+      # rebuild mid-restore and a loud failure beats silently creating a
+      # file that backs up ONLY the comfyui paths.
+      ansible.builtin.lineinfile:
+        path: "/root/.config/restic/{{ item.file }}"
+        line: "{{ item.line }}"
+        create: false
+      loop:
+        - { file: includes-backups.txt, line: /srv/comfyui-user }
+        - { file: includes-media.txt, line: /srv/comfyui-loras }
 
     - name: Throttle restic so backups yield to interactive workloads
       # CPUQuota is the effective pacing lever: restic's chunk/hash CPU

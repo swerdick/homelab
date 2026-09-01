@@ -135,6 +135,11 @@ resource "proxmox_virtual_environment_container" "smb" {
       timeout_delete,
       timeout_start,
       timeout_update,
+      # mount_point: bpg ForceNew on `volume` — a host-added mpN bind (e.g.
+      # 2026-09-01's /bulk/ai-models mp6) plans a CT destroy/recreate
+      # otherwise; the same gap destroyed aglarond that day. Binds are
+      # host/ansible-managed; TF documents, never applies them.
+      mount_point,
     ]
   }
 }
