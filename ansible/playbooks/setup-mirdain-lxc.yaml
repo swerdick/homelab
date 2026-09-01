@@ -1,0 +1,181 @@
+---
+# Host-side prep for the mirdain GPU-worker LXC (CT 143) on earendil — the
+# AI/ROCm half of the amdgpu-sharing design (ROADMAP "Anduril Phase 2"). Same
+# config split as anduril: the bpg terraform provider can't express
+# privileged-CT feature flags, bind mounts, or raw lxc.* lines via the API
+# token, so terraform imports the CT (mirdain.tf) and THIS playbook owns the
+# raw lines in /etc/pve/lxc/143.conf. Companion to setup-amdgpu-host.yaml
+# (host amdgpu ownership) and site-mirdain.yaml (in-guest converge + k3s join).
+#
+# What this manages on earendil:
+#   1. scratch/mirdain-k3s (100G) — containerd image store, bind-mounted at
+#      /var/lib/rancher. Image layers are re-downloadable scratch-pool
+#      material; keeps multi-GB ROCm image churn off the ~fully-committed
+#      rpool SSD.
+#   2. bulk/ai-models (150G) — model weights + generation outputs,
+#      bind-mounted at /bulk/ai-models. 150G rather than the planned 300G:
+#      bulk had only 267G free at creation time (2026-08) — raise the quota
+#      if the pool ever grows. backup=0 on both mounts: models are
+#      re-downloadable, outputs are exports.
+#   3. Host kernel modules k3s needs (an LXC can't modprobe): overlay
+#      (containerd snapshotter), br_netfilter (kube-proxy iptables), vxlan
+#      (flannel).
+#   4. /etc/pve/lxc/143.conf raw lines: GPU compute devices (renderD129 +
+#      /dev/kfd — deliberately NO card0: compute-only node, the KMS node
+#      stays anduril's) and the k3s-in-LXC requirements (kmsg, /dev/net/tun,
+#      proc:rw sys:rw, apparmor unconfined, cleared cap.drop), plus features
+#      and the two bind mounts.
+#
+# 143.conf changes only take effect on a CT restart; the handler warns rather
+# than auto-rebooting (a reboot drains a live k3s node — operator-timed, but
+# cheap outside an active GPU job: pct reboot 143). Idempotent. Lives in
+# site-earendil.yaml.
+
+- name: Host-side prep for the mirdain GPU-worker LXC
+  hosts: proxmox_hosts
+  become: true
+  gather_facts: false
+
+  vars:
+    mirdain_ctid: 143
+    k3s_dataset: scratch/mirdain-k3s
+    k3s_dataset_quota: 100G
+    models_dataset: bulk/ai-models
+    models_dataset_quota: 150G
+
+  tasks:
+    # --- datasets (scratch: image store; bulk: models/outputs) ---
+    # Command trios, NOT community.general.zfs: the module compares
+    # extra_zfs_properties against `zfs get -p` (bytes), so a human-friendly
+    # "100G" reports changed on every run (see setup-anduril-lxc.yaml).
+    - name: Check for the k3s image-store dataset
+      ansible.builtin.command: "zfs list -H -o name {{ k3s_dataset }}"
+      register: k3s_ds
+      changed_when: false
+      failed_when: false
+
+    - name: Create the k3s image-store dataset
+      ansible.builtin.command: "zfs create -o quota={{ k3s_dataset_quota }} {{ k3s_dataset }}"
+      when: k3s_ds.rc != 0
+
+    - name: Enforce the k3s image-store quota
+      ansible.builtin.command: "zfs set quota={{ k3s_dataset_quota }} {{ k3s_dataset }}"
+      changed_when: false  # zfs set is idempotent; don't report perpetual change
+
+    - name: Check for the AI models dataset
+      ansible.builtin.command: "zfs list -H -o name {{ models_dataset }}"
+      register: models_ds
+      changed_when: false
+      failed_when: false
+
+    - name: Create the AI models dataset
+      ansible.builtin.command: "zfs create -o quota={{ models_dataset_quota }} {{ models_dataset }}"
+      when: models_ds.rc != 0
+
+    - name: Enforce the AI models quota
+      ansible.builtin.command: "zfs set quota={{ models_dataset_quota }} {{ models_dataset }}"
+      changed_when: false  # zfs set is idempotent; don't report perpetual change
+
+    - name: Set AI models dataset ownership for SMB browsing
+      # Matches the /bulk/* house pattern (2770 setgid, group 10000 `shares`):
+      # GPU pods write as root, new files inherit gid 10000, and the existing
+      # smb `bulk` share exposes models/outputs to the Mac with zero samba
+      # changes. Top dir only — the pods own everything below.
+      ansible.builtin.file:
+        path: "/{{ models_dataset }}"
+        owner: root
+        group: "10000"
+        mode: "2770"
+        state: directory
+
+    # --- host kernel modules for the shared-kernel k3s node ---
+    # gondor (a VM) loads its own modules; an LXC cannot modprobe, so the host
+    # must have these resident before k3s-agent starts inside the CT.
+    - name: Autoload k3s-required kernel modules at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/mirdain-k3s.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          # Managed by ansible (setup-mirdain-lxc.yaml): modules the mirdain
+          # k3s-agent LXC needs but cannot load itself.
+          overlay
+          br_netfilter
+          vxlan
+
+    - name: Load the k3s modules now
+      # Idempotent — modprobe no-ops on already-loaded modules; the boot-time
+      # file above covers the next reboot.
+      ansible.builtin.command: modprobe -a overlay br_netfilter vxlan
+      changed_when: false
+
+    # --- CT 143 raw config (features + devices + k3s-in-LXC lines) ---
+    - name: Ensure CT features (nesting + keyctl)
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        regexp: '^features:'
+        line: "features: nesting=1,keyctl=1"
+      notify: Warn CT config changed
+
+    - name: Manage CT device passthrough + k3s-in-LXC lines
+      # GPU compute only: renderD129 (the 9070 XT's render node) + /dev/kfd
+      # (ROCm), shared live with the anduril gaming CT — same host nodes, no
+      # exclusivity; arbitration is operational (`just gpu-gaming-mode`). No
+      # card0: the KMS node stays anduril-exclusive and a k8s node never needs
+      # it. The rest is the canonical k3s-in-LXC set: /dev/kmsg for kubelet's
+      # OOM watcher (shared kernel means the host kmsg IS the right source),
+      # /dev/net/tun for flannel, proc:rw sys:rw + apparmor unconfined +
+      # cleared cap.drop so kubelet/containerd can manage mounts and cgroups.
+      # Privileged + unconfined is effectively host-root — the same accepted
+      # trust domain as the anduril CT. NOT a blockinfile: PVE folds '#' lines
+      # in the conf into the CT description (see setup-anduril-lxc.yaml).
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        line: "{{ item }}"
+      loop:
+        - "lxc.cgroup2.devices.allow: c 226:* rwm"
+        - "lxc.cgroup2.devices.allow: c 235:* rwm"
+        - "lxc.cgroup2.devices.allow: c 10:200 rwm"
+        - "lxc.cgroup2.devices.allow: c 1:11 rwm"
+        - "lxc.mount.entry: /dev/dri/renderD129 dev/dri/renderD129 none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/kmsg dev/kmsg none bind,optional,create=file"
+        - "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,optional,create=file"
+        - "lxc.mount.auto: proc:rw sys:rw"
+        - "lxc.apparmor.profile: unconfined"
+        - "lxc.cap.drop:"
+      notify: Warn CT config changed
+
+    - name: Bind-mount the k3s image store into the CT (mp0)
+      # /var/lib/rancher holds containerd's image/snapshot store — the churny,
+      # re-downloadable bulk of a k3s node's disk. Managed here as a raw mpN
+      # line (privileged-CT mounts are root@pam-only via the API token),
+      # mirrored by the TF-ignored mount_point block in mirdain.tf.
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        regexp: '^mp0:'
+        line: "mp0: /scratch/mirdain-k3s,mp=/var/lib/rancher,backup=0"
+      notify: Warn CT config changed
+
+    - name: Bind-mount the AI models dataset into the CT (mp1)
+      # Path identity host -> CT -> pod (/bulk/ai-models everywhere) so the
+      # kubernetes hostPath volumes read naturally. shared=1 matches the other
+      # /bulk/* binds.
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        regexp: '^mp1:'
+        line: "mp1: /bulk/ai-models,mp=/bulk/ai-models,shared=1,backup=0"
+      notify: Warn CT config changed
+
+  handlers:
+    - name: Warn CT config changed
+      ansible.builtin.debug:
+        msg: |
+          ─────────────────────────────────────────────────────────────
+          /etc/pve/lxc/{{ mirdain_ctid }}.conf changed. Device/feature
+          changes take effect on the NEXT CT restart only:
+              pct reboot {{ mirdain_ctid }}
+          (Restarting drains the k3s node — cheap when no GPU job is
+          running; cordon first if one is: just gpu-gaming-mode.)
+          ─────────────────────────────────────────────────────────────

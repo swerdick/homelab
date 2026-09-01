@@ -14,9 +14,17 @@
 # 8192 / 524288 are the de-facto modern-node values (k3s, Cilium, Talos,
 # Flatcar all recommend the same order of magnitude). Memory cost is
 # negligible (~1 KiB per instance, ~1 KiB per watch).
+#
+# Targets both amd64 k3s nodes (gondor VM + mirdain LXC), not the whole
+# k3s_workers group — samwise got its values at Pi setup time and adding it
+# here would change a converged host. On mirdain, a privileged shared-kernel
+# LXC, these writes land on the HOST kernel (fs.inotify.* is per-UID in the
+# initial user namespace), so they are effectively host-wide raises — fine:
+# both values are strict raises over the Debian defaults and benign for
+# every other guest.
 
 - name: Tune kernel sysctls on the k3s node
-  hosts: gondor
+  hosts: gondor:mirdain
   tasks:
     - name: Sanity-check that this is a Debian-family host
       ansible.builtin.assert:

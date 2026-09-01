@@ -1,0 +1,60 @@
+---
+# Entry point for configuring mirdain — CT 143 on earendil: the amd64
+# GPU-worker k3s agent (tainted homelab.vingilot.internal/role=gpu) sharing
+# the RX 9070 XT with the anduril gaming CT for AI workloads (ComfyUI,
+# llama-swap). The AI/ROCm half of the amdgpu-sharing design.
+#
+# Host-side prep is NOT here: setup-mirdain-lxc.yaml (imported by
+# site-earendil.yaml) owns the datasets, device passthrough, and k3s-in-LXC
+# config lines, and must have converged — plus a CT restart to apply — before
+# this runs. This file is the in-guest converge + cluster join.
+#
+# Fresh-CT pre-steps (outside ansible's reach):
+#   - Router: A-record mirdain.vingilot.internal -> 192.168.1.43 (ansible and
+#     the k3s join reach hosts by name).
+#   - Create CT 143 with the pct command in terraform/proxmox/descriptions/
+#     mirdain.md (`--ssh-public-keys /root/.ssh/authorized_keys` seeds CT root
+#     with the operator key).
+#   - First run only: the pseudo user doesn't exist yet, so bootstrap it as
+#     root (the inventory assumes pseudo + sudo everywhere):
+#       ansible-playbook playbooks/setup-pseudo-user.yaml -l mirdain \
+#         -e ansible_user=root -e ansible_become=false
+#   - Rebuild only (CT destroyed + recreated): clear the dead cluster
+#     registration or the rejoin is rejected (fresh CTs generate a new k3s
+#     node password):
+#       kubectl delete node mirdain
+#       kubectl -n kube-system delete secret mirdain.node-password.k3s --ignore-not-found
+#
+# Usage:
+#   ansible-playbook playbooks/site-mirdain.yaml --check --diff
+#   ansible-playbook playbooks/site-mirdain.yaml -l mirdain,gondor
+# The no-limit check is deliberate: several imported playbooks target broad
+# groups (alloy/debian_guests), and the house rule is that unrestricted runs
+# must be safe — the check doubles as the fleet-wide no-op audit (every other
+# host must recap changed=0). Keep gondor in the -l form
+# (install-k3s-agent.yaml fetches the join token from the server and verifies
+# the join there).
+
+- name: Create the pseudo admin user
+  import_playbook: setup-pseudo-user.yaml
+
+- name: Apply the Debian base config
+  import_playbook: setup-debian-base.yaml
+
+- name: Install the Alloy collector (distributes the root CA first)
+  import_playbook: install-alloy.yaml
+
+- name: Configure unattended upgrades
+  import_playbook: install-unattended-upgrades.yaml
+
+- name: Tune k3s kernel sysctls
+  import_playbook: setup-k3s-sysctls.yaml
+
+- name: Install NFS client tools (kubelet PV mounts)
+  import_playbook: install-nfs-client.yaml
+
+- name: Join gondor's k3s cluster as an agent
+  import_playbook: install-k3s-agent.yaml
+
+- name: Point containerd at Harbor's registry proxy-caches
+  import_playbook: setup-k3s-registries.yaml

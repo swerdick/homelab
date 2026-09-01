@@ -5,16 +5,15 @@
 # no-ops on every host outside that group.
 #
 # Worker design choices (see also: plan file + ROADMAP Phase 1 entries):
-#   - NoSchedule taint on the worker prevents existing amd64-only
-#     HelmReleases (Immich, Jellyfin, cnpg, Traefik, MetalLB, ...) from
-#     getting rescheduled onto an arm64 node and ImagePullBackOff'ing.
-#     Future arm64 workloads (Pi-hole, Headscale, watering) will add a
-#     matching toleration.
-#   - kubelet image-gc thresholds are lowered (70/50 vs default 85/80) to
-#     reduce SD-card wear while we're still on SD + WiFi; revisit on
-#     USB SSD migration.
-#   - k3s_version is sourced from ansible/host_vars/<host>.yaml and
-#     verified against the running server before any state changes.
+#   - Node identity (labels, taints, kubelet args) is per-host data sourced
+#     from host_vars/<host>/ — samwise carries the pi taint + SD-card
+#     image-gc tuning, mirdain the gpu taint. The NoSchedule taints keep
+#     default-scheduled HelmReleases on gondor; workloads opt onto a worker
+#     with a matching toleration. (These were play-level vars while samwise
+#     was the only worker; play vars would OVERRIDE host_vars, so they had
+#     to move, not just be shadowed.)
+#   - k3s_version is sourced from ansible/host_vars/<host>/ and verified
+#     against the running server before any state changes.
 
 - name: Fetch k3s node token from the server
   hosts: gondor
@@ -39,17 +38,24 @@
   vars:
     k3s_url: "https://gondor.vingilot.internal:6443"
     k3s_token: "{{ hostvars['gondor'].k3s_node_token }}"
-    # Labels and the taint are intentionally in the homelab.vingilot.internal/
-    # namespace rather than node-role.kubernetes.io/* (which is conventionally
-    # cluster-controller-managed). kubernetes.io/arch=arm64 is auto-applied
-    # by the kubelet.
-    k3s_node_labels:
-      - "homelab.vingilot.internal/host={{ inventory_hostname }}"
-      - "homelab.vingilot.internal/role=worker"
-    k3s_node_taints:
-      - "homelab.vingilot.internal/role=pi:NoSchedule"
 
   pre_tasks:
+    - name: Pre-flight — assert per-host node identity vars are defined
+      # Labels/taints/kubelet-args live in host_vars/<host>/ (samwise, mirdain).
+      # Conventions: the homelab.vingilot.internal/ namespace rather than
+      # node-role.kubernetes.io/* (conventionally cluster-controller-managed);
+      # kubernetes.io/arch is auto-applied by the kubelet. Fail loud if a
+      # future worker joins the group without its identity defined.
+      ansible.builtin.assert:
+        that:
+          - k3s_node_labels is defined
+          - k3s_node_taints is defined
+          - k3s_kubelet_args is defined
+        fail_msg: >-
+          host_vars for {{ inventory_hostname }} must define k3s_node_labels,
+          k3s_node_taints, and k3s_kubelet_args (see host_vars/samwise/main.yaml
+          and host_vars/mirdain/main.yaml for the shape).
+
     # Raspberry Pi OS ships with the memory cgroup controller disabled on
     # the kernel cmdline; k3s-agent dies with "failed to find memory
     # cgroup (v2)" on first start without this. Modify /boot/firmware/
@@ -158,8 +164,7 @@
           --node-name={{ inventory_hostname }}
           {% for label in k3s_node_labels %}--node-label={{ label }} {% endfor %}
           {% for taint in k3s_node_taints %}--node-taint={{ taint }} {% endfor %}
-          --kubelet-arg=image-gc-high-threshold=70
-          --kubelet-arg=image-gc-low-threshold=50
+          {% for arg in k3s_kubelet_args %}--kubelet-arg={{ arg }} {% endfor %}
       no_log: true  # K3S_TOKEN is in the environment
 
     - name: Ensure k3s-agent is started and enabled
@@ -170,6 +175,14 @@
       # In --check mode the install step is skipped, so the unit doesn't
       # exist yet and `service` errors. Real runs hit this normally.
       when: not ansible_check_mode
+
+    - name: Mark this worker as join-attempted for the verify play
+      # The verify play loops over the whole k3s_workers group; this fact
+      # scopes it to workers actually reached in THIS run — e.g. a converge
+      # limited to `-l mirdain,gondor` while samwise is offline must not
+      # fail verification on the absent host.
+      ansible.builtin.set_fact:
+        k3s_join_attempted: true
 
 - name: Verify the join from the server
   hosts: gondor
@@ -195,7 +208,10 @@
       delay: 5
       until: node_ready.stdout == "True"
       loop: "{{ groups['k3s_workers'] }}"
-      when: not ansible_check_mode
+      # k3s_join_attempted scopes verification to workers reached in this
+      # run (set at the end of Play 2) — limited runs and offline workers
+      # are skipped rather than failed.
+      when: not ansible_check_mode and (hostvars[item].k3s_join_attempted | default(false))
 
     - name: Read the worker node's labels for assertion
       ansible.builtin.command:
@@ -210,7 +226,7 @@
       register: node_labels
       changed_when: false
       loop: "{{ groups['k3s_workers'] }}"
-      when: not ansible_check_mode
+      when: not ansible_check_mode and (hostvars[item].k3s_join_attempted | default(false))
 
     - name: Assert expected labels are present on each worker
       ansible.builtin.assert:
@@ -222,7 +238,8 @@
       loop: "{{ node_labels.results }}"
       loop_control:
         label: "{{ item.item }}"
-      when: not ansible_check_mode
+      # Skipped loop items (workers not verified this run) have no stdout.
+      when: not ansible_check_mode and (item is not skipped)
 
     - name: Show the cluster as it stands now
       ansible.builtin.command: k3s kubectl get nodes -o wide

@@ -29,3 +29,20 @@ tailscale_advertise_routes:
 wol_targets:
   - name: earendil
     mac: "b8:fb:b3:cb:ef:50"
+
+# --- k3s node identity (install-k3s-agent.yaml) ---
+# Formerly play-level vars in install-k3s-agent.yaml, hardcoded when samwise
+# was the only worker; lifted to host_vars when mirdain (GPU worker) joined
+# with a different role/taint. Values unchanged from the original play.
+k3s_node_labels:
+  - "homelab.vingilot.internal/host=samwise"
+  - "homelab.vingilot.internal/role=worker"
+# NoSchedule taint keeps amd64-only HelmReleases off the arm64 Pi; arm64
+# workloads (Pi-hole, Headscale, watering) add a matching toleration.
+k3s_node_taints:
+  - "homelab.vingilot.internal/role=pi:NoSchedule"
+# kubelet image-gc thresholds lowered (70/50 vs default 85/80) to reduce
+# SD-card wear while still on SD + WiFi; revisit on USB-SSD migration.
+k3s_kubelet_args:
+  - "image-gc-high-threshold=70"
+  - "image-gc-low-threshold=50"

@@ -50,6 +50,9 @@
 - name: Prepare the anduril LXC (host side)
   import_playbook: setup-anduril-lxc.yaml
 
+- name: Prepare the mirdain GPU-worker LXC (host side)
+  import_playbook: setup-mirdain-lxc.yaml
+
 - name: Pin the uplink NIC + Wake-on-LAN
   import_playbook: setup-earendil-network.yaml
 

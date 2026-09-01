@@ -24,6 +24,11 @@ all:
         # is in site-earendil.yaml (setup-anduril-lxc.yaml); the in-guest session
         # is setup-anduril-session.yaml. See descriptions/anduril.md.
         anduril: {}
+        # mirdain is CT 143 — the GPU-worker k3s LXC, sharing the 9070 XT with
+        # anduril for AI workloads (ComfyUI, llama-swap). Host-side prep is
+        # setup-mirdain-lxc.yaml (via site-earendil.yaml); in-guest converge +
+        # cluster join is site-mirdain.yaml. See descriptions/mirdain.md.
+        mirdain: {}
     proxmox_hosts:
       hosts:
         earendil: {}
@@ -46,6 +51,7 @@ all:
         samwise: {}
         eregion: {}
         anduril: {}
+        mirdain: {}
     # Debian-family hosts that should receive automated security updates.
     # Excludes earendil (Proxmox host — kernel upgrades need manual care).
     # anduril (gaming LXC) is included with no holds — it shares the host kernel,
@@ -62,9 +68,13 @@ all:
         samwise: {}
         eregion: {}
         anduril: {}
+        mirdain: {}
     # Hosts that join gondor's k3s cluster as workers via the
     # install-k3s-agent.yaml playbook. gondor itself is the single-node
     # server and is intentionally NOT in this group.
     k3s_workers:
       hosts:
         samwise: {}
+        # mirdain (CT 143) — amd64 GPU worker, tainted role=gpu:NoSchedule.
+        # Node identity (labels/taints/kubelet args) lives in host_vars.
+        mirdain: {}
