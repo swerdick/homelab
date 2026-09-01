@@ -1,0 +1,20 @@
+---
+# Installs nfs-common on the k3s nodes so the kubelet can mount NFS-backed PVs
+# (nfs-subdir-external-provisioner volumes + the static /bulk PVs). Without
+# it, pods sit in ContainerCreating with "mount program didn't pass remote
+# address" errors.
+#
+# Lifted out of setup-k3s-pv-storage.yaml (where it was a gondor-only play)
+# when mirdain became the second NFS client — the ROADMAP "generalize the NFS
+# client install" item. Idempotent; targets only the k3s nodes, so
+# unrestricted runs are no-ops everywhere else.
+
+- name: Install NFS client tools on the k3s nodes
+  hosts: gondor:mirdain
+  tasks:
+    - name: Ensure nfs-common is installed
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+        update_cache: true
+        cache_valid_time: 3600

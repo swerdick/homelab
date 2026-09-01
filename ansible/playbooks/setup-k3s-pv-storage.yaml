@@ -2,7 +2,9 @@
 # Sets up the storage substrate for k3s-PV-style NFS exports:
 #   1. Creates the ZFS dataset (scratch/k3s-pvs on earendil, 200G quota)
 #   2. Bind-mounts it into the nfs LXC at /scratch/k3s-pvs
-#   3. Installs nfs-common on gondor so the kubelet can mount NFS PVs
+#
+# Installing nfs-common on the k3s nodes moved to install-nfs-client.yaml
+# (it was a gondor-only play here) when mirdain became the second NFS client.
 #
 # Adding the dataset to /etc/exports is a SEPARATE concern, owned by
 # ansible/playbooks/manage-nfs-exports.yaml — that playbook templates
@@ -57,29 +59,3 @@
       # PVE way to apply config changes without dropping ZFS state.
       ansible.builtin.command: "pct reboot {{ nfs_lxc_id }}"
       changed_when: true
-
-
-- name: Install NFS client tools on the k3s host
-  # The kubelet on gondor needs `mount.nfs` from nfs-common to mount NFS-backed
-  # PVs; without it, pods using nfs-subdir-external-provisioner sit in
-  # ContainerCreating with "mount program didn't pass remote address" errors.
-  hosts: gondor
-  # Wait for the nfs LXC to come back up after the bind-mount restart in
-  # Play 1 — gondor itself doesn't restart, but if the LXC is mid-reboot
-  # the kubelet's existing NFS mounts are briefly unavailable. (Not strictly
-  # needed for the apt install step, but good hygiene.)
-  pre_tasks:
-    - name: Wait for the nfs LXC to be reachable
-      ansible.builtin.wait_for:
-        host: nfs.vingilot.internal
-        port: 2049
-        timeout: 120
-        delay: 5
-
-  tasks:
-    - name: Ensure nfs-common is installed
-      ansible.builtin.apt:
-        name: nfs-common
-        state: present
-        update_cache: true
-        cache_valid_time: 3600

@@ -4,7 +4,7 @@
 k3s_version := "v1.34.6+k3s1"
 
 # All Debian-based LXCs on earendil
-debian_lxcs := "120 121 130 131 141 142"
+debian_lxcs := "120 121 130 131 141 142 143"
 
 # List all available recipes
 default:
@@ -180,6 +180,35 @@ check-reboots:
     echo
     echo "=== gondor ==="
     ssh gondor 'test -f /var/run/reboot-required && cat /var/run/reboot-required.pkgs || echo "no reboot needed"'
+
+# --- GPU node (mirdain) ---
+
+# Hand the GPU to anduril for a heavy gaming session: cordon mirdain and evict
+# the GPU pods (ComfyUI/llama-swap go Pending — their Flux Kustomization is
+# wait:false precisely so this never wedges `apps`). VRAM frees on pod exit;
+# mirdain's RAM ceiling stays allocated-but-idle. Use gpu-stop-mirdain instead
+# if the session also needs the RAM back.
+gpu-gaming-mode:
+    kubectl cordon mirdain
+    kubectl drain mirdain --ignore-daemonsets --delete-emptydir-data --timeout=120s
+    @echo "GPU handed to anduril. Run 'just gpu-ai-mode' when done."
+
+# Return the GPU to the k3s worker: uncordon; the GPU pods reschedule.
+gpu-ai-mode:
+    kubectl uncordon mirdain
+    @echo "mirdain schedulable again. Watch: kubectl get pods -A -o wide --field-selector spec.nodeName=mirdain"
+
+# Full stop: also releases mirdain's 16G RAM ceiling for maximum gaming
+# headroom. The node goes NotReady; pods recover on the next start. The
+# leading '-' tolerates an already-cordoned/drained (or unreachable) node.
+gpu-stop-mirdain:
+    -kubectl cordon mirdain
+    -kubectl drain mirdain --ignore-daemonsets --delete-emptydir-data --timeout=120s
+    ssh root@earendil 'pct stop 143'
+
+gpu-start-mirdain:
+    ssh root@earendil 'pct start 143'
+    kubectl uncordon mirdain
 
 # --- CA / TLS ---
 

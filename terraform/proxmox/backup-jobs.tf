@@ -35,7 +35,9 @@ resource "proxmox_backup_job" "nightly_guests" {
   # tolerable in this window — see the ROADMAP oddities entry). Offsite
   # stays aglarond restic, which ships /bulk/pbs to B2.
   storage = "main"
-  vmid    = ["117", "120", "121", "131", "140", "141", "142"]
+  # 143 (mirdain): rootfs only — its mp0/mp1 bind mounts carry backup=0
+  # (containerd image store + re-downloadable model weights).
+  vmid    = ["117", "120", "121", "131", "140", "141", "142", "143"]
   enabled = true
   # 30 MiB/s read cap (KiB/s) so the first full pass and repeat-missed
   # catch-up runs stay gentle even when they collide with an interactive

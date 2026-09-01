@@ -1,0 +1,21 @@
+---
+# k3s version mirdain's agent installs. MUST match gondor's server version
+# (canonical source: host_vars/gondor.yaml); install-k3s-agent.yaml's
+# pre-flight asserts this at join time. Cluster upgrade flow: bump gondor
+# first via a deliberate server-upgrade procedure, then the workers.
+k3s_version: v1.34.6+k3s1
+
+# --- k3s node identity (install-k3s-agent.yaml) ---
+# gpu role + NoSchedule taint: only workloads that explicitly tolerate the GPU
+# node land here (ComfyUI, llama-swap). Everything else stays on gondor, and
+# `just gpu-gaming-mode` (cordon + drain) hands the card to the anduril gaming
+# CT for heavy sessions.
+k3s_node_labels:
+  - "homelab.vingilot.internal/host=mirdain"
+  - "homelab.vingilot.internal/role=gpu"
+k3s_node_taints:
+  - "homelab.vingilot.internal/role=gpu:NoSchedule"
+# No kubelet overrides: the image store is a 100G ZFS dataset (bind-mounted at
+# /var/lib/rancher), so the default image-gc thresholds (85/80) are right —
+# the 70/50 values are a samwise SD-card concern, not a house default.
+k3s_kubelet_args: []
