@@ -171,15 +171,21 @@ spec:
             cpu: 100m
             memory: 512Mi
           limits:
-            # Raised 512Mi -> 1Gi (2026-09-01): the distribution registry was
-            # OOMKilled 25x in 28d at 512Mi — reliably during proxy-cache blob
-            # persists (exit 137 at the exact second harbor-core logged
-            # "connection reset by peer" -> 502 -> "manifest list doesn't
-            # contain any pushed manifest", leaving artifacts uncached and
-            # unscannable). Multi-GB AI images (ComfyUI ~13.6GB) made the
-            # ceiling routine to hit. Same failure class + fix as the barman
-            # sidecar (PR #39).
-            memory: 1Gi
+            # Raised 512Mi -> 1Gi -> 4Gi (2026-09-01): the distribution
+            # registry was OOMKilled 25x in 28d at 512Mi, then again at 1Gi
+            # within minutes — always during proxy-cache blob persists (exit
+            # 137 at the exact second harbor-core logs "connection reset by
+            # peer" -> 502 -> "manifest list doesn't contain any pushed
+            # manifest", leaving artifacts uncached and unscannable). Root
+            # cause is structural, not a leak: blob writes land on the
+            # NFS-backed PVC, NFS doesn't participate in cgroup writeback
+            # throttling, so dirty page-cache accumulates against this limit
+            # un-throttled while a multi-GB layer streams in. Any fixed limit
+            # can lose that race; 4Gi is the deliberate compromise (keep an
+            # explicit ceiling, ~4x headroom over the largest observed burst)
+            # over removing the limit. If OOMs recur here, the next lever is
+            # write-path speed or no-limit — not another bump.
+            memory: 4Gi
       controller:
         resources:
           requests:
