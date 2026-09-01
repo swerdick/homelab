@@ -174,3 +174,17 @@ resource "harbor_garbage_collection" "main" {
   # sweep stays off so it can never race an index's child manifests.
   delete_untagged = false
 }
+
+# --- Scan-all: weekly re-scan of everything cached ---------------------------
+#
+# Auto-scan-on-push only covers artifacts as they ARRIVE — Security Hub
+# showed 5 of 39 artifacts scanned before this landed — and existing scan
+# results go stale as new CVEs publish against old reports. Sunday 16:00 UTC:
+# the day AFTER Saturday's retention (16:00) + GC (17:00), so the scan-all
+# covers the pruned survivors, inside the fleet's awake band. NOTE: the
+# provider's documented values ("daily"/"weekly") build midnight crons that
+# sit inside the fleet's off-window and would never fire; a raw 6-field cron
+# is passed through as a Custom schedule instead.
+resource "harbor_interrogation_services" "scan_all" {
+  vulnerability_scan_policy = "0 0 16 * * 0"
+}
