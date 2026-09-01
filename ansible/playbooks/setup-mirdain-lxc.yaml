@@ -25,6 +25,9 @@
 #      stays anduril's) and the k3s-in-LXC requirements (kmsg, /dev/net/tun,
 #      proc:rw sys:rw, apparmor unconfined, cleared cap.drop), plus features
 #      and the two bind mounts.
+#   5. The smb LXC's mp6 bind of the same dataset — smb binds /bulk datasets
+#      individually, so without this the models/outputs are invisible to the
+#      Mac-facing `bulk` share.
 #
 # 143.conf changes only take effect on a CT restart; the handler warns rather
 # than auto-rebooting (a reboot drains a live k3s node — operator-timed, but
@@ -142,9 +145,36 @@
         - "lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file"
         - "lxc.mount.entry: /dev/kmsg dev/kmsg none bind,optional,create=file"
         - "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,optional,create=file"
-        - "lxc.mount.auto: proc:rw sys:rw"
-        - "lxc.apparmor.profile: unconfined"
-        - "lxc.cap.drop:"
+      notify: Warn CT config changed
+
+    # Singleton lxc.* keys get their own regexp-anchored tasks — the loop
+    # above is exact-line idempotent, which is fine for the legitimately
+    # repeated keys (devices.allow / mount.entry) but wrong for singletons:
+    # PVE rewrites the conf on any API change (e.g. the TF description push)
+    # and re-emits `lxc.cap.drop: ` WITH a trailing space, so an exact-line
+    # match would append a duplicate on the next run (last-one-wins churn).
+    - name: Mount proc/sys read-write (kubelet + containerd need both)
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        regexp: '^lxc\.mount\.auto:'
+        line: "lxc.mount.auto: proc:rw sys:rw"
+      notify: Warn CT config changed
+
+    - name: Run the CT unconfined (k3s-in-LXC requirement)
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        regexp: '^lxc\.apparmor\.profile:'
+        line: "lxc.apparmor.profile: unconfined"
+      notify: Warn CT config changed
+
+    - name: Clear the default capability drop list (k3s-in-LXC requirement)
+      # The line value is empty; PVE's canonical rewrite is "lxc.cap.drop: "
+      # (trailing space) — write exactly that so ansible and PVE agree and
+      # neither churns the other.
+      ansible.builtin.lineinfile:
+        path: "/etc/pve/lxc/{{ mirdain_ctid }}.conf"
+        regexp: '^lxc\.cap\.drop:\s*$'
+        line: "lxc.cap.drop: "
       notify: Warn CT config changed
 
     - name: Bind-mount the k3s image store into the CT (mp0)
@@ -168,7 +198,28 @@
         line: "mp1: /bulk/ai-models,mp=/bulk/ai-models,shared=1,backup=0"
       notify: Warn CT config changed
 
+    - name: Bind-mount the AI models dataset into the smb LXC (mp6)
+      # The smb CT binds /bulk datasets individually (mp1-mp5) — its samba
+      # `bulk` share serves /bulk, but a new child dataset is invisible there
+      # until it gets its own mpN bind. This is what makes models/outputs
+      # browsable from the Mac. Auto-reboot handler mirrors the nfs-LXC
+      # pattern in setup-k3s-pv-storage.yaml (brief SMB blip on first apply).
+      # Unprivileged CT + gid-10000 idmap line up with the dataset's
+      # root:10000 2770 ownership, same as /bulk/games.
+      ansible.builtin.lineinfile:
+        path: /etc/pve/lxc/121.conf
+        regexp: '^mp6:'
+        line: "mp6: /bulk/ai-models,mp=/bulk/ai-models,shared=1"
+        insertafter: '^mp[0-9]+:'
+      notify: Restart smb LXC
+
   handlers:
+    - name: Restart smb LXC
+      # Reboot rather than start/stop — `pct reboot` is the documented PVE
+      # way to apply config changes.
+      ansible.builtin.command: pct reboot 121
+      changed_when: true
+
     - name: Warn CT config changed
       ansible.builtin.debug:
         msg: |
