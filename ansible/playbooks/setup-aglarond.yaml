@@ -75,6 +75,9 @@
       loop:
         - { slot: mp8, src: /bulk/ai-models/comfyui-user, dst: /srv/comfyui-user }
         - { slot: mp9, src: /bulk/ai-models/comfyui/loras, dst: /srv/comfyui-loras }
+        # extra/loras = the Finder-dropped (smb-writable) LoRA tree — the
+        # curated set most worth protecting against upstream deletion.
+        - { slot: mp10, src: /bulk/ai-models/extra/loras, dst: /srv/comfyui-extra-loras }
       notify: Warn CT config changed
 
   handlers:
@@ -147,6 +150,7 @@
       loop:
         - { file: includes-backups.txt, line: /srv/comfyui-user }
         - { file: includes-media.txt, line: /srv/comfyui-loras }
+        - { file: includes-media.txt, line: /srv/comfyui-extra-loras }
 
     - name: Throttle restic so backups yield to interactive workloads
       # CPUQuota is the effective pacing lever: restic's chunk/hash CPU
