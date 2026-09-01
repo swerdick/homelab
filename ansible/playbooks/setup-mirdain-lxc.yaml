@@ -91,6 +91,29 @@
         mode: "2770"
         state: directory
 
+    - name: Create the Finder-writable extra model tree
+      # The ComfyUI image re-chowns every dir it manages to root:root 0755 on
+      # boot, so its tree is smb-READ-only. This tree is the drag-drop
+      # answer: never mounted over the image's managed dirs, wired into
+      # ComfyUI via --extra-model-paths-config instead, so nothing ever
+      # resets it. Ownership matches the fleet's smb-writable convention
+      # (documents/media): uid 101000 = the smb CT's mapped smbuser,
+      # gid 10000 + setgid so drops inherit the shares group.
+      ansible.builtin.file:
+        path: "/{{ models_dataset }}/extra/{{ item }}"
+        owner: "101000"
+        group: "10000"
+        mode: "2770"
+        state: directory
+      loop:
+        - ""
+        - checkpoints
+        - loras
+        - vae
+        - controlnet
+        - embeddings
+        - upscale_models
+
     # --- host kernel modules for the shared-kernel k3s node ---
     # gondor (a VM) loads its own modules; an LXC cannot modprobe, so the host
     # must have these resident before k3s-agent starts inside the CT.

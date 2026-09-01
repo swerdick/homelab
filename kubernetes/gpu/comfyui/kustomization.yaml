@@ -12,3 +12,4 @@ resources:
   - service.yaml
   - comfyui-basic-auth.yaml
   - comfyui-route.yaml
+  - extra-model-paths.yaml

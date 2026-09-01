@@ -52,10 +52,12 @@ model weights to the rpool SSD.
 - rootfs 24G on local-zfs: OS + k3s state only
 - mp0 scratch/mirdain-k3s (100G) at /var/lib/rancher: containerd image store
 - mp1 bulk/ai-models (150G) at /bulk/ai-models: model weights + generation
-  outputs. Browsable/readable via the smb `bulk` share, but NOT smb-writable:
-  the ComfyUI image re-chowns its dirs root:root 0755 every boot (defeats
-  setgid inheritance) — drop models via ComfyUI-Manager or rsync to
-  root@earendil instead. comfyui-user + loras are restic-protected
-  (aglarond mp8/mp9); checkpoints deliberately not (re-downloadable).
+  outputs. The image-managed dirs (comfyui/, outputs/, comfyui-user/) are
+  smb-READ-only — the image re-chowns them root:root 0755 every boot. The
+  `extra/` tree (smbuser:shares, ansible-owned, wired in via
+  --extra-model-paths-config) is the Finder drag-drop target for
+  checkpoints/loras/etc. comfyui-user + both loras trees are
+  restic-protected (aglarond mp8-mp10); checkpoints deliberately not
+  (re-downloadable).
   Quota trimmed from the planned 300G: bulk had 267G free at creation
   (2026-08).

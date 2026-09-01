@@ -41,12 +41,13 @@ spec:
             # README (not a spoof; keeps ROCm from misdetecting).
             - name: HSA_OVERRIDE_GFX_VERSION
               value: "12.0.1"
-            # Extra ComfyUI flags. Known-useful if trouble strikes:
-            # "--disable-smart-memory" (VRAM fragmentation), and add
+            # Registers the Finder-writable extra model tree (see
+            # extra-model-paths.yaml). Other known-useful flags if trouble
+            # strikes: "--disable-smart-memory" (VRAM fragmentation);
             # "--listen" if the app ever binds 127.0.0.1 only (readiness
             # would fail — the image's launcher listens on 0.0.0.0 today).
             - name: CLI_ARGS
-              value: ""
+              value: "--extra-model-paths-config /config-extra/extra_model_paths.yaml"
           ports:
             - name: http
               containerPort: 8188
@@ -76,6 +77,14 @@ spec:
               mountPath: /root/ComfyUI/input
             - name: userdir
               mountPath: /root/ComfyUI/user
+            - name: extra-models
+              # ro: the pod only reads models from here; keeps the image's
+              # boot-time chown script from ever normalizing the one tree
+              # that must stay smb-writable.
+              mountPath: /root/ComfyUI/extra-models
+              readOnly: true
+            - name: extra-paths-config
+              mountPath: /config-extra
             - name: shm
               mountPath: /dev/shm
           resources:
@@ -145,6 +154,16 @@ spec:
           hostPath:
             path: /bulk/ai-models/comfyui-user
             type: DirectoryOrCreate
+        # Directory (not OrCreate): ansible owns this tree's existence AND
+        # its smbuser:shares ownership — kubelet must never create it as
+        # root:root.
+        - name: extra-models
+          hostPath:
+            path: /bulk/ai-models/extra
+            type: Directory
+        - name: extra-paths-config
+          configMap:
+            name: comfyui-extra-paths
         # PyTorch dataloaders want more than the 64Mi default /dev/shm.
         # Memory-medium counts against the container's 12Gi limit.
         - name: shm

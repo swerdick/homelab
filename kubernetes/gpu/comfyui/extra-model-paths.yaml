@@ -1,0 +1,23 @@
+---
+# ComfyUI extra-model-paths config: registers /root/ComfyUI/extra-models
+# (the hostPath of /bulk/ai-models/extra) as a second model search tree.
+# That tree exists so models can be drag-dropped from the Mac over smb:
+# the image re-chowns its OWN model dirs to root:root 0755 on every boot
+# (smb-read-only), while this tree is never touched by the image and is
+# owned smbuser:shares. Wired in via CLI_ARGS
+# --extra-model-paths-config in the Deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: comfyui-extra-paths
+  namespace: comfyui
+data:
+  extra_model_paths.yaml: |
+    extra:
+      base_path: /root/ComfyUI/extra-models/
+      checkpoints: checkpoints/
+      loras: loras/
+      vae: vae/
+      controlnet: controlnet/
+      embeddings: embeddings/
+      upscale_models: upscale_models/
