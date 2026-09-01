@@ -11,11 +11,11 @@
 # through (lxc.idmap) and putting the restic-media unit in that group. No host
 # permission loosening, no ACL second-system.
 #
-# Also codified here (2026-09-01): the ComfyUI backup slice — mp8/mp9 ro
-# binds of comfyui-user (hand-built workflows, nightly) and comfyui/loras
-# (curated downloads, weekly) + their include-file lines + the
-# restic-backups shares-group drop-in. Checkpoints deliberately excluded
-# (multi-GB, re-downloadable).
+# Also codified here (2026-09-01): the ComfyUI backup slice — mp8-mp10 ro
+# binds of comfyui-user (hand-built workflows, nightly), comfyui/loras
+# (Manager-downloaded, weekly), and extra/loras (Finder-dropped, weekly)
+# + their include-file lines + the restic-backups shares-group drop-in.
+# Checkpoints deliberately excluded (multi-GB, re-downloadable).
 #
 # Also codified here (added 2026-08-09): resource-control and schedule
 # drop-ins for all three restic units. The 02:00-03:00 UTC slots sat in
@@ -60,7 +60,7 @@
         - "lxc.idmap: g 10001 110001 55535"
       notify: Warn CT config changed
 
-    - name: Bind-mount the ComfyUI user data + LoRAs for offsite backup (mp8/mp9)
+    - name: Bind-mount the ComfyUI user data + LoRA trees for offsite backup (mp8-mp10)
       # comfyui-user holds hand-built workflows — tiny, irreplaceable,
       # deliberately excluded from vzdump (the ai-models dataset is backup=0)
       # so restic is its only protection. loras protects curated downloads
