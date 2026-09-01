@@ -112,6 +112,12 @@ spec:
         enabled: true
         storageClassName: local-path
         size: 2Gi
+      # Community panels installed at pod start (GF_INSTALL_PLUGINS).
+      # polystat renders the fleet-status dashboard's per-host/per-namespace
+      # hex grids (uid homelab-fleet-status). Version pinned; the MCP
+      # service account lacks plugins:install, so the chart owns this.
+      plugins:
+        - grafana-polystat-panel 2.1.16
       # Provision Loki as an additional datasource. In-cluster URL — no
       # auth needed (basic auth is enforced at the traefik edge for
       # external clients only).
