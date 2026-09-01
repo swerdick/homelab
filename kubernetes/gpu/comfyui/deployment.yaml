@@ -122,9 +122,13 @@ spec:
         # /bulk/ai-models is the ZFS dataset bind-mounted into the mirdain
         # LXC (path identity host -> CT -> pod). First hostPath data volumes
         # in this repo — the documented exception: node-pinned GPU app, no
-        # NFS hop for multi-GB model reads. The parent's 2770 root:10000
-        # setgid means kubelet-created subdirs inherit gid 10000, keeping
-        # everything readable over the smb `bulk` share.
+        # NFS hop for multi-GB model reads. Ownership reality (verified
+        # 2026-09-01): the image's startup script re-chowns its dirs to
+        # root:root 0755 on every boot, defeating the parent's setgid
+        # inheritance — so the smb `bulk` share can BROWSE/READ this tree
+        # (world-readable) but not write into it. Model drops happen via
+        # ComfyUI-Manager in the UI or rsync to root@earendil; don't add a
+        # perms-enforcement task — it would fight the image every restart.
         - name: models
           hostPath:
             path: /bulk/ai-models/comfyui

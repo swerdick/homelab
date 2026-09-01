@@ -116,6 +116,14 @@ resource "proxmox_virtual_environment_container" "aglarond" {
       timeout_delete,
       timeout_start,
       timeout_update,
+      # mount_point: bpg marks `volume` ForceNew, so a host-side mpN addition
+      # (ansible-managed binds) plans a destroy/recreate of the whole CT.
+      # This EXACT gap destroyed aglarond on 2026-09-01 (restored from PBS
+      # within the hour) when mp8/mp9 were added for the ComfyUI backup
+      # slice — the ignore existed on anduril/mirdain but was never
+      # backported here. The mount_point blocks below are desired-state
+      # documentation only.
+      mount_point,
     ]
   }
 
