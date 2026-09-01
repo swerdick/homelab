@@ -35,9 +35,9 @@ resource "harbor_registry" "ghcr" {
 
 resource "harbor_registry" "quay" {
   name          = "quay"
-  provider_name = "quay"
+  provider_name = "docker-registry"
   endpoint_url  = "https://quay.io"
-  description   = "Quay.io proxy."
+  description   = "Quay.io proxy. Generic docker-registry adapter, NOT the quay type: this Harbor rejects proxy-cache projects on the quay adapter (400 'unsupported registry type quay', observed 2026-09-01 via both API and TF); quay.io speaks plain OCI v2 so the generic adapter proxies it fine — same approach as registry-k8s."
 }
 
 resource "harbor_registry" "registry_k8s" {
@@ -62,7 +62,7 @@ resource "harbor_project" "dockerhub" {
   vulnerability_scanning = true
   auto_sbom_generation   = false
   storage_quota          = -1
-  registry_id            = harbor_registry.dockerhub.id
+  registry_id            = harbor_registry.dockerhub.registry_id
 }
 
 resource "harbor_project" "ghcr" {
@@ -71,7 +71,7 @@ resource "harbor_project" "ghcr" {
   vulnerability_scanning = true
   auto_sbom_generation   = false
   storage_quota          = -1
-  registry_id            = harbor_registry.ghcr.id
+  registry_id            = harbor_registry.ghcr.registry_id
 }
 
 resource "harbor_project" "quay" {
@@ -80,7 +80,7 @@ resource "harbor_project" "quay" {
   vulnerability_scanning = true
   auto_sbom_generation   = false
   storage_quota          = -1
-  registry_id            = harbor_registry.quay.id
+  registry_id            = harbor_registry.quay.registry_id
 }
 
 resource "harbor_project" "registry_k8s" {
@@ -89,7 +89,7 @@ resource "harbor_project" "registry_k8s" {
   vulnerability_scanning = true
   auto_sbom_generation   = false
   storage_quota          = -1
-  registry_id            = harbor_registry.registry_k8s.id
+  registry_id            = harbor_registry.registry_k8s.registry_id
 }
 
 # --- Hosted projects (we push, not proxy-cache) -----------------------------
@@ -112,4 +112,65 @@ resource "harbor_project" "minecraft" {
   vulnerability_scanning = true
   auto_sbom_generation   = false
   storage_quota          = -1
+}
+
+# --- Cache lifecycle: retention + garbage collection ------------------------
+#
+# Proxy caches grow monotonically without this — a single AI image is ~14GB
+# per date tag (the ComfyUI cache that motivated PR #45/#46). One policy
+# shape for every proxy project, rules OR'd (union retained, rest pruned):
+#   - keep the 3 most-recently-PULLED artifacts per repo
+#   - keep anything pulled within the last 30 days
+# i.e. always the active 3, plus a 30-day grace so rapid iteration never
+# loses an image mid-debug. Untagged artifacts are in scope — proxy caches
+# hold untagged child manifests. Retention only unlinks; the GC run an hour
+# later returns the disk space. Sat 16:00/17:00 UTC sits in the fleet's
+# awake band clear of the backup lanes; a Saturday the fleet never wakes
+# defers a week (cleanup, not backup — no catch-up needed). minecraft
+# (hosted, pushed) deliberately has NO policy: the mods are a system of
+# record, not a cache.
+
+locals {
+  proxy_cache_projects = {
+    dockerhub    = harbor_project.dockerhub.project_id
+    ghcr         = harbor_project.ghcr.project_id
+    quay         = harbor_project.quay.project_id
+    registry_k8s = harbor_project.registry_k8s.project_id
+  }
+}
+
+resource "harbor_retention_policy" "proxy_cache" {
+  for_each = local.proxy_cache_projects
+
+  scope    = each.value
+  schedule = "0 0 16 * * 6"
+
+  lifecycle {
+    # goharbor's flavor of the bpg state-fill quirk: create sends the numeric
+    # project id, but Read stores scope back as "/projects/N" — a perpetual
+    # ForceNew replace loop without this. scope is pure linkage and never
+    # legitimately changes after creation (one policy per project, forever).
+    ignore_changes = [scope]
+  }
+
+  rule {
+    most_recently_pulled = 3
+    repo_matching        = "**"
+    tag_matching         = "**"
+    untagged_artifacts   = true
+  }
+
+  rule {
+    n_days_since_last_pull = 30
+    repo_matching          = "**"
+    tag_matching           = "**"
+    untagged_artifacts     = true
+  }
+}
+
+resource "harbor_garbage_collection" "main" {
+  schedule = "0 0 17 * * 6"
+  # Retention owns artifact lifecycle (incl. untagged); GC's own untagged
+  # sweep stays off so it can never race an index's child manifests.
+  delete_untagged = false
 }
