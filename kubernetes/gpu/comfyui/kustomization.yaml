@@ -1,0 +1,14 @@
+# ComfyUI — image generation on the mirdain GPU node (RX 9070 XT via ROCm).
+#
+# Raw manifests are the deliberate exception to the per-app-upstream-chart
+# convention: no first-party chart exists (checked 2026-08 — only
+# single-maintainer community charts and AMD's Instinct/KServe-shaped one),
+# and the GPU wiring (hostPath devices, node pinning) wants exact control.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - comfyui-basic-auth.yaml
+  - comfyui-route.yaml

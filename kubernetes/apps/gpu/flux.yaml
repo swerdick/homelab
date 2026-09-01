@@ -1,0 +1,32 @@
+# GPU workloads (ComfyUI, llama-swap) get their own Flux Kustomization with
+# wait:false — the yavanna precedent (kubernetes/apps/yavanna/source.yaml),
+# but PERMANENT by design rather than a temporary workaround: these pods pin
+# to mirdain, and mirdain is routinely cordoned/stopped for gaming sessions
+# (`just gpu-gaming-mode`), so a Pending GPU pod is normal operation, not an
+# error. Under the wait:true `apps` root, that Pending pod would burn the 5m
+# timeout every cycle and freeze apps' lastAppliedRevision.
+#
+# Trade-off accepted: this Kustomization reports Ready on apply, not on
+# workload health — GPU pod health is checked directly (kubectl get pods -n
+# comfyui / -n llm), not via `flux get kustomizations`.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gpu
+  namespace: flux-system
+spec:
+  interval: 10m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./kubernetes/gpu
+  prune: true
+  wait: false
+  # Nested Kustomizations don't inherit apps.yaml's decryption block; the
+  # comfyui basic-auth Secret (and future llm secrets) need it here.
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

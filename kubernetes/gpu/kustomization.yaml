@@ -1,0 +1,7 @@
+# Workload tree for the mirdain GPU node, applied by the `gpu` Flux
+# Kustomization (kubernetes/apps/gpu/flux.yaml — wait:false, see the comment
+# there). Everything under here must carry the gpu nodeSelector + toleration.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - comfyui

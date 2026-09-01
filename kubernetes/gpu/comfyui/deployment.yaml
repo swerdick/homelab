@@ -1,0 +1,149 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comfyui
+  namespace: comfyui
+spec:
+  replicas: 1
+  # One GPU + node-local state: never allow two pods to overlap during a
+  # rollout (the old pod's VRAM + hostPath dirs must be released first).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: comfyui
+  template:
+    metadata:
+      labels:
+        app: comfyui
+    spec:
+      # role= rather than host= so a hypothetical second GPU node inherits
+      # the workload without a manifest change.
+      nodeSelector:
+        homelab.vingilot.internal/role: gpu
+      tolerations:
+        - key: homelab.vingilot.internal/role
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: comfyui
+          # Digest-pinned (immutable — the tag is human-readable documentation,
+          # the digest is what containerd verifies). Only maintained image that
+          # documents the RX 9070 XT (gfx1201): ROCm 7 + matching PyTorch,
+          # ComfyUI-Manager bundled, runs as root, serves on 8188. AMD's
+          # first-party rocm/comfyui is the fallback — promote it if its docs
+          # ever list consumer RDNA4. To bump: pick a newer rocm7-YYYYMMDD tag,
+          # fetch its digest from the Docker Hub tags API, update both here.
+          image: docker.io/yanwk/comfyui-boot:rocm7-20260826@sha256:524afc652f932e4cf7daaceee6cf19277da7a9d3346f2559c61cd7f6a0834fd8
+          env:
+            # Identity value for gfx1201 — belt-and-braces per the image
+            # README (not a spoof; keeps ROCm from misdetecting).
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: "12.0.1"
+            # Extra ComfyUI flags. Known-useful if trouble strikes:
+            # "--disable-smart-memory" (VRAM fragmentation), and add
+            # "--listen" if the app ever binds 127.0.0.1 only (readiness
+            # would fail — the image's launcher listens on 0.0.0.0 today).
+            - name: CLI_ARGS
+              value: ""
+          ports:
+            - name: http
+              containerPort: 8188
+          securityContext:
+            # Privileged, deliberately: without a device plugin (skipped per
+            # the ROADMAP "Anduril Phase 2" design), runc's device cgroup
+            # denies hostPath char devices to unprivileged containers. The
+            # real isolation boundary is the privileged mirdain LXC + the
+            # gpu taint (only GPU apps land there); the upstream image runs
+            # as root regardless. If a non-root refactor ever happens, use
+            # the GID actually stamped on the device nodes — stat, don't
+            # assume (udev had stamped 991 while `render` was 993).
+            privileged: true
+          volumeMounts:
+            # Explicit device mounts even though privileged auto-exposes
+            # /dev — documents intent and survives a future non-privileged
+            # refactor.
+            - name: dri
+              mountPath: /dev/dri
+            - name: kfd
+              mountPath: /dev/kfd
+            - name: models
+              mountPath: /root/ComfyUI/models
+            - name: output
+              mountPath: /root/ComfyUI/output
+            - name: input
+              mountPath: /root/ComfyUI/input
+            - name: userdir
+              mountPath: /root/ComfyUI/user
+            - name: shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: 500m
+              memory: 4Gi
+            # SDXL peaks ~8-10Gi RSS, Flux fp8 up to ~12Gi. No CPU limit
+            # (house style — see jellyfin.yaml) so VAE decode can burst;
+            # mirdain's 16G CT ceiling is the backstop.
+            limits:
+              memory: 12Gi
+          startupProbe:
+            # First boot initializes bundled custom nodes; generous window
+            # (5 min), then the tighter readiness/liveness take over.
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            # Lenient: first-use ROCm kernel compiles and big model loads
+            # peg CPU/IO, but the aiohttp server keeps answering during
+            # generations — this only fires on a truly dead process.
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 4
+      volumes:
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        # /bulk/ai-models is the ZFS dataset bind-mounted into the mirdain
+        # LXC (path identity host -> CT -> pod). First hostPath data volumes
+        # in this repo — the documented exception: node-pinned GPU app, no
+        # NFS hop for multi-GB model reads. The parent's 2770 root:10000
+        # setgid means kubelet-created subdirs inherit gid 10000, keeping
+        # everything readable over the smb `bulk` share.
+        - name: models
+          hostPath:
+            path: /bulk/ai-models/comfyui
+            type: DirectoryOrCreate
+        - name: output
+          hostPath:
+            path: /bulk/ai-models/outputs/comfyui
+            type: DirectoryOrCreate
+        - name: input
+          hostPath:
+            path: /bulk/ai-models/inputs/comfyui
+            type: DirectoryOrCreate
+        - name: userdir
+          hostPath:
+            path: /bulk/ai-models/comfyui-user
+            type: DirectoryOrCreate
+        # PyTorch dataloaders want more than the 64Mi default /dev/shm.
+        # Memory-medium counts against the container's 12Gi limit.
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
