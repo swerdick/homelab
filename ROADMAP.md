@@ -42,6 +42,10 @@ CI now validates what is *in git* (encryption, pins, build validity); nothing en
 
 Roll out audit-first: policies in `Audit` mode, PolicyReports reviewed via Grafana, then promote the few worth hard-enforcing to `Enforce`. Audit-first matters on a one-person cluster — enforce-mode can fight you mid-incident, and the report data shows which rules would actually fire before anything blocks.
 
+### Forward-auth tier — oauth2-proxy + Keycloak for auth-less web UIs
+
+The SSO model today is two-tier: native-OIDC apps talk to Keycloak directly; everything else gets a Traefik basicAuth middleware (loki/prometheus/comfyui). A third tier would put **oauth2-proxy** (confidential OIDC client in the `vingilot` realm, TF-managed like the others) behind a Traefik **ForwardAuth** middleware, swapping in for basicAuth per-route — one Keycloak login, MFA-capable, group-gated via the existing `homelab-admins`/`homelab-readonly` mappers. Consumers that would ride it: ComfyUI (basic-auth today), the llama-swap UI when the local-LLM phase lands, and Jellyfin SSO (already noted as the future 4th tirion-CA consumer). Honest caveats from the ComfyUI evaluation: it's a new always-on component to operate; cookie-based SSO is hostile to curl/API clients (needs skip-auth paths or bearer support where automation calls the same endpoints); and it adds identity, not isolation — ComfyUI stays single-user behind any gate. Do it once, as its own effort, when a second consumer actually materializes.
+
 ## Observability
 
 ### Cert expiration alerting
@@ -243,6 +247,16 @@ Steps:
 
 ~30-45 min once the targets are clear.
 
+### NFS write-path tuning for k3s PVs
+
+Surfaced by the Harbor registry OOM saga (#45/#46): blob writes to the `nfs-scratch` PVC buffer as dirty page-cache that NFS can't writeback-throttle per-cgroup, and the underlying path is gondor → nfs LXC → single-HDD `scratch` pool with `sync` exports. The 4Gi registry ceiling absorbs the race for now; actual write-path levers, cheapest first:
+
+- **`rsize`/`wsize` 128K → 1M** in the nfs-provisioner StorageClass mountOptions + static PVs — safe, modest sequential-throughput win; only applies to volumes (re)mounted after the change.
+- **A second `async`-exported dataset + StorageClass for *reconstructible* PVCs only** (registry blobs, maybe Loki chunks) — the big write win without touching the sync guarantees under the CNPG Postgres volumes. Never flip the shared `/scratch/k3s-pvs` export to `async`: databases live there, and async + unclean power = corruption risk.
+- **SSD under the hot data** — the real fix if NFS write perf becomes a felt problem: an SSD-backed dataset (or pool) for `k3s-pvs`, or a SLOG if only sync latency hurts. Capacity decision (rpool is the everything-SSD), not a tuning flag.
+
+Reads are already the good case — the 8GiB ARC serves hot reads from RAM. No urgency; revisit if the registry ceiling gets hit again or PV-bound apps feel slow.
+
 ## Resilience & recovery
 
 ### DR game day — time the fresh-rebuild flow for real
@@ -268,10 +282,6 @@ PBS 3 → 4 follows its own ritual; deferred until summer 2026 since PBS 3.x has
 ### Alloy on erebor
 
 Pending erebor's trixie upgrade — Alloy via the Grafana apt repo wants newer libc than PBS 3 ships. Once that's done, erebor joins the alloy fleet.
-
-### Anduril Phase 2 — k3s GPU-worker LXC (AI/ROCm) sharing the amdgpu
-
-The gaming half of the amdgpu-sharing replatform shipped (see Completed: the gaming LXC + Sunshine, and the input resolution). The remaining half of the original vision is a **second** privileged LXC joined to gondor's k3s as a **GPU worker for AI/ROCm**, sharing the same card: `/dev/kfd` + `/dev/dri` into pods (skip the AMD device plugin), a GPU node label + taint, ROCm; cordon/drain hands the card to the gaming LXC for heavy sessions. Input-independent — unaffected by anything in the gaming-side work. Tradeoff: shared-kernel `amdgpu` trades VM isolation for simplicity (a GPU hang can wedge the host). Plan: `~/.claude/plans/squishy-humming-thunder.md`.
 
 ### Anduril emulation — reclaim staged storage (post-validation)
 
@@ -326,6 +336,10 @@ Running `--check --diff` unrestricted previews of the baseline plays before addi
 - **`setup-debian-base.yaml` drift**: `Set system default locale` shows `changed` on 4 hosts (locale file content differs), and `Set system timezone` shows `changed: [erebor]` (community.general.timezone normalizing `Etc/UTC` → `UTC` — cosmetic but listed for completeness). Same fix: run `setup-debian-base.yaml` unrestricted.
 
 Per `feedback_playbook_unrestricted_safety.md`, untargeted hosts should always show `changed=0` on a preview. Drift is the cost of not re-running unrestricted plays between edits; a periodic convergence pass keeps the rule honest.
+
+### setup-debian-base fails on erebor (chrony vs systemd-timesyncd)
+
+Surfaced 2026-09-01 by the mirdain onboarding's unrestricted `--check` preview: erebor (PBS on Bookworm) runs **chrony**, and `setup-debian-base.yaml`'s timesyncd tasks would remove it and install systemd-timesyncd — a real time-daemon swap on the backup host, and the enable-and-start task hard-fails in check mode (`Could not find the requested service systemd-timesyncd`), breaking the unrestricted-runnable rule. Decide one of: guard the timesyncd tasks to skip hosts running chrony (erebor keeps PBS's stock daemon), or deliberately converge erebor to timesyncd during the PBS 4 upgrade window. Until then, unrestricted previews report one erebor failure that isn't the target play's fault.
 
 ### Re-document PVE guest configs after recent ansible work
 
@@ -419,6 +433,7 @@ Worth doing if/when the worker-only limitations are concretely felt — don't pr
 
 ## Completed
 
+- **mirdain — GPU-worker k3s LXC + ComfyUI (AI-platform phases 1-2)** — CT 143 (privileged Trixie) joined gondor's k3s tainted `role=gpu:NoSchedule`, sharing the RX 9070 XT with anduril via `/dev/kfd`+`renderD129` hostPaths (device plugin deliberately skipped); node identity moved to host_vars in `install-k3s-agent.yaml`; ComfyUI live at comfyui.vingilot.internal (digest-pinned `rocm7` image, edge basic-auth, permanent `wait:false` gpu Flux tree, models/outputs on `bulk/ai-models` browsable over smb); `just gpu-gaming-mode`/`gpu-ai-mode` hand the card between AI and gaming. En route: Harbor registry OOM root-caused + fixed (512Mi→4Gi, NFS cgroup-writeback pathology — #43-#46).
 - **2026-08 backup overhaul** — descheduled from gaming hours + throttled, cut nightly guests over to PBS (metadata change detection, 7d/4w/6m), validated via eregion restore test 2026-08-12, deleted 261G of legacy tarballs + the two disabled legacy jobs, added the pvescheduler boot delay so power-on catch-ups don't race PBS readiness.
 
 Reverse-chronological — most recent first. One line each; `git log` carries the rest.
