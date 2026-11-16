@@ -45,6 +45,26 @@
           - dbus-x11
           - x11-xserver-utils
 
+    - name: Disable lightdm (cannot run in the VT-less CT; races the gaming session)
+      # xfce4 pulls in lightdm as its display manager. xrdp doesn't use one
+      # (sesman starts the X session), and in this VT-less LXC lightdm can never
+      # come up: at every boot it launched `X :0` ~6 times in ~5s, each dying in
+      # ~0.4s, before the unit failed. While an attempt lives it holds display :0
+      # -- in the same seconds the gaming session picks its X display numbers.
+      # Steam assumes its game X server is its own display + 1, so a stolen :0
+      # split the numbering and put every game on the wrong server (2026-11-15;
+      # see the KWin exec note in setup-anduril-session.yaml). Disable first:
+      # that drops the display-manager.service alias, which a mask alone leaves.
+      ansible.builtin.systemd:
+        name: lightdm.service
+        enabled: false
+        state: stopped
+
+    - name: Mask lightdm (a package upgrade's postinst would re-enable it)
+      ansible.builtin.systemd:
+        name: lightdm.service
+        masked: true
+
     - name: Disable light-locker (locks the xrdp session -> black screen)
       # xfce4 recommends light-locker, which auto-locks the RDP session on
       # connect (it can't authenticate against the xrdp seat -> black screen).
