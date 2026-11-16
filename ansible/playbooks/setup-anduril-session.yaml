@@ -481,7 +481,14 @@
               done
             ) &
           fi
-          exec kwin_wayland --xwayland /usr/local/bin/steam-bigpicture.sh
+          # --exit-with-session (not a plain startup app): KWin exits when the
+          # gamescope/Steam stack exits, so systemd restarts the WHOLE session
+          # (Restart=always below). As a startup app, Steam/gamescope could die
+          # (GPU reset, crash, Steam's own power menu) while KWin lived on as a
+          # bare black compositor on the TV -- the 2026-10-01 "black screen after
+          # idle": a host amdgpu SMU hang + reset killed gamescope, KWin stayed up,
+          # the unit stayed "active", and only a manual restart recovered it.
+          exec kwin_wayland --xwayland --exit-with-session /usr/local/bin/steam-bigpicture.sh
 
     - name: Install the Steam Big Picture launcher
       ansible.builtin.copy:
@@ -696,8 +703,14 @@
           ExecStartPre=+/usr/bin/install -d -o pseudo -g pseudo -m 700 /run/user/1000
           ExecStart=/usr/local/bin/anduril-session.sh
           ExecStop=/usr/local/bin/anduril-stop.sh
-          Restart=on-failure
-          RestartSec=5
+          # always, not on-failure: with --exit-with-session KWin exits with the
+          # session's status, and a clean exit (Steam's power menu, a game-less
+          # gamescope quit) must come back too -- the box is a console. Manual
+          # `systemctl stop` (just anduril-desktop-mode) is never restarted.
+          # 10s backoff: a GPU reset takes ~5s and its ring resets a few more;
+          # restarting into it just kills the new session again (2026-10-01).
+          Restart=always
+          RestartSec=10
           TimeoutStartSec=0
           TimeoutStopSec=30
 
