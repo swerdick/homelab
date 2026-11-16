@@ -266,6 +266,16 @@
       # /etc dirs the mapped root can't read are excluded rather than fought.
       # NOTE: this leaves the host's WireGuard private keys out of offsite
       # backup — deliberate for now; revisit if their recovery story changes.
+      #
+      # /srv/host-etc/pve: the bind of host /etc is not recursive, so the CT
+      # normally sees the empty directory beneath the pmxcfs mount and backs
+      # up nothing from it. When pve-cluster restarts while the CT is up (any
+      # host patch that updates it), the new FUSE mount propagates in with
+      # files the mapped root cannot read; restic then exits 3 and skips its
+      # prune until the next CT start (seen 2026-11-15). Nothing there needs
+      # an offsite copy: guests, storage and backup jobs are in Terraform,
+      # API access in setup-terraform-pve-access.yaml, and the node Notes in
+      # terraform/proxmox/descriptions/earendil.md.
       ansible.builtin.lineinfile:
         path: /root/.config/restic/excludes-host.txt
         create: true
@@ -274,6 +284,7 @@
       loop:
         - /srv/host-etc/alloy
         - /srv/host-etc/wireguard
+        - /srv/host-etc/pve
 
   handlers:
     - name: Reload systemd
