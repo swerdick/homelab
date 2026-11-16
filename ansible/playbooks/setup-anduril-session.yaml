@@ -488,7 +488,21 @@
           # bare black compositor on the TV -- the 2026-10-01 "black screen after
           # idle": a host amdgpu SMU hang + reset killed gamescope, KWin stayed up,
           # the unit stayed "active", and only a manual restart recovered it.
-          exec kwin_wayland --xwayland --exit-with-session /usr/local/bin/steam-bigpicture.sh
+          #
+          # No --xwayland: KWin must not run an X server of its own. In
+          # multi-Xwayland mode Steam ignores gamescope's STEAM_GAME_DISPLAY_0 and
+          # assumes the game server is its own display + 1, so gamescope's two
+          # Xwaylands have to land on consecutive display numbers -- and a third X
+          # server can split them. On boots where lightdm's doomed `X :0` (see
+          # setup-anduril-xrdp.yaml) held :0 as KWin started, KWin took :1 and
+          # gamescope got :0 + :2; Steam then launched every game onto KWin's
+          # server, outside gamescope. That one fault was the first-game spinner
+          # ("Failed to get Xwayland server id"), the dead controller, and the
+          # emulator pad disconnects (2026-11-15). Nothing here is an X11 client of
+          # KWin: gamescope is a Wayland client (--backend wayland) and brings its
+          # own Xwaylands for Steam + games. Check with
+          # `journalctl -b -g "Starting Xwayland on"` -- the two must be adjacent.
+          exec kwin_wayland --exit-with-session /usr/local/bin/steam-bigpicture.sh
 
     - name: Install the Steam Big Picture launcher
       ansible.builtin.copy:
@@ -515,6 +529,7 @@
           #     current KWin; the kwinrule below still force-fullscreens as backstop.
           #   --force-grab-cursor : route relative pointer motion into the game (#1428)
           #   --xwayland-count 2 + STEAM_MULTIPLE_XWAYLANDS=1 : Steam + game each get one
+          #     (on adjacent display numbers -- see the KWin exec note in anduril-inner.sh)
           # Prereq: gamescope must be built with libei (libeis.so linked) -- verified.
           # Native-4K convention (ends the fragile downscale+upscale): a game left at
           # 3840x2160 renders 1:1 through gamescope -- no scaling pass, so no FSR/NIS
@@ -523,13 +538,15 @@
           # NEVER FSR/NIS. -F linear is just the explicit session default; a per-game
           # Steam filter still overrides it over the wayland protocol at runtime.
           #
-          # SC2 "Puck" (28de:1304) cold-boot settle: the Puck has no kernel driver
-          # (Steam/SDL drive it in userspace). On a COLD boot this session auto-starts
-          # and Steam races the Puck's enumeration + the handheld's RF connect, building
-          # a bad device model that then can't switch the pad desktop->gamepad on the
-          # first game launch (controller dead in-game, only B works, trackpad mouses).
-          # Wait for the dongle to enumerate + a short settle before Steam inits. Bounded
-          # (~15s) so a missing/unplugged Puck never blocks the session boot.
+          # SC2 "Puck" (28de:1304) settle: wait for the dongle to enumerate, then 4s
+          # more, before Steam inits. Bounded (~15s) so a missing/unplugged Puck
+          # never blocks the session boot. Added on the theory that Steam raced the
+          # Puck at cold boot and built a bad device model ("controller dead in the
+          # first game, only B works"). That theory was wrong: the symptom was games
+          # landing on the wrong X server (see the KWin exec note in
+          # anduril-inner.sh), and the Puck's USB link was clean while it happened.
+          # The wait is not known to be load-bearing; it stays until the real fix
+          # has a few cold boots behind it.
           for _i in $(seq 1 15); do
             for _d in /sys/bus/usb/devices/*; do
               [ "$(cat "$_d/idVendor" 2>/dev/null)" = "28de" ] \
