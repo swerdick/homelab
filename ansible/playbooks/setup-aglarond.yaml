@@ -24,6 +24,12 @@
 # completely unthrottled. The .service/.timer files themselves still live
 # only on the box — the drop-ins are the managed layer on top.
 #
+# Also codified here (2026-11-15): a serialize drop-in that runs every restic
+# command under one flock, so the three units can no longer overlap. It
+# restates the service ExecStart/ExecStartPost lines, which makes this play
+# the source of truth for the restic commands (the timers and the rest of
+# each unit file are still on-box only).
+#
 # Two plays: host-side (PVE conf + subgid) then guest-side (group, drop-ins,
 # excludes). Idempotent; untargeted hosts are untouched.
 #
@@ -172,6 +178,58 @@
         - restic-backups
         - restic-host
         - restic-media
+      notify: Reload systemd
+
+    - name: Serialize the restic units (one restic process at a time)
+      # All three units share one repository and a 1 GiB container, and with
+      # Persistent=true they all catch up in the same second when the fleet
+      # boots after their slots. 2026-11-15: three concurrent restics got
+      # restic-media OOM-killed; restic-host's `forget --prune` failed on the
+      # repo lock restic-backups held (the long-standing nightly status=11);
+      # and the killed process left a stale lock that failed restic-backups'
+      # own prune two hours later.
+      #
+      # flock gives true mutual exclusion in any arrival order -- unit
+      # ordering (After=) cannot, since it only orders jobs queued together.
+      # Each command takes the lock separately, so one unit's prune may queue
+      # behind another unit's backup; they just never overlap. Type=oneshot
+      # has no start timeout, so waiting on the lock is safe.
+      #
+      # The drop-in restates the on-box ExecStart/ExecStartPost (the empty
+      # assignments clear them first), so from here the restic command lines
+      # are managed in this play. SyslogIdentifier keeps journal lines tagged
+      # `restic` rather than `flock`.
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ item.unit }}.service.d/serialize.conf"
+        mode: "0644"
+        content: |
+          [Service]
+          SyslogIdentifier=restic
+          ExecStart=
+          ExecStart=/usr/bin/flock /run/lock/restic.lock /usr/bin/restic backup {{ item.backup }}
+          ExecStartPost=
+          ExecStartPost=/usr/bin/flock /run/lock/restic.lock /usr/bin/restic forget {{ item.forget }} --prune
+      loop:
+        - unit: restic-backups
+          backup: >-
+            --files-from /root/.config/restic/includes-backups.txt
+            --tag backups --host aglarond
+          forget: --tag backups --host aglarond --keep-daily 30
+        - unit: restic-host
+          backup: >-
+            --files-from /root/.config/restic/includes-host.txt
+            --exclude-file /root/.config/restic/excludes-host.txt
+            --tag host-config --host aglarond
+          forget: >-
+            --tag host-config --host aglarond
+            --keep-daily 14 --keep-weekly 8 --keep-monthly 12
+        - unit: restic-media
+          backup: >-
+            --files-from /root/.config/restic/includes-media.txt
+            --tag media --host aglarond
+          forget: --tag media --host aglarond --keep-monthly 12 --keep-yearly 5
+      loop_control:
+        label: "{{ item.unit }}"
       notify: Reload systemd
 
     - name: Move restic timers out of evening gaming hours
