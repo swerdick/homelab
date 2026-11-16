@@ -1,0 +1,110 @@
+---
+# Pins the group of the shared GPU device nodes inside the CTs that bind-mount
+# them, so every udev on the box agrees on one owner.
+#
+# Background — three udevs, one inode:
+#   anduril (CT 117) and mirdain (CT 143) both bind-mount the host's
+#   /dev/dri/renderD129 and /dev/kfd. A bind mount shares the inode, so a
+#   chgrp from any side is seen by all. Both CTs mount /sys read-write and run
+#   their own systemd-udevd, which coldplugs at CT boot and applies the stock
+#   rule `KERNEL=="renderD*", GROUP="render"` -- resolved against that guest's
+#   own /etc/group. `render` is a dynamically allocated system group, so it is
+#   a different GID in each: 993 on earendil, 991 on anduril, 992 on mirdain.
+#   The last udev to run decides who owns the node.
+#
+#   After `pct reboot 117` anduril always writes last, so that test passes. On
+#   a host cold boot mirdain starts ~3s after anduril and can win: the node
+#   lands on GID 992, which is `kvm` inside anduril, the session user cannot
+#   open it, gamescope falls back to llvmpipe and exits, and
+#   anduril-session.service restart-loops (2026-11-16).
+#
+# Fix: both guests pin the nodes to the HOST's render GID by number. All three
+# udevs then write the same value and the ordering stops mattering. The GID is
+# read from earendil rather than hardcoded, so a host rebuild cannot silently
+# reintroduce the split.
+#
+# Check with `stat -c '%g' /dev/dri/renderD129 /dev/kfd` on earendil after a
+# cold boot -- both must equal `getent group render` there.
+#
+# Usage:
+#   ansible-playbook playbooks/setup-shared-gpu-nodes.yaml --check --diff
+#   ansible-playbook playbooks/setup-shared-gpu-nodes.yaml
+
+- name: Pin the shared GPU nodes to the host's render GID
+  hosts: anduril:mirdain
+  become: true
+
+  tasks:
+    - name: Read the host's render group
+      ansible.builtin.getent:
+        database: group
+        key: render
+      delegate_to: earendil
+
+    - name: Record the host's render GID
+      ansible.builtin.set_fact:
+        host_render_gid: "{{ ansible_facts.getent_group.render[1] }}"
+
+    - name: Pin the render node + kfd to the host's render GID (udev)
+      # 99- sorts after 50-udev-default.rules, so this assignment wins over the
+      # stock by-name one. A numeric GROUP skips the guest's /etc/group.
+      ansible.builtin.copy:
+        dest: /etc/udev/rules.d/99-shared-gpu-nodes.rules
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="{{ host_render_gid }}", MODE="0660"
+          SUBSYSTEM=="kfd", GROUP="{{ host_render_gid }}", MODE="0660"
+      notify: Reapply the GPU node rules
+
+  handlers:
+    - name: Reapply the GPU node rules
+      # Scoped to the render node + kfd by name: a drm-wide trigger would also
+      # replay card0 at the running compositor.
+      ansible.builtin.shell: >-
+        udevadm control --reload-rules &&
+        udevadm trigger --action=change --sysname-match='renderD*' --sysname-match=kfd
+      changed_when: false
+
+- name: Give the anduril session user the host's render GID
+  # mirdain needs no equivalent: its GPU pods run as root.
+  hosts: anduril
+  become: true
+
+  vars:
+    session_user: pseudo
+
+  tasks:
+    - name: Read the host's render group
+      ansible.builtin.getent:
+        database: group
+        key: render
+      delegate_to: earendil
+
+    - name: Record the host's render GID
+      ansible.builtin.set_fact:
+        host_render_gid: "{{ ansible_facts.getent_group.render[1] }}"
+
+    - name: Look up the guest group that holds that GID
+      ansible.builtin.command: getent group {{ host_render_gid }}
+      register: guest_group
+      changed_when: false
+      check_mode: false
+      failed_when: guest_group.rc not in [0, 2]
+
+    - name: Create a group for the host's render GID if the guest has none
+      # The guest's own `render` is a different GID, so the number may be free
+      # (fresh CT) or already taken by an unrelated system group (`clock` on
+      # the current one). Either is fine: only the number matters.
+      ansible.builtin.group:
+        name: host-render
+        gid: "{{ host_render_gid }}"
+        system: true
+      when: guest_group.rc == 2
+
+    - name: Add the session user to that group
+      ansible.builtin.user:
+        name: "{{ session_user }}"
+        groups: "{{ guest_group.stdout.split(':')[0] if guest_group.rc == 0 else 'host-render' }}"
+        append: true

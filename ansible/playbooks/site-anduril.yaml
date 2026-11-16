@@ -35,6 +35,9 @@
 - name: Install the Alloy collector
   import_playbook: install-alloy.yaml
 
+- name: Pin the shared GPU nodes to the host's render GID
+  import_playbook: setup-shared-gpu-nodes.yaml
+
 - name: Configure the gaming session (KWin + Steam Big Picture)
   import_playbook: setup-anduril-session.yaml
 
