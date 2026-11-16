@@ -31,12 +31,19 @@
         mode: "0755"
 
     - name: Delay scheduler start past PBS readiness
+      # TimeoutStartSec must exceed the sleep: ExecStartPre counts against the
+      # unit's start timeout, and systemd's default is 90s -- the same as the
+      # delay. That made every boot a race the sleep usually won by a hair. On
+      # 2026-11-15 (a cold boot under load) it lost: "start-pre operation timed
+      # out", the unit stayed failed, and no scheduled or catch-up backup ran
+      # until the scheduler was started by hand.
       ansible.builtin.copy:
         dest: /etc/systemd/system/pvescheduler.service.d/pbs-readiness-delay.conf
         mode: "0644"
         content: |
           [Service]
           ExecStartPre=/usr/bin/sleep 90
+          TimeoutStartSec=300
       notify: Reload systemd
 
   handlers:
