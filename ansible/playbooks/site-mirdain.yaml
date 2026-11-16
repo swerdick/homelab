@@ -47,6 +47,9 @@
 - name: Configure unattended upgrades
   import_playbook: install-unattended-upgrades.yaml
 
+- name: Pin the shared GPU nodes to the host's render GID
+  import_playbook: setup-shared-gpu-nodes.yaml
+
 - name: Tune k3s kernel sysctls
   import_playbook: setup-k3s-sysctls.yaml
 
